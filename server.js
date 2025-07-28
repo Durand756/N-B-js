@@ -470,7 +470,7 @@ async function webSearch(query) {
 }
 
 // Gestion de la mémoire avec sauvegarde
-function addToMemory(userId, msgType, content) {
+function addToMemory(userId, msgType, content, skipIfExists = false) {
     if (!userId || !msgType || !content) {
         return;
     }
@@ -485,6 +485,16 @@ function addToMemory(userId, msgType, content) {
     }
     
     const memory = userMemory.get(userId);
+    
+    // NOUVEAU : Éviter les doublons si demandé
+    if (skipIfExists && memory.length > 0) {
+        const lastMessage = memory[memory.length - 1];
+        if (lastMessage.type === msgType && lastMessage.content === content) {
+            log.debug(`🔄 Évitement doublon pour ${userId}: ${msgType}`);
+            return; // Ne pas ajouter si identique au dernier
+        }
+    }
+    
     memory.push({
         type: msgType,
         content: content,
@@ -496,12 +506,11 @@ function addToMemory(userId, msgType, content) {
         memory.shift();
     }
     
-    // Sauvegarder de manière asynchrone (pas d'attente)
+    // Sauvegarder de manière asynchrone
     saveDataImmediate().catch(err => 
         log.error(`❌ Erreur sauvegarde mémoire: ${err.message}`)
     );
 }
-
 function getMemoryContext(userId) {
     const context = [];
     const memory = userMemory.get(userId) || [];
@@ -708,8 +717,16 @@ async function processCommand(senderId, messageText) {
     
     // Si ce n'est pas une commande, traiter comme un chat normal
     if (!messageText.startsWith('/')) {
+        // AJOUTER ICI : Enregistrer le message utilisateur
+        addToMemory(senderId, 'user', messageText);
+        
         if (COMMANDS.has('chat')) {
-            return await COMMANDS.get('chat')(senderId, messageText, commandContext);
+            const response = await COMMANDS.get('chat')(senderId, messageText, commandContext);
+            // AJOUTER ICI : Enregistrer la réponse bot SEULEMENT si pas déjà fait dans la commande
+            if (response && typeof response === 'string') {
+                addToMemory(senderId, 'assistant', response);
+            }
+            return response;
         }
         return "🤖 Coucou ! Tape /start ou /help pour découvrir ce que je peux faire ! ✨";
     }
@@ -719,18 +736,26 @@ async function processCommand(senderId, messageText) {
     const command = parts[0].toLowerCase();
     const args = parts.slice(1).join(' ');
     
+    // AJOUTER ICI : Enregistrer la commande utilisateur
+    addToMemory(senderId, 'user', messageText);
+    
     if (COMMANDS.has(command)) {
         try {
-            return await COMMANDS.get(command)(senderId, args, commandContext);
+            const response = await COMMANDS.get(command)(senderId, args, commandContext);
+            // NE PAS enregistrer ici car les commandes le font déjà
+            return response;
         } catch (error) {
             log.error(`❌ Erreur commande ${command}: ${error.message}`);
-            return `💥 Oh non ! Petite erreur dans /${command} ! Réessaie ou tape /help ! 💕`;
+            const errorResponse = `💥 Oh non ! Petite erreur dans /${command} ! Réessaie ou tape /help ! 💕`;
+            addToMemory(senderId, 'assistant', errorResponse);
+            return errorResponse;
         }
     }
     
-    return `❓ Oh ! La commande /${command} m'est inconnue ! Tape /help pour voir tout ce que je sais faire ! ✨💕`;
+    const unknownResponse = `❓ Oh ! La commande /${command} m'est inconnue ! Tape /help pour voir tout ce que je sais faire ! ✨💕`;
+    addToMemory(senderId, 'assistant', unknownResponse);
+    return unknownResponse;
 }
-
 // === ROUTES EXPRESS ===
 
 // Route d'accueil
@@ -808,7 +833,6 @@ app.post('/webhook', async (req, res) => {
                     
                     if (wasNewUser) {
                         log.info(`👋 Nouvel utilisateur: ${senderId}`);
-                        // Sauvegarder en arrière-plan pour les nouveaux utilisateurs
                         saveDataImmediate();
                     }
                     
@@ -816,17 +840,21 @@ app.post('/webhook', async (req, res) => {
                     if (event.message.attachments) {
                         for (const attachment of event.message.attachments) {
                             if (attachment.type === 'image') {
-                                // Stocker l'URL de l'image pour les commandes /anime et /vision
                                 const imageUrl = attachment.payload?.url;
                                 if (imageUrl) {
                                     userLastImage.set(senderIdStr, imageUrl);
                                     log.info(`📸 Image reçue de ${senderId}`);
                                     
-                                    // Sauvegarder l'image en arrière-plan
+                                    // ENREGISTRER l'action image en mémoire
+                                    addToMemory(senderId, 'user', '[Image envoyée]');
+                                    
                                     saveDataImmediate();
                                     
-                                    // Répondre automatiquement
                                     const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
+                                    
+                                    // ENREGISTRER la réponse du bot
+                                    addToMemory(senderId, 'assistant', response);
+                                    
                                     await sendMessage(senderId, response);
                                     continue;
                                 }
@@ -840,24 +868,34 @@ app.post('/webhook', async (req, res) => {
                     if (messageText) {
                         log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}...`);
                         
-                        // Traiter commande
+                        // NOUVELLE APPROCHE : processCommand ne gère plus la mémoire
+                        // On la gère ici de façon centralisée
+                        
+                        // Enregistrer le message utilisateur
+                        addToMemory(senderId, 'user', messageText);
+                        
+                        // Traiter commande (sans enregistrement interne)
                         const response = await processCommand(senderId, messageText);
                         
                         if (response) {
-                            // Vérifier si c'est une image
+                            // Enregistrer la réponse du bot
+                            if (typeof response === 'string') {
+                                addToMemory(senderId, 'assistant', response);
+                            }
+                            
+                            // Envoyer la réponse
                             if (typeof response === 'object' && response.type === 'image') {
-                                // Envoyer image
                                 const sendResult = await sendImageMessage(senderId, response.url, response.caption);
                                 
                                 if (sendResult.success) {
                                     log.info(`✅ Image envoyée à ${senderId}`);
                                 } else {
                                     log.warning(`❌ Échec envoi image à ${senderId}`);
-                                    // Fallback texte
-                                    await sendMessage(senderId, "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕");
+                                    const fallbackMsg = "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕";
+                                    addToMemory(senderId, 'assistant', fallbackMsg);
+                                    await sendMessage(senderId, fallbackMsg);
                                 }
                             } else {
-                                // Message texte normal
                                 const sendResult = await sendMessage(senderId, response);
                                 
                                 if (sendResult.success) {
