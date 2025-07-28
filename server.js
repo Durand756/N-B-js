@@ -830,7 +830,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// ✅ WEBHOOK PRINCIPAL - LOGIQUE SIMPLIFIÉE SANS DOUBLONS
+// ✅ WEBHOOK PRINCIPAL - LOGIQUE CORRIGÉE SANS DOUBLONS
 app.post('/webhook', async (req, res) => {
     try {
         const data = req.body;
@@ -878,10 +878,11 @@ app.post('/webhook', async (req, res) => {
                                     
                                     const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
                                     
-                                    // ✅ ENREGISTRER la réponse du bot
-                                    addToMemory(senderId, 'assistant', response);
-                                    
-                                    await sendMessage(senderId, response);
+                                    // ✅ ENVOYER puis ENREGISTRER
+                                    const sendResult = await sendMessage(senderId, response);
+                                    if (sendResult.success) {
+                                        addToMemory(senderId, 'assistant', response);
+                                    }
                                     continue;
                                 }
                             }
@@ -894,39 +895,34 @@ app.post('/webhook', async (req, res) => {
                     if (messageText) {
                         log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}...`);
                         
-                        // ✅ NOUVELLE APPROCHE SIMPLIFIÉE:
-                        // 1. Enregistrer le message utilisateur
-                        addToMemory(senderId, 'user', messageText);
+                        // ✅ NOUVELLE LOGIQUE SIMPLIFIÉE:
+                        // 1. NE PAS enregistrer ici - laisser les commandes gérer
                         
                         // 2. Traiter la commande (les commandes gèrent leur propre mémoire)
                         const response = await processCommand(senderId, messageText);
                         
-                        // 3. Envoyer la réponse et l'enregistrer
+                        // 3. SEULEMENT envoyer la réponse - NE PAS enregistrer ici
                         if (response) {
-                            // Envoyer la réponse
                             if (typeof response === 'object' && response.type === 'image') {
                                 const sendResult = await sendImageMessage(senderId, response.url, response.caption);
                                 
                                 if (sendResult.success) {
                                     log.info(`✅ Image envoyée à ${senderId}`);
-                                    // ✅ Enregistrer seulement si l'envoi a réussi
-                                    addToMemory(senderId, 'assistant', response.caption || '[Image générée]');
                                 } else {
                                     log.warning(`❌ Échec envoi image à ${senderId}`);
                                     const fallbackMsg = "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕";
-                                    addToMemory(senderId, 'assistant', fallbackMsg);
-                                    await sendMessage(senderId, fallbackMsg);
+                                    const fallbackResult = await sendMessage(senderId, fallbackMsg);
+                                    if (fallbackResult.success) {
+                                        addToMemory(senderId, 'assistant', fallbackMsg);
+                                    }
                                 }
                             } else if (typeof response === 'string') {
                                 const sendResult = await sendMessage(senderId, response);
                                 
                                 if (sendResult.success) {
                                     log.info(`✅ Réponse envoyée à ${senderId}`);
-                                    // ✅ Enregistrer seulement si l'envoi a réussi
-                                    addToMemory(senderId, 'assistant', response);
                                 } else {
                                     log.warning(`❌ Échec envoi à ${senderId}`);
-                                    // Ne pas enregistrer en cas d'échec
                                 }
                             }
                         }
