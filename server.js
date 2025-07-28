@@ -469,9 +469,10 @@ async function webSearch(query) {
     }
 }
 
-// Gestion de la mémoire avec sauvegarde
-function addToMemory(userId, msgType, content, skipIfExists = false) {
+// ✅ GESTION CORRIGÉE DE LA MÉMOIRE - ÉVITER LES DOUBLONS
+function addToMemory(userId, msgType, content) {
     if (!userId || !msgType || !content) {
+        log.debug("❌ Paramètres manquants pour addToMemory");
         return;
     }
     
@@ -486,15 +487,28 @@ function addToMemory(userId, msgType, content, skipIfExists = false) {
     
     const memory = userMemory.get(userId);
     
-    // NOUVEAU : Éviter les doublons si demandé
-    if (skipIfExists && memory.length > 0) {
+    // ✅ NOUVELLE LOGIQUE: Vérifier les doublons
+    if (memory.length > 0) {
         const lastMessage = memory[memory.length - 1];
+        
+        // Éviter les doublons exacts (même type et contenu)
         if (lastMessage.type === msgType && lastMessage.content === content) {
-            log.debug(`🔄 Évitement doublon pour ${userId}: ${msgType}`);
-            return; // Ne pas ajouter si identique au dernier
+            log.debug(`🔄 Doublon évité pour ${userId}: ${msgType.substring(0, 50)}...`);
+            return; // Ne pas ajouter
+        }
+        
+        // Éviter les doublons de type "assistant" consécutifs avec contenu similaire
+        if (msgType === 'assistant' && lastMessage.type === 'assistant') {
+            // Si les deux messages ont plus de 80% de similarité, ignorer
+            const similarity = calculateSimilarity(lastMessage.content, content);
+            if (similarity > 0.8) {
+                log.debug(`🔄 Doublon assistant évité (similarité: ${Math.round(similarity * 100)}%)`);
+                return;
+            }
         }
     }
     
+    // Ajouter le nouveau message
     memory.push({
         type: msgType,
         content: content,
@@ -506,11 +520,35 @@ function addToMemory(userId, msgType, content, skipIfExists = false) {
         memory.shift();
     }
     
+    log.debug(`💭 Ajouté en mémoire [${userId}]: ${msgType} (${content.length} chars)`);
+    
     // Sauvegarder de manière asynchrone
     saveDataImmediate().catch(err => 
-        log.error(`❌ Erreur sauvegarde mémoire: ${err.message}`)
+        log.debug(`🔄 Erreur sauvegarde mémoire: ${err.message}`)
     );
 }
+
+// ✅ FONCTION UTILITAIRE: Calculer la similarité entre deux textes
+function calculateSimilarity(text1, text2) {
+    if (!text1 || !text2) return 0;
+    
+    // Normaliser les textes
+    const normalize = (text) => text.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const norm1 = normalize(text1);
+    const norm2 = normalize(text2);
+    
+    if (norm1 === norm2) return 1;
+    
+    // Calcul simple de similarité par mots communs
+    const words1 = new Set(norm1.split(/\s+/));
+    const words2 = new Set(norm2.split(/\s+/));
+    
+    const intersection = new Set([...words1].filter(x => words2.has(x)));
+    const union = new Set([...words1, ...words2]);
+    
+    return intersection.size / union.size;
+}
+
 function getMemoryContext(userId) {
     const context = [];
     const memory = userMemory.get(userId) || [];
@@ -529,7 +567,7 @@ function isAdmin(userId) {
 
 // === FONCTIONS D'ENVOI AVEC SAUVEGARDE ===
 
-// Envoyer un message
+// ✅ ENVOYER UN MESSAGE - ÉVITER TRONCATURE RÉPÉTÉE
 async function sendMessage(recipientId, text) {
     if (!PAGE_ACCESS_TOKEN) {
         log.error("❌ PAGE_ACCESS_TOKEN manquant");
@@ -541,14 +579,15 @@ async function sendMessage(recipientId, text) {
         return { success: false, error: "Empty message" };
     }
     
-    // Limiter taille
-    if (text.length > 2000) {
-        text = text.substring(0, 1950) + "...\n✨ [Message tronqué avec amour]";
+    // ✅ CORRECTION: Éviter la troncature répétée en vérifiant d'abord
+    let finalText = text;
+    if (finalText.length > 2000 && !finalText.includes("✨ [Message tronqué avec amour]")) {
+        finalText = finalText.substring(0, 1950) + "...\n✨ [Message tronqué avec amour]";
     }
     
     const data = {
         recipient: { id: String(recipientId) },
-        message: { text: text }
+        message: { text: finalText }
     };
     
     try {
@@ -705,7 +744,7 @@ function loadCommands() {
     log.info(`🎉 ${COMMANDS.size} commandes chargées avec succès !`);
 }
 
-// Traiter les commandes utilisateur
+// ✅ TRAITER LES COMMANDES - LOGIQUE SIMPLIFIÉE
 async function processCommand(senderId, messageText) {
     const senderIdStr = String(senderId);
     
@@ -717,16 +756,9 @@ async function processCommand(senderId, messageText) {
     
     // Si ce n'est pas une commande, traiter comme un chat normal
     if (!messageText.startsWith('/')) {
-        // AJOUTER ICI : Enregistrer le message utilisateur
-        addToMemory(senderId, 'user', messageText);
-        
         if (COMMANDS.has('chat')) {
-            const response = await COMMANDS.get('chat')(senderId, messageText, commandContext);
-            // AJOUTER ICI : Enregistrer la réponse bot SEULEMENT si pas déjà fait dans la commande
-            if (response && typeof response === 'string') {
-                addToMemory(senderId, 'assistant', response);
-            }
-            return response;
+            // ✅ Les commandes gèrent leur propre mémoire, on ne fait rien ici
+            return await COMMANDS.get('chat')(senderId, messageText, commandContext);
         }
         return "🤖 Coucou ! Tape /start ou /help pour découvrir ce que je peux faire ! ✨";
     }
@@ -736,26 +768,19 @@ async function processCommand(senderId, messageText) {
     const command = parts[0].toLowerCase();
     const args = parts.slice(1).join(' ');
     
-    // AJOUTER ICI : Enregistrer la commande utilisateur
-    addToMemory(senderId, 'user', messageText);
-    
     if (COMMANDS.has(command)) {
         try {
-            const response = await COMMANDS.get(command)(senderId, args, commandContext);
-            // NE PAS enregistrer ici car les commandes le font déjà
-            return response;
+            // ✅ Les commandes gèrent leur propre mémoire
+            return await COMMANDS.get(command)(senderId, args, commandContext);
         } catch (error) {
             log.error(`❌ Erreur commande ${command}: ${error.message}`);
-            const errorResponse = `💥 Oh non ! Petite erreur dans /${command} ! Réessaie ou tape /help ! 💕`;
-            addToMemory(senderId, 'assistant', errorResponse);
-            return errorResponse;
+            return `💥 Oh non ! Petite erreur dans /${command} ! Réessaie ou tape /help ! 💕`;
         }
     }
     
-    const unknownResponse = `❓ Oh ! La commande /${command} m'est inconnue ! Tape /help pour voir tout ce que je sais faire ! ✨💕`;
-    addToMemory(senderId, 'assistant', unknownResponse);
-    return unknownResponse;
+    return `❓ Oh ! La commande /${command} m'est inconnue ! Tape /help pour voir tout ce que je sais faire ! ✨💕`;
 }
+
 // === ROUTES EXPRESS ===
 
 // Route d'accueil
@@ -805,6 +830,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
+// ✅ WEBHOOK PRINCIPAL - LOGIQUE SIMPLIFIÉE SANS DOUBLONS
 app.post('/webhook', async (req, res) => {
     try {
         const data = req.body;
@@ -845,14 +871,14 @@ app.post('/webhook', async (req, res) => {
                                     userLastImage.set(senderIdStr, imageUrl);
                                     log.info(`📸 Image reçue de ${senderId}`);
                                     
-                                    // ENREGISTRER l'action image en mémoire
+                                    // ✅ ENREGISTRER l'action image en mémoire
                                     addToMemory(senderId, 'user', '[Image envoyée]');
                                     
                                     saveDataImmediate();
                                     
                                     const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
                                     
-                                    // ENREGISTRER la réponse du bot
+                                    // ✅ ENREGISTRER la réponse du bot
                                     addToMemory(senderId, 'assistant', response);
                                     
                                     await sendMessage(senderId, response);
@@ -868,40 +894,39 @@ app.post('/webhook', async (req, res) => {
                     if (messageText) {
                         log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}...`);
                         
-                        // NOUVELLE APPROCHE : processCommand ne gère plus la mémoire
-                        // On la gère ici de façon centralisée
-                        
-                        // Enregistrer le message utilisateur
+                        // ✅ NOUVELLE APPROCHE SIMPLIFIÉE:
+                        // 1. Enregistrer le message utilisateur
                         addToMemory(senderId, 'user', messageText);
                         
-                        // Traiter commande (sans enregistrement interne)
+                        // 2. Traiter la commande (les commandes gèrent leur propre mémoire)
                         const response = await processCommand(senderId, messageText);
                         
+                        // 3. Envoyer la réponse et l'enregistrer
                         if (response) {
-                            // Enregistrer la réponse du bot
-                            if (typeof response === 'string') {
-                                addToMemory(senderId, 'assistant', response);
-                            }
-                            
                             // Envoyer la réponse
                             if (typeof response === 'object' && response.type === 'image') {
                                 const sendResult = await sendImageMessage(senderId, response.url, response.caption);
                                 
                                 if (sendResult.success) {
                                     log.info(`✅ Image envoyée à ${senderId}`);
+                                    // ✅ Enregistrer seulement si l'envoi a réussi
+                                    addToMemory(senderId, 'assistant', response.caption || '[Image générée]');
                                 } else {
                                     log.warning(`❌ Échec envoi image à ${senderId}`);
                                     const fallbackMsg = "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕";
                                     addToMemory(senderId, 'assistant', fallbackMsg);
                                     await sendMessage(senderId, fallbackMsg);
                                 }
-                            } else {
+                            } else if (typeof response === 'string') {
                                 const sendResult = await sendMessage(senderId, response);
                                 
                                 if (sendResult.success) {
                                     log.info(`✅ Réponse envoyée à ${senderId}`);
+                                    // ✅ Enregistrer seulement si l'envoi a réussi
+                                    addToMemory(senderId, 'assistant', response);
                                 } else {
                                     log.warning(`❌ Échec envoi à ${senderId}`);
+                                    // Ne pas enregistrer en cas d'échec
                                 }
                             }
                         }
