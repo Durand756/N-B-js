@@ -527,9 +527,9 @@ async function sendMessage(recipientId, text) {
         return { success: false, error: "No token" };
     }
     
-    if (!text || typeof text !== 'string') {
-        log.warning("⚠️ Message vide");
-        return { success: false, error: "Empty message" };
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+        log.warning("⚠️ Message vide ou invalide");
+        return { success: false, error: "Empty or invalid message" };
     }
     
     // Limiter taille
@@ -553,14 +553,23 @@ async function sendMessage(recipientId, text) {
         );
         
         if (response.status === 200) {
-            return { success: true };
+            return { success: true, messageId: response.data.message_id };
         } else {
-            log.error(`❌ Erreur Facebook API: ${response.status}`);
-            return { success: false, error: `API Error ${response.status}` };
+            log.error(`❌ Erreur Facebook API: ${response.status} - ${JSON.stringify(response.data)}`);
+            return { success: false, error: `API Error ${response.status}`, details: response.data };
         }
     } catch (error) {
-        log.error(`❌ Erreur envoi: ${error.message}`);
-        return { success: false, error: error.message };
+        if (error.response) {
+            log.error(`❌ Erreur envoi API: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+            return { 
+                success: false, 
+                error: `API Error ${error.response.status}`, 
+                details: error.response.data 
+            };
+        } else {
+            log.error(`❌ Erreur envoi réseau: ${error.message}`);
+            return { success: false, error: error.message };
+        }
     }
 }
 
@@ -701,15 +710,27 @@ async function processCommand(senderId, messageText) {
     const senderIdStr = String(senderId);
     
     if (!messageText || typeof messageText !== 'string') {
-        return "🤖 Oh là là ! Message vide ! Tape /start ou /help pour commencer notre belle conversation ! 💕";
+        log.warning(`⚠️ processCommand: Message invalide de ${senderId}`);
+        return "🤖 Oh là là ! Message invalide ! Tape /start ou /help pour commencer notre belle conversation ! 💕";
     }
     
     messageText = messageText.trim();
     
+    if (messageText.length === 0) {
+        log.warning(`⚠️ processCommand: Message vide de ${senderId}`);
+        return "🤖 Message vide ! Écris-moi quelque chose ou tape /help ! 💕";
+    }
+    
     // Si ce n'est pas une commande, traiter comme un chat normal
     if (!messageText.startsWith('/')) {
         if (COMMANDS.has('chat')) {
-            return await COMMANDS.get('chat')(senderId, messageText, commandContext);
+            try {
+                const response = await COMMANDS.get('chat')(senderId, messageText, commandContext);
+                return response || "🤖 Hmm, je n'ai pas de réponse ! Tape /help pour voir ce que je peux faire ! ✨";
+            } catch (error) {
+                log.error(`❌ Erreur commande chat: ${error.message}`);
+                return "💥 Oh non ! Petite erreur dans le chat ! Réessaie ou tape /help ! 💕";
+            }
         }
         return "🤖 Coucou ! Tape /start ou /help pour découvrir ce que je peux faire ! ✨";
     }
@@ -721,7 +742,8 @@ async function processCommand(senderId, messageText) {
     
     if (COMMANDS.has(command)) {
         try {
-            return await COMMANDS.get(command)(senderId, args, commandContext);
+            const response = await COMMANDS.get(command)(senderId, args, commandContext);
+            return response || `🤔 La commande /${command} n'a pas de réponse ! Tape /help ! ✨`;
         } catch (error) {
             log.error(`❌ Erreur commande ${command}: ${error.message}`);
             return `💥 Oh non ! Petite erreur dans /${command} ! Réessaie ou tape /help ! 💕`;
@@ -812,8 +834,10 @@ app.post('/webhook', async (req, res) => {
                         saveDataImmediate();
                     }
                     
+                    let messageProcessed = false;
+                    
                     // Vérifier si c'est une image
-                    if (event.message.attachments) {
+                    if (event.message.attachments && event.message.attachments.length > 0) {
                         for (const attachment of event.message.attachments) {
                             if (attachment.type === 'image') {
                                 // Stocker l'URL de l'image pour les commandes /anime et /vision
@@ -827,44 +851,108 @@ app.post('/webhook', async (req, res) => {
                                     
                                     // Répondre automatiquement
                                     const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
-                                    await sendMessage(senderId, response);
-                                    continue;
+                                    const sendResult = await sendMessage(senderId, response);
+                                    
+                                    if (sendResult.success) {
+                                        log.info(`✅ Réponse image envoyée à ${senderId}`);
+                                    } else {
+                                        log.error(`❌ Échec envoi réponse image à ${senderId}: ${sendResult.error}`);
+                                    }
+                                    
+                                    messageProcessed = true;
                                 }
                             }
                         }
                     }
                     
-                    // Récupérer texte
-                    const messageText = event.message.text?.trim();
-                    
-                    if (messageText) {
-                        log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}...`);
+                    // Traiter le texte seulement si on n'a pas déjà traité une image
+                    if (!messageProcessed) {
+                        const messageText = event.message.text?.trim();
                         
-                        // Traiter commande
-                        const response = await processCommand(senderId, messageText);
-                        
-                        if (response) {
-                            // Vérifier si c'est une image
-                            if (typeof response === 'object' && response.type === 'image') {
-                                // Envoyer image
-                                const sendResult = await sendImageMessage(senderId, response.url, response.caption);
+                        if (messageText) {
+                            log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}`);
+                            
+                            try {
+                                // Traiter commande
+                                const response = await processCommand(senderId, messageText);
                                 
-                                if (sendResult.success) {
-                                    log.info(`✅ Image envoyée à ${senderId}`);
+                                if (response) {
+                                    // Vérifier si c'est une image
+                                    if (typeof response === 'object' && response.type === 'image') {
+                                        // Envoyer image
+                                        const sendResult = await sendImageMessage(senderId, response.url, response.caption);
+                                        
+                                        if (sendResult.success) {
+                                            log.info(`✅ Image générée envoyée à ${senderId}`);
+                                        } else {
+                                            log.error(`❌ Échec envoi image générée à ${senderId}: ${sendResult.error}`);
+                                            // Fallback texte
+                                            const fallbackResult = await sendMessage(senderId, "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕");
+                                            if (fallbackResult.success) {
+                                                log.info(`✅ Message fallback envoyé à ${senderId}`);
+                                            } else {
+                                                log.error(`❌ Échec envoi fallback à ${senderId}: ${fallbackResult.error}`);
+                                            }
+                                        }
+                                    } else if (typeof response === 'string' && response.length > 0) {
+                                        // Message texte normal
+                                        const sendResult = await sendMessage(senderId, response);
+                                        
+                                        if (sendResult.success) {
+                                            log.info(`✅ Réponse envoyée à ${senderId}`);
+                                        } else {
+                                            log.error(`❌ Échec envoi réponse à ${senderId}: ${sendResult.error}`);
+                                            
+                                            // Essayer d'envoyer un message d'erreur générique
+                                            const errorResult = await sendMessage(senderId, "💔 Oh non ! Petite erreur technique ! Réessaie dans quelques secondes ! 💕");
+                                            if (errorResult.success) {
+                                                log.info(`✅ Message d'erreur envoyé à ${senderId}`);
+                                            } else {
+                                                log.error(`❌ Impossible d'envoyer même le message d'erreur à ${senderId}`);
+                                            }
+                                        }
+                                    } else {
+                                        log.warning(`⚠️ Réponse invalide pour ${senderId}: ${typeof response} - ${JSON.stringify(response).substring(0, 100)}`);
+                                        
+                                        // Envoyer un message d'erreur
+                                        const errorResult = await sendMessage(senderId, "🤔 Hmm, j'ai eu un petit souci avec ma réponse ! Peux-tu réessayer ? 💕");
+                                        if (errorResult.success) {
+                                            log.info(`✅ Message d'erreur réponse invalide envoyé à ${senderId}`);
+                                        } else {
+                                            log.error(`❌ Échec envoi message d'erreur à ${senderId}: ${errorResult.error}`);
+                                        }
+                                    }
                                 } else {
-                                    log.warning(`❌ Échec envoi image à ${senderId}`);
-                                    // Fallback texte
-                                    await sendMessage(senderId, "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕");
+                                    log.warning(`⚠️ Aucune réponse générée pour ${senderId} avec le message: ${messageText}`);
+                                    
+                                    // Envoyer une réponse par défaut
+                                    const defaultResult = await sendMessage(senderId, "🤖 Désolée, je n'ai pas bien compris ! Tape /help pour voir ce que je peux faire ! ✨");
+                                    if (defaultResult.success) {
+                                        log.info(`✅ Réponse par défaut envoyée à ${senderId}`);
+                                    } else {
+                                        log.error(`❌ Échec envoi réponse par défaut à ${senderId}: ${defaultResult.error}`);
+                                    }
                                 }
+                            } catch (commandError) {
+                                log.error(`❌ Erreur traitement commande pour ${senderId}: ${commandError.message}`);
+                                
+                                // Envoyer un message d'erreur à l'utilisateur
+                                const errorResult = await sendMessage(senderId, "💥 Oups ! J'ai eu un petit problème ! Réessaie ou tape /help ! 💕");
+                                if (errorResult.success) {
+                                    log.info(`✅ Message d'erreur commande envoyé à ${senderId}`);
+                                } else {
+                                    log.error(`❌ Échec envoi message d'erreur commande à ${senderId}: ${errorResult.error}`);
+                                }
+                            }
+                        } else {
+                            log.warning(`⚠️ Message vide reçu de ${senderId}`);
+                            
+                            // Répondre pour les messages vides
+                            const emptyResult = await sendMessage(senderId, "🤔 J'ai reçu un message vide ! Écris-moi quelque chose ou tape /help ! 💕");
+                            if (emptyResult.success) {
+                                log.info(`✅ Réponse message vide envoyée à ${senderId}`);
                             } else {
-                                // Message texte normal
-                                const sendResult = await sendMessage(senderId, response);
-                                
-                                if (sendResult.success) {
-                                    log.info(`✅ Réponse envoyée à ${senderId}`);
-                                } else {
-                                    log.warning(`❌ Échec envoi à ${senderId}`);
-                                }
+                                log.error(`❌ Échec envoi réponse message vide à ${senderId}: ${emptyResult.error}`);
                             }
                         }
                     }
@@ -873,11 +961,13 @@ app.post('/webhook', async (req, res) => {
         }
     } catch (error) {
         log.error(`❌ Erreur webhook: ${error.message}`);
+        log.error(`❌ Stack trace: ${error.stack}`);
         return res.status(500).json({ error: `Webhook error: ${error.message}` });
     }
     
     res.status(200).json({ status: "ok" });
 });
+
 
 // Route pour créer un nouveau repository GitHub (admin seulement)
 app.post('/create-repo', async (req, res) => {
