@@ -11,24 +11,36 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         return "💬 Coucou ! Dis-moi tout ce qui te passe par la tête ! Je suis là pour papoter avec toi ! ✨ N'hésite pas à taper /help pour voir tout ce que je peux faire ! 💕";
     }
     
+    // ✅ ENREGISTRER le message utilisateur UNE SEULE FOIS
+    addToMemory(String(senderId), 'user', args);
+    
     // Vérifier si on demande le créateur
     if (['créateur', 'createur', 'qui t\'a', 'créé', 'créee', 'maker', 'développeur'].some(word => args.toLowerCase().includes(word))) {
-        return "👨‍💻 Mon adorable créateur c'est Durand ! Il m'a conçue avec tellement d'amour et de tendresse ! Je l'adore énormément ! 💖 C'est grâce à lui que je peux être là pour t'aider aujourd'hui ! ✨";
+        const response = "👨‍💻 Mon adorable créateur c'est Durand ! Il m'a conçue avec tellement d'amour et de tendresse ! Je l'adore énormément ! 💖 C'est grâce à lui que je peux être là pour t'aider aujourd'hui ! ✨";
+        
+        // ✅ ENREGISTRER la réponse UNE SEULE FOIS
+        addToMemory(String(senderId), 'assistant', response);
+        return response;
     }
     
     // Vérifier si on demande les images
     if (['image', 'images', 'photo', 'photos', 'dessiner', 'créer', 'génerer', 'generer'].some(word => args.toLowerCase().includes(word))) {
-        return "🎨 OH OUI ! Je peux créer des images magnifiques grâce à /image ! ✨ Donne-moi une description et je te crée la plus belle image ! Essaie /image [ta description] ou tape /help pour voir toutes mes commandes ! 💕";
+        const response = "🎨 OH OUI ! Je peux créer des images magnifiques grâce à /image ! ✨ Donne-moi une description et je te crée la plus belle image ! Essaie /image [ta description] ou tape /help pour voir toutes mes commandes ! 💕";
+        
+        // ✅ ENREGISTRER la réponse UNE SEULE FOIS
+        addToMemory(String(senderId), 'assistant', response);
+        return response;
     }
     
     // Recherche si c'est une question sur 2025 ou récente
     if (['2025', 'actualité', 'récent', 'nouveau', 'maintenant', 'aujourd\'hui'].some(word => args.toLowerCase().includes(word))) {
         const searchResult = await webSearch(args);
         if (searchResult) {
-            // ✅ CORRECTION : Utiliser 'assistant' au lieu de 'bot'
-            addToMemory(String(senderId), 'user', args);
-            addToMemory(String(senderId), 'assistant', searchResult);
-            return `🔍 Voici ce que j'ai trouvé pour toi : ${searchResult} ✨\n\n❓ Tape /help pour voir tout ce que je peux faire ! 💕`;
+            const response = `🔍 Voici ce que j'ai trouvé pour toi : ${searchResult} ✨\n\n❓ Tape /help pour voir tout ce que je peux faire ! 💕`;
+            
+            // ✅ ENREGISTRER la réponse UNE SEULE FOIS
+            addToMemory(String(senderId), 'assistant', response);
+            return response;
         }
     }
     
@@ -45,16 +57,20 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     const response = await callMistralAPI(messages, 200, 0.7);
     
     if (response) {
-        // ✅ CORRECTION : Utiliser 'assistant' au lieu de 'bot'
-        addToMemory(String(senderId), 'user', args);
-        addToMemory(String(senderId), 'assistant', response);
-        
         // Ajouter souvent une proposition d'aide
+        let finalResponse = response;
         if (Math.random() < 0.3) { // 30% de chance
-            return response + "\n\n❓ N'hésite pas à taper /help pour voir tout ce que je peux faire pour toi ! 💕";
+            finalResponse = response + "\n\n❓ N'hésite pas à taper /help pour voir tout ce que je peux faire pour toi ! 💕";
         }
-        return response;
+        
+        // ✅ ENREGISTRER la réponse finale UNE SEULE FOIS
+        addToMemory(String(senderId), 'assistant', finalResponse);
+        return finalResponse;
     } else {
-        return "🤔 Oh là là ! J'ai un petit souci technique ! Peux-tu reformuler ta question ? 💕 Ou tape /help pour voir mes commandes ! ✨";
+        const errorResponse = "🤔 Oh là là ! J'ai un petit souci technique ! Peux-tu reformuler ta question ? 💕 Ou tape /help pour voir mes commandes ! ✨";
+        
+        // ✅ ENREGISTRER la réponse d'erreur UNE SEULE FOIS
+        addToMemory(String(senderId), 'assistant', errorResponse);
+        return errorResponse;
     }
 };
