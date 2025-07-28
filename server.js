@@ -4,36 +4,22 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { google } = require('googleapis');
 
-const app = express(); 
+const app = express();
 app.use(bodyParser.json());
 
 // Configuration
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "nakamaverifytoken";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "";
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || "";
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
+const GITHUB_USERNAME = process.env.GITHUB_USERNAME || "";
+const GITHUB_REPO = process.env.GITHUB_REPO || "nakamabot-data";
 const ADMIN_IDS = new Set(
     (process.env.ADMIN_IDS || "").split(",").map(id => id.trim()).filter(id => id)
 );
 
-// Configuration Google Drive - CORRIGÉE
-const GDRIVE_CONFIG = {
-    type: process.env.GOOGLE_TYPE || "service_account",
-    project_id: process.env.GOOGLE_PROJECT_ID || "",
-    private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID || "",
-    private_key: (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, '\n'),
-    client_email: process.env.GOOGLE_CLIENT_EMAIL || "",
-    client_id: process.env.GOOGLE_CLIENT_ID || "",
-    auth_uri: process.env.GOOGLE_AUTH_URI || "https://accounts.google.com/o/oauth2/auth",
-    token_uri: process.env.GOOGLE_TOKEN_URI || "https://oauth2.googleapis.com/token",
-    auth_provider_x509_cert_url: process.env.GOOGLE_AUTH_PROVIDER_X509_CERT_URL || "",
-    client_x509_cert_url: process.env.GOOGLE_CLIENT_X509_CERT_URL || ""
-};
-
-const GDRIVE_FOLDER_ID = process.env.GDRIVE_FOLDER_ID || "";
-
-// Mémoire du bot (stockage local)
+// Mémoire du bot (stockage local temporaire + sauvegarde permanente GitHub)
 const userMemory = new Map();
 const userList = new Set();
 const userLastImage = new Map();
@@ -46,307 +32,266 @@ const log = {
     debug: (msg) => console.log(`${new Date().toISOString()} - DEBUG - ${msg}`)
 };
 
-// === GOOGLE DRIVE INTEGRATION - VERSION CORRIGÉE ===
+// === GESTION GITHUB API ===
 
-let authClient = null;
-let drive = null;
+// Encoder en base64 pour GitHub
+function encodeBase64(content) {
+    return Buffer.from(JSON.stringify(content, null, 2), 'utf8').toString('base64');
+}
 
-// Initialiser Google Drive - VERSION SIMPLIFIÉE ET CORRIGÉE
-async function initGoogleDrive() {
+// Décoder depuis base64 GitHub
+function decodeBase64(content) {
+    return JSON.parse(Buffer.from(content, 'base64').toString('utf8'));
+}
+
+// URL de base pour l'API GitHub
+const getGitHubApiUrl = (filename) => {
+    return `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${filename}`;
+};
+
+// Créer le repository GitHub si nécessaire
+async function createGitHubRepo() {
+    if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+        log.error("❌ GITHUB_TOKEN ou GITHUB_USERNAME manquant pour créer le repo");
+        return false;
+    }
+
     try {
-        if (!GDRIVE_CONFIG.private_key || !GDRIVE_CONFIG.client_email || !GDRIVE_FOLDER_ID) {
-            log.warning("⚠️ Configuration Google Drive incomplète - sauvegarde désactivée");
-            log.warning(`⚠️ private_key: ${Boolean(GDRIVE_CONFIG.private_key)}`);
-            log.warning(`⚠️ client_email: ${Boolean(GDRIVE_CONFIG.client_email)}`);
-            log.warning(`⚠️ folder_id: ${Boolean(GDRIVE_FOLDER_ID)}`);
-            return false;
-        }
-
-        // Créer l'authentification JWT - TECHNIQUE RECOMMANDÉE
-        authClient = new google.auth.JWT(
-            GDRIVE_CONFIG.client_email,
-            null,
-            GDRIVE_CONFIG.private_key,
-            [
-                'https://www.googleapis.com/auth/drive',
-                'https://www.googleapis.com/auth/drive.file'
-            ]
+        // Vérifier si le repo existe déjà
+        const checkResponse = await axios.get(
+            `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            {
+                headers: {
+                    'Authorization': `token ${GITHUB_TOKEN}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                },
+                timeout: 10000
+            }
         );
+        
+        if (checkResponse.status === 200) {
+            log.info(`✅ Repository ${GITHUB_REPO} existe déjà`);
+            return true;
+        }
+    } catch (error) {
+        if (error.response?.status === 404) {
+            // Le repo n'existe pas, le créer
+            try {
+                const createResponse = await axios.post(
+                    'https://api.github.com/user/repos',
+                    {
+                        name: GITHUB_REPO,
+                        description: 'Sauvegarde des données NakamaBot - Créé automatiquement',
+                        private: true,
+                        auto_init: true
+                    },
+                    {
+                        headers: {
+                            'Authorization': `token ${GITHUB_TOKEN}`,
+                            'Accept': 'application/vnd.github.v3+json'
+                        },
+                        timeout: 15000
+                    }
+                );
 
-        // Initialiser le service Drive avec l'auth client
-        drive = google.drive({ version: 'v3', auth: authClient });
-        
-        log.info(`🔍 Test d'accès au dossier Google Drive ID: ${GDRIVE_FOLDER_ID}`);
-        log.info(`🔑 Service account: ${GDRIVE_CONFIG.client_email}`);
-        
-        // Test de connexion SIMPLIFIÉ
-        try {
-            // Tester l'authentification
-            const aboutResponse = await drive.about.get({ fields: 'user' });
-            log.info(`✅ Authentification réussie pour: ${aboutResponse.data.user?.emailAddress || 'Service Account'}`);
-            
-            // Tester l'accès au dossier
-            const folderResponse = await drive.files.get({ 
-                fileId: GDRIVE_FOLDER_ID,
-                fields: 'id, name'
-            });
-            
-            log.info(`✅ Accès au dossier réussi: "${folderResponse.data.name}" (ID: ${folderResponse.data.id})`);
-            
-            // Test d'écriture simple
-            const testResult = await createOrUpdateGDriveFile(`test_connection_${Date.now()}.json`, { test: true, timestamp: new Date().toISOString() });
-            if (testResult) {
-                log.info("✅ Test d'écriture réussi - permissions OK");
-                // Nettoyer le fichier de test
-                await deleteGDriveFile(`test_connection_${Date.now()}.json`);
-            } else {
-                log.warning("⚠️ Test d'écriture échoué - vérifiez les permissions du dossier");
+                if (createResponse.status === 201) {
+                    log.info(`🎉 Repository ${GITHUB_REPO} créé avec succès !`);
+                    log.info(`📝 URL: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
+                    return true;
+                }
+            } catch (createError) {
+                log.error(`❌ Erreur création repository: ${createError.message}`);
                 return false;
             }
-            
-            log.info("✅ Google Drive connecté et configuré avec succès !");
-            return true;
-            
-        } catch (accessError) {
-            log.error(`❌ Erreur d'accès au dossier Google Drive:`);
-            log.error(`   Status: ${accessError.code || 'N/A'}`);
-            log.error(`   Message: ${accessError.message}`);
-            
-            if (accessError.code === 404) {
-                log.error(`❌ SOLUTION REQUISE: Le dossier ${GDRIVE_FOLDER_ID} n'existe pas ou le service account n'y a pas accès`);
-                log.error(`❌ ÉTAPES À SUIVRE:`);
-                log.error(`   1. Vérifiez que l'ID du dossier est correct`);
-                log.error(`   2. Partagez le dossier avec l'email: ${GDRIVE_CONFIG.client_email}`);
-                log.error(`   3. Donnez des permissions 'Éditeur' au service account`);
-            } else if (accessError.code === 403) {
-                log.error(`❌ PERMISSIONS INSUFFISANTES: Le service account n'a pas les droits d'accès`);
-                log.error(`❌ SOLUTION: Partagez le dossier avec: ${GDRIVE_CONFIG.client_email} (permissions Éditeur)`);
-            }
-            
+        } else {
+            log.error(`❌ Erreur vérification repository: ${error.message}`);
             return false;
         }
-        
-    } catch (error) {
-        log.error(`❌ Erreur initialisation Google Drive: ${error.message}`);
-        if (error.message.includes('private_key')) {
-            log.error(`❌ Vérifiez que GOOGLE_PRIVATE_KEY est correctement formatée avec \\n pour les retours à la ligne`);
-        }
-        return false;
     }
+
+    return false;
 }
 
-// Créer ou mettre à jour un fichier - VERSION CORRIGÉE SELON VOTRE TECHNIQUE
-async function createOrUpdateGDriveFile(filename, jsonData) {
-    if (!drive || !authClient) {
-        log.warning("⚠️ Google Drive non initialisé");
-        return null;
+// Charger les données depuis GitHub
+async function loadDataFromGitHub() {
+    if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+        log.warning("⚠️ Configuration GitHub manquante, utilisation du stockage temporaire uniquement");
+        return;
     }
 
     try {
-        // Vérifier si le fichier existe déjà
-        const existingFiles = await drive.files.list({
-            q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
-            fields: 'files(id, name)'
+        log.info(`🔍 Tentative de chargement depuis GitHub: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
+        
+        const filename = 'nakamabot-data.json';
+        const url = getGitHubApiUrl(filename);
+        
+        const response = await axios.get(url, {
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json'
+            },
+            timeout: 10000
         });
 
-        if (existingFiles.data.files.length > 0) {
-            // Mettre à jour le fichier existant
-            const fileId = existingFiles.data.files[0].id;
-            const media = {
-                mimeType: 'application/json',
-                body: JSON.stringify(jsonData, null, 2)
-            };
+        if (response.status === 200 && response.data.content) {
+            const data = decodeBase64(response.data.content);
+            
+            // Charger userList
+            if (data.userList && Array.isArray(data.userList)) {
+                data.userList.forEach(userId => userList.add(userId));
+                log.info(`✅ ${data.userList.length} utilisateurs chargés depuis GitHub`);
+            }
 
-            const res = await drive.files.update({
-                fileId: fileId,
-                media: media,
-                fields: 'id'
-            });
+            // Charger userMemory
+            if (data.userMemory && typeof data.userMemory === 'object') {
+                Object.entries(data.userMemory).forEach(([userId, memory]) => {
+                    if (Array.isArray(memory)) {
+                        userMemory.set(userId, memory);
+                    }
+                });
+                log.info(`✅ ${Object.keys(data.userMemory).length} conversations chargées depuis GitHub`);
+            }
 
-            log.debug(`💾 Fichier ${filename} mis à jour sur Google Drive`);
-            return res?.data?.id || null;
+            // Charger userLastImage
+            if (data.userLastImage && typeof data.userLastImage === 'object') {
+                Object.entries(data.userLastImage).forEach(([userId, imageUrl]) => {
+                    userLastImage.set(userId, imageUrl);
+                });
+                log.info(`✅ ${Object.keys(data.userLastImage).length} images chargées depuis GitHub`);
+            }
+
+            log.info("🎉 Données chargées avec succès depuis GitHub !");
+        }
+    } catch (error) {
+        if (error.response?.status === 404) {
+            log.warning("📁 Aucune sauvegarde trouvée sur GitHub - Première utilisation");
+            log.info("🔧 Création du fichier de sauvegarde initial...");
+            
+            // Créer le repo si nécessaire
+            const repoCreated = await createGitHubRepo();
+            if (repoCreated) {
+                // Créer la première sauvegarde
+                await saveDataToGitHub();
+            }
+        } else if (error.response?.status === 401) {
+            log.error("❌ Token GitHub invalide (401) - Vérifiez votre GITHUB_TOKEN");
+        } else if (error.response?.status === 403) {
+            log.error("❌ Accès refusé GitHub (403) - Vérifiez les permissions de votre token");
         } else {
-            // Créer un nouveau fichier - TECHNIQUE EXACTE QUE VOUS AVEZ FOURNIE
-            const fileMetadata = {
-                name: filename,
-                mimeType: 'application/json',
-                parents: [GDRIVE_FOLDER_ID], // le dossier partagé !
-            };
-            
-            const media = {
-                mimeType: 'application/json',
-                body: JSON.stringify(jsonData, null, 2),
-            };
-            
-            const res = await drive.files.create({
-                requestBody: fileMetadata,
-                media,
-                fields: 'id',
-            });
-            
-            log.debug(`💾 Fichier ${filename} créé sur Google Drive`);
-            return res?.data?.id || null;
+            log.error(`❌ Erreur chargement GitHub: ${error.message}`);
+            if (error.response) {
+                log.error(`📊 Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data)}`);
+            }
         }
-
-    } catch (error) {
-        log.error(`❌ Erreur dans createOrUpdateGDriveFile: ${error.message}`);
-        if (error.code === 403) {
-            log.error(`❌ Permissions insuffisantes - vérifiez le partage du dossier`);
-        }
-        return null;
     }
 }
 
-// Supprimer un fichier - VERSION SIMPLIFIÉE
-async function deleteGDriveFile(filename) {
-    if (!drive) return false;
-    
-    try {
-        const files = await drive.files.list({
-            q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
-            fields: 'files(id)'
-        });
-
-        if (files.data.files.length > 0) {
-            const fileId = files.data.files[0].id;
-            await drive.files.delete({
-                fileId: fileId
-            });
-            return true;
-        }
-        return false;
-    } catch (error) {
-        log.error(`❌ Erreur suppression ${filename}: ${error.message}`);
-        return false;
-    }
-}
-
-// Sauvegarder sur Google Drive - SIMPLIFIÉE
-async function saveToGoogleDrive(filename, data) {
-    const fileId = await createOrUpdateGDriveFile(filename, data);
-    return Boolean(fileId);
-}
-
-// Charger depuis Google Drive - VERSION CORRIGÉE
-async function loadFromGoogleDrive(filename) {
-    if (!drive) {
-        log.warning("⚠️ Google Drive non initialisé");
-        return null;
+// Sauvegarder les données vers GitHub
+async function saveDataToGitHub() {
+    if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+        log.debug("🔄 Pas de sauvegarde GitHub (config manquante)");
+        return;
     }
 
     try {
-        const files = await drive.files.list({
-            q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
-            fields: 'files(id, name)'
-        });
-
-        if (files.data.files.length === 0) {
-            log.info(`📄 Fichier ${filename} non trouvé sur Google Drive`);
-            return null;
-        }
-
-        const fileId = files.data.files[0].id;
-        const response = await drive.files.get({
-            fileId: fileId,
-            alt: 'media'
-        });
-
-        const data = JSON.parse(response.data);
-        log.info(`📥 Fichier ${filename} chargé depuis Google Drive`);
-        return data;
-    } catch (error) {
-        log.error(`❌ Erreur chargement ${filename}: ${error.message}`);
-        return null;
-    }
-}
-
-// Sauvegarder toutes les données
-async function saveAllData() {
-    try {
-        const timestamp = new Date().toISOString();
+        log.debug(`💾 Tentative de sauvegarde sur GitHub: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
         
-        // Convertir les Maps et Sets en objets sérialisables
-        const userData = {
-            userMemory: Object.fromEntries(userMemory),
+        const filename = 'nakamabot-data.json';
+        const url = getGitHubApiUrl(filename);
+        
+        const dataToSave = {
             userList: Array.from(userList),
+            userMemory: Object.fromEntries(userMemory),
             userLastImage: Object.fromEntries(userLastImage),
-            lastSave: timestamp,
-            version: "4.0 Amicale + Vision - Corrigée"
+            lastUpdate: new Date().toISOString(),
+            version: "4.0 Amicale + Vision + GitHub",
+            totalUsers: userList.size,
+            totalConversations: userMemory.size,
+            totalImages: userLastImage.size,
+            bot: "NakamaBot",
+            creator: "Durand"
         };
 
-        const success = await saveToGoogleDrive('nakamabot_data.json', userData);
-        
-        if (success) {
-            log.info(`💾 Données sauvegardées avec succès (${userList.size} utilisateurs, ${userMemory.size} conversations)`);
+        const commitData = {
+            message: `🤖 Sauvegarde automatique NakamaBot - ${new Date().toISOString()}`,
+            content: encodeBase64(dataToSave)
+        };
+
+        // Vérifier si le fichier existe déjà pour obtenir le SHA
+        try {
+            const existingResponse = await axios.get(url, {
+                headers: {
+                    'Authorization': `token ${GITHUB_TOKEN}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                },
+                timeout: 10000
+            });
+
+            if (existingResponse.data?.sha) {
+                commitData.sha = existingResponse.data.sha;
+            }
+        } catch (error) {
+            // Fichier n'existe pas encore, pas de problème
+            log.debug("📝 Premier fichier, pas de SHA nécessaire");
         }
-        
-        return success;
+
+        const response = await axios.put(url, commitData, {
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json'
+            },
+            timeout: 15000
+        });
+
+        if (response.status === 200 || response.status === 201) {
+            log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs)`);
+        } else {
+            log.error(`❌ Erreur sauvegarde GitHub: ${response.status}`);
+        }
     } catch (error) {
-        log.error(`❌ Erreur sauvegarde complète: ${error.message}`);
-        return false;
+        if (error.response?.status === 404) {
+            log.error("❌ Repository GitHub introuvable pour la sauvegarde (404)");
+            log.error(`🔍 Repository utilisé: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
+            log.error("💡 Solutions:");
+            log.error("   1. Vérifiez que GITHUB_USERNAME et GITHUB_REPO sont corrects");
+            log.error("   2. Créez le repository manuellement sur GitHub");
+            log.error("   3. Ou utilisez la route /create-repo pour créer automatiquement");
+        } else if (error.response?.status === 401) {
+            log.error("❌ Token GitHub invalide pour la sauvegarde (401)");
+            log.error("💡 Vérifiez votre GITHUB_TOKEN");
+        } else if (error.response?.status === 403) {
+            log.error("❌ Accès refusé GitHub pour la sauvegarde (403)");
+            log.error("💡 Vérifiez les permissions de votre token (repo, contents)");
+        } else {
+            log.error(`❌ Erreur sauvegarde GitHub: ${error.message}`);
+            if (error.response) {
+                log.error(`📊 Status: ${error.response.status}`);
+                log.error(`📊 Data: ${JSON.stringify(error.response.data)}`);
+            }
+        }
     }
 }
 
-// Charger toutes les données
-async function loadAllData() {
-    try {
-        const userData = await loadFromGoogleDrive('nakamabot_data.json');
-        
-        if (!userData) {
-            log.info("📄 Aucune sauvegarde trouvée, démarrage avec des données vides");
-            return;
-        }
-
-        // Restaurer les données
-        if (userData.userMemory) {
-            userMemory.clear();
-            for (const [userId, memory] of Object.entries(userData.userMemory)) {
-                userMemory.set(userId, memory);
-            }
-        }
-
-        if (userData.userList) {
-            userList.clear();
-            userData.userList.forEach(userId => userList.add(userId));
-        }
-
-        if (userData.userLastImage) {
-            userLastImage.clear();
-            for (const [userId, imageUrl] of Object.entries(userData.userLastImage)) {
-                userLastImage.set(userId, imageUrl);
-            }
-        }
-
-        log.info(`📥 Données restaurées: ${userList.size} utilisateurs, ${userMemory.size} conversations, ${userLastImage.size} images`);
-        if (userData.lastSave) {
-            log.info(`📅 Dernière sauvegarde: ${userData.lastSave}`);
-        }
-    } catch (error) {
-        log.error(`❌ Erreur chargement des données: ${error.message}`);
-    }
-}
-
-// Sauvegarde automatique périodique
-let autoSaveInterval = null;
-
+// Sauvegarder automatiquement toutes les 5 minutes
+let saveInterval;
 function startAutoSave() {
-    // Sauvegarder toutes les 5 minutes
-    autoSaveInterval = setInterval(async () => {
-        await saveAllData();
-    }, 5 * 60 * 1000);
-    
-    log.info("🔄 Sauvegarde automatique activée (toutes les 5 minutes)");
-}
-
-function stopAutoSave() {
-    if (autoSaveInterval) {
-        clearInterval(autoSaveInterval);
-        autoSaveInterval = null;
-        log.info("🛑 Sauvegarde automatique désactivée");
+    if (saveInterval) {
+        clearInterval(saveInterval);
     }
+    
+    saveInterval = setInterval(async () => {
+        await saveDataToGitHub();
+    }, 5 * 60 * 1000); // 5 minutes
+    
+    log.info("🔄 Sauvegarde automatique GitHub activée (toutes les 5 minutes)");
 }
 
-// === FONCTIONS UTILITAIRES ORIGINALES ===
+// Sauvegarder lors de changements importants
+async function saveDataImmediate() {
+    await saveDataToGitHub();
+}
+
+// === UTILITAIRES ===
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -476,7 +421,7 @@ async function webSearch(query) {
     }
 }
 
-// Gestion de la mémoire avec sauvegarde automatique
+// Gestion de la mémoire avec sauvegarde
 function addToMemory(userId, msgType, content) {
     if (!userId || !msgType || !content) {
         return;
@@ -503,10 +448,10 @@ function addToMemory(userId, msgType, content) {
         memory.shift();
     }
     
-    // Sauvegarder de manière asynchrone (sans attendre)
-    saveAllData().catch(error => {
-        log.error(`❌ Erreur sauvegarde automatique: ${error.message}`);
-    });
+    // Sauvegarder de manière asynchrone (pas d'attente)
+    saveDataImmediate().catch(err => 
+        log.error(`❌ Erreur sauvegarde mémoire: ${err.message}`)
+    );
 }
 
 function getMemoryContext(userId) {
@@ -524,6 +469,8 @@ function getMemoryContext(userId) {
 function isAdmin(userId) {
     return ADMIN_IDS.has(String(userId));
 }
+
+// === FONCTIONS D'ENVOI AVEC SAUVEGARDE ===
 
 // Envoyer un message
 async function sendMessage(recipientId, text) {
@@ -625,12 +572,15 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
 
 const COMMANDS = new Map();
 
-// Contexte partagé pour toutes les commandes avec Google Drive
+// Contexte partagé pour toutes les commandes
 const commandContext = {
     // Variables globales
     VERIFY_TOKEN,
     PAGE_ACCESS_TOKEN,
     MISTRAL_API_KEY,
+    GITHUB_TOKEN,
+    GITHUB_USERNAME,
+    GITHUB_REPO,
     ADMIN_IDS,
     userMemory,
     userList,
@@ -649,11 +599,11 @@ const commandContext = {
     sendMessage,
     sendImageMessage,
     
-    // Fonctions Google Drive
-    saveAllData,
-    loadAllData,
-    saveToGoogleDrive,
-    loadFromGoogleDrive
+    // Fonctions de sauvegarde GitHub
+    saveDataToGitHub,
+    saveDataImmediate,
+    loadDataFromGitHub,
+    createGitHubRepo
 };
 
 // Fonction pour charger automatiquement toutes les commandes
@@ -738,7 +688,7 @@ async function processCommand(senderId, messageText) {
 // Route d'accueil
 app.get('/', (req, res) => {
     res.json({
-        status: "🤖 NakamaBot v4.0 Amicale + Vision + Google Drive Online ! 💖",
+        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub Online ! 💖",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: "2025",
@@ -746,7 +696,13 @@ app.get('/', (req, res) => {
         users: userList.size,
         conversations: userMemory.size,
         images_stored: userLastImage.size,
-        version: "4.0 Amicale + Vision + Google Drive - CORRIGÉE",
+        version: "4.0 Amicale + Vision + GitHub",
+        storage: {
+            type: "GitHub API",
+            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
+            auto_save: "Every 5 minutes"
+        },
         features: [
             "Génération d'images IA",
             "Transformation anime", 
@@ -755,96 +711,10 @@ app.get('/', (req, res) => {
             "Broadcast admin",
             "Recherche 2025",
             "Stats réservées admin",
-            "Sauvegarde Google Drive automatique"
+            "Sauvegarde permanente GitHub"
         ],
-        google_drive: {
-            enabled: Boolean(drive && authClient),
-            auto_save: Boolean(autoSaveInterval),
-            folder_id: GDRIVE_FOLDER_ID,
-            service_account: GDRIVE_CONFIG.client_email
-        },
         last_update: new Date().toISOString()
     });
-});
-
-// Route pour forcer une sauvegarde (admin seulement)
-app.post('/admin/save', async (req, res) => {
-    const adminId = req.body.admin_id;
-    
-    if (!adminId || !isAdmin(adminId)) {
-        return res.status(403).json({ error: "Accès refusé - Admin requis" });
-    }
-    
-    try {
-        const success = await saveAllData();
-        if (success) {
-            res.json({ 
-                success: true, 
-                message: "Sauvegarde forcée effectuée",
-                timestamp: new Date().toISOString(),
-                data: {
-                    users: userList.size,
-                    conversations: userMemory.size,
-                    images: userLastImage.size
-                }
-            });
-        } else {
-            res.status(500).json({ error: "Échec de la sauvegarde" });
-        }
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Route pour restaurer les données (admin seulement)
-app.post('/admin/restore', async (req, res) => {
-    const adminId = req.body.admin_id;
-    
-    if (!adminId || !isAdmin(adminId)) {
-        return res.status(403).json({ error: "Accès refusé - Admin requis" });
-    }
-    
-    try {
-        await loadAllData();
-        res.json({ 
-            success: true, 
-            message: "Données restaurées depuis Google Drive",
-            timestamp: new Date().toISOString(),
-            data: {
-                users: userList.size,
-                conversations: userMemory.size,
-                images: userLastImage.size
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Route pour tester la connexion Google Drive (admin seulement)
-app.post('/admin/test-gdrive', async (req, res) => {
-    const adminId = req.body.admin_id;
-    
-    if (!adminId || !isAdmin(adminId)) {
-        return res.status(403).json({ error: "Accès refusé - Admin requis" });
-    }
-    
-    try {
-        const testResult = await initGoogleDrive();
-        res.json({ 
-            success: testResult,
-            message: testResult ? "Test Google Drive réussi" : "Test Google Drive échoué",
-            details: {
-                service_initialized: Boolean(drive && authClient),
-                folder_id: GDRIVE_FOLDER_ID,
-                service_account: GDRIVE_CONFIG.client_email,
-                auto_save_active: Boolean(autoSaveInterval)
-            },
-            timestamp: new Date().toISOString()
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
 });
 
 // Webhook Facebook Messenger
@@ -884,8 +754,17 @@ app.post('/webhook', async (req, res) => {
                 
                 // Messages non-echo
                 if (event.message && !event.message.is_echo) {
-                    // Ajouter utilisateur (automatiquement sauvegardé via addToMemory)
+                    // Ajouter utilisateur avec sauvegarde
+                    const wasNewUser = !userList.has(senderIdStr);
                     userList.add(senderIdStr);
+                    
+                    if (wasNewUser) {
+                        log.info(`👋 Nouvel utilisateur: ${senderId}`);
+                        // Sauvegarder immédiatement pour les nouveaux utilisateurs
+                        saveDataImmediate().catch(err => 
+                            log.error(`❌ Erreur sauvegarde nouvel utilisateur: ${err.message}`)
+                        );
+                    }
                     
                     // Vérifier si c'est une image
                     if (event.message.attachments) {
@@ -897,10 +776,10 @@ app.post('/webhook', async (req, res) => {
                                     userLastImage.set(senderIdStr, imageUrl);
                                     log.info(`📸 Image reçue de ${senderId}`);
                                     
-                                    // Déclencher une sauvegarde
-                                    saveAllData().catch(error => {
-                                        log.error(`❌ Erreur sauvegarde image: ${error.message}`);
-                                    });
+                                    // Sauvegarder l'image
+                                    saveDataImmediate().catch(err => 
+                                        log.error(`❌ Erreur sauvegarde image: ${err.message}`)
+                                    );
                                     
                                     // Répondre automatiquement
                                     const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
@@ -956,6 +835,154 @@ app.post('/webhook', async (req, res) => {
     res.status(200).json({ status: "ok" });
 });
 
+// Route pour créer un nouveau repository GitHub (admin seulement)
+app.post('/create-repo', async (req, res) => {
+    try {
+        if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+            return res.status(400).json({
+                success: false,
+                error: "GITHUB_TOKEN ou GITHUB_USERNAME manquant"
+            });
+        }
+
+        const repoCreated = await createGitHubRepo();
+        
+        if (repoCreated) {
+            res.json({
+                success: true,
+                message: "Repository GitHub créé avec succès !",
+                repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+                url: `https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`,
+                instructions: [
+                    "Le repository a été créé automatiquement",
+                    "Les données seront sauvegardées automatiquement",
+                    "Vérifiez que le repository est privé pour la sécurité"
+                ],
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: "Impossible de créer le repository"
+            });
+        }
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Route pour tester la connexion GitHub
+app.get('/test-github', async (req, res) => {
+    try {
+        if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+            return res.status(400).json({
+                success: false,
+                error: "Configuration GitHub manquante",
+                missing: {
+                    token: !GITHUB_TOKEN,
+                    username: !GITHUB_USERNAME
+                }
+            });
+        }
+
+        // Tester l'accès au repository
+        const repoUrl = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}`;
+        const response = await axios.get(repoUrl, {
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json'
+            },
+            timeout: 10000
+        });
+
+        res.json({
+            success: true,
+            message: "Connexion GitHub OK !",
+            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            url: `https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            status: response.status,
+            private: response.data.private,
+            created_at: response.data.created_at,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        let errorMessage = error.message;
+        let suggestions = [];
+
+        if (error.response?.status === 404) {
+            errorMessage = "Repository introuvable (404)";
+            suggestions = [
+                "Vérifiez que GITHUB_USERNAME et GITHUB_REPO sont corrects",
+                "Utilisez POST /create-repo pour créer automatiquement le repository"
+            ];
+        } else if (error.response?.status === 401) {
+            errorMessage = "Token GitHub invalide (401)";
+            suggestions = ["Vérifiez votre GITHUB_TOKEN"];
+        } else if (error.response?.status === 403) {
+            errorMessage = "Accès refusé (403)";
+            suggestions = ["Vérifiez les permissions de votre token (repo, contents)"];
+        }
+
+        res.status(error.response?.status || 500).json({
+            success: false,
+            error: errorMessage,
+            suggestions: suggestions,
+            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Route pour forcer une sauvegarde
+app.post('/force-save', async (req, res) => {
+    try {
+        await saveDataToGitHub();
+        res.json({
+            success: true,
+            message: "Données sauvegardées avec succès sur GitHub !",
+            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            timestamp: new Date().toISOString(),
+            stats: {
+                users: userList.size,
+                conversations: userMemory.size,
+                images: userLastImage.size
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Route pour recharger les données depuis GitHub
+app.post('/reload-data', async (req, res) => {
+    try {
+        await loadDataFromGitHub();
+        res.json({
+            success: true,
+            message: "Données rechargées avec succès depuis GitHub !",
+            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            timestamp: new Date().toISOString(),
+            stats: {
+                users: userList.size,
+                conversations: userMemory.size,
+                images: userLastImage.size
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // Statistiques publiques limitées
 app.get('/stats', (req, res) => {
     res.json({
@@ -963,10 +990,16 @@ app.get('/stats', (req, res) => {
         conversations_count: userMemory.size,
         images_stored: userLastImage.size,
         commands_available: COMMANDS.size,
-        version: "4.0 Amicale + Vision + Google Drive - CORRIGÉE",
+        version: "4.0 Amicale + Vision + GitHub",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: 2025,
+        storage: {
+            type: "GitHub API",
+            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
+            auto_save_interval: "5 minutes"
+        },
         features: [
             "AI Image Generation",
             "Anime Transformation", 
@@ -974,17 +1007,13 @@ app.get('/stats', (req, res) => {
             "Friendly Chat",
             "Admin Stats",
             "Help Suggestions",
-            "Google Drive Auto-Save"
+            "GitHub Persistent Storage"
         ],
-        google_drive: {
-            enabled: Boolean(drive && authClient),
-            auto_save_active: Boolean(autoSaveInterval)
-        },
         note: "Statistiques détaillées réservées aux admins via /stats"
     });
 });
 
-// Santé du bot - AMÉLIORÉE
+// Santé du bot
 app.get('/health', (req, res) => {
     const healthStatus = {
         status: "healthy",
@@ -993,8 +1022,7 @@ app.get('/health', (req, res) => {
             ai: Boolean(MISTRAL_API_KEY),
             vision: Boolean(MISTRAL_API_KEY),
             facebook: Boolean(PAGE_ACCESS_TOKEN),
-            google_drive: Boolean(drive && authClient),
-            auto_save: Boolean(autoSaveInterval)
+            github_storage: Boolean(GITHUB_TOKEN && GITHUB_USERNAME)
         },
         data: {
             users: userList.size,
@@ -1002,13 +1030,9 @@ app.get('/health', (req, res) => {
             images_stored: userLastImage.size,
             commands_loaded: COMMANDS.size
         },
-        google_drive_details: {
-            service_account: GDRIVE_CONFIG.client_email,
-            folder_id: GDRIVE_FOLDER_ID,
-            connected: Boolean(drive && authClient)
-        },
-        version: "4.0 Amicale + Vision + Google Drive - CORRIGÉE",
+        version: "4.0 Amicale + Vision + GitHub",
         creator: "Durand",
+        repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
         timestamp: new Date().toISOString()
     };
     
@@ -1020,14 +1044,11 @@ app.get('/health', (req, res) => {
     if (!PAGE_ACCESS_TOKEN) {
         issues.push("Token Facebook manquant");
     }
+    if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+        issues.push("Configuration GitHub manquante");
+    }
     if (COMMANDS.size === 0) {
         issues.push("Aucune commande chargée");
-    }
-    if (!drive || !authClient) {
-        issues.push("Google Drive non connecté - Vérifiez les permissions du dossier");
-    }
-    if (!autoSaveInterval) {
-        issues.push("Sauvegarde automatique inactive");
     }
     
     if (issues.length > 0) {
@@ -1039,17 +1060,70 @@ app.get('/health', (req, res) => {
     res.status(statusCode).json(healthStatus);
 });
 
-// === DÉMARRAGE AMÉLIORÉ ===
+// Route pour voir l'historique des commits GitHub
+app.get('/github-history', async (req, res) => {
+    try {
+        if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+            return res.status(400).json({
+                success: false,
+                error: "Configuration GitHub manquante"
+            });
+        }
+
+        const commitsUrl = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/commits`;
+        const response = await axios.get(commitsUrl, {
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json'
+            },
+            params: {
+                per_page: 10 // Derniers 10 commits
+            },
+            timeout: 10000
+        });
+
+        const commits = response.data.map(commit => ({
+            message: commit.commit.message,
+            date: commit.commit.author.date,
+            sha: commit.sha.substring(0, 7),
+            author: commit.commit.author.name
+        }));
+
+        res.json({
+            success: true,
+            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            commits: commits,
+            total_shown: commits.length,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        res.status(error.response?.status || 500).json({
+            success: false,
+            error: error.message,
+            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`
+        });
+    }
+});
+
+// === DÉMARRAGE ===
 
 const PORT = process.env.PORT || 5000;
 
 async function startBot() {
-    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + Google Drive - VERSION CORRIGÉE");
+    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub");
     log.info("💖 Personnalité super gentille et amicale, comme une très bonne amie");
     log.info("👨‍💻 Créée par Durand");
     log.info("📅 Année: 2025");
 
-    // Vérifier variables critiques d'abord
+    // Charger les données depuis GitHub
+    log.info("📥 Chargement des données depuis GitHub...");
+    await loadDataFromGitHub();
+
+    // Charger toutes les commandes
+    loadCommands();
+
+    // Vérifier variables
     const missingVars = [];
     if (!PAGE_ACCESS_TOKEN) {
         missingVars.push("PAGE_ACCESS_TOKEN");
@@ -1057,117 +1131,80 @@ async function startBot() {
     if (!MISTRAL_API_KEY) {
         missingVars.push("MISTRAL_API_KEY");
     }
-    if (!GDRIVE_FOLDER_ID) {
-        missingVars.push("GDRIVE_FOLDER_ID");
+    if (!GITHUB_TOKEN) {
+        missingVars.push("GITHUB_TOKEN");
     }
-    if (!GDRIVE_CONFIG.client_email) {
-        missingVars.push("GOOGLE_CLIENT_EMAIL");
-    }
-    if (!GDRIVE_CONFIG.private_key) {
-        missingVars.push("GOOGLE_PRIVATE_KEY");
+    if (!GITHUB_USERNAME) {
+        missingVars.push("GITHUB_USERNAME");
     }
 
     if (missingVars.length > 0) {
-        log.error(`❌ Variables manquantes CRITIQUES: ${missingVars.join(', ')}`);
-        log.error("❌ Le bot ne pourra pas fonctionner correctement sans ces variables !");
+        log.error(`❌ Variables manquantes: ${missingVars.join(', ')}`);
     } else {
-        log.info("✅ Toutes les variables d'environnement critiques sont présentes");
+        log.info("✅ Configuration complète OK");
     }
-
-    // Initialiser Google Drive avec diagnostic détaillé
-    log.info("🔧 Initialisation Google Drive...");
-    const driveInitialized = await initGoogleDrive();
-    
-    if (driveInitialized) {
-        log.info("✅ Google Drive initialisé avec succès !");
-        
-        // Charger les données existantes
-        log.info("📥 Chargement des données existantes...");
-        await loadAllData();
-        
-        // Démarrer la sauvegarde automatique
-        startAutoSave();
-    } else {
-        log.error("❌ Google Drive non initialisé - Sauvegarde désactivée");
-        log.error("🛠️ ACTIONS REQUISES POUR CORRIGER:");
-        log.error(`   1. Vérifiez que le dossier ${GDRIVE_FOLDER_ID} existe`);
-        log.error(`   2. Partagez ce dossier avec: ${GDRIVE_CONFIG.client_email || 'SERVICE_ACCOUNT_EMAIL'}`);
-        log.error(`   3. Donnez des permissions 'Éditeur' au service account`);
-        log.error(`   4. Vérifiez que GOOGLE_PRIVATE_KEY est correctement formatée`);
-    }
-
-    // Charger toutes les commandes
-    log.info("📂 Chargement des commandes...");
-    loadCommands();
 
     log.info(`🎨 ${COMMANDS.size} commandes disponibles`);
-    log.info(`🔐 ${ADMIN_IDS.size} administrateurs configurés`);
-    log.info(`👥 ${userList.size} utilisateurs chargés`);
-    log.info(`💬 ${userMemory.size} conversations restaurées`);
-    log.info(`📸 ${userLastImage.size} images en mémoire`);
-    log.info(`💾 Google Drive: ${drive && authClient ? '✅ Connecté' : '❌ Déconnecté'}`);
-    log.info(`🔄 Sauvegarde auto: ${autoSaveInterval ? '✅ Active (5min)' : '❌ Inactive'}`);
+    log.info(`👥 ${userList.size} utilisateurs en mémoire`);
+    log.info(`💬 ${userMemory.size} conversations en mémoire`);
+    log.info(`🖼️ ${userLastImage.size} images en mémoire`);
+    log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
+    log.info(`📂 Repository: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
     log.info(`🌐 Serveur sur le port ${PORT}`);
     
-    if (drive && authClient) {
-        log.info("🎉 NakamaBot Amicale + Vision + Google Drive prête à aider avec gentillesse !");
-    } else {
-        log.warning("⚠️ NakamaBot démarrée SANS Google Drive - Fonctionnement dégradé");
-    }
+    // Démarrer la sauvegarde automatique
+    startAutoSave();
+    
+    log.info("🎉 NakamaBot Amicale + Vision + GitHub prête à aider avec gentillesse !");
 
     app.listen(PORT, () => {
         log.info(`🌐 Serveur démarré sur le port ${PORT}`);
-        log.info("🔗 Routes disponibles:");
-        log.info("   GET /           - Statut du bot");
-        log.info("   GET /health     - Santé détaillée");
-        log.info("   GET /stats      - Statistiques publiques");
-        log.info("   POST /admin/*   - Routes administrateur");
+        log.info("💾 Sauvegarde automatique GitHub activée");
+        log.info(`📊 Dashboard: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
     });
 }
 
-// Gestion propre de l'arrêt avec sauvegarde finale - AMÉLIORÉE
-async function gracefulShutdown(signal) {
-    log.info(`🛑 Signal ${signal} reçu - Arrêt du bot avec tendresse...`);
+// Fonction de nettoyage lors de l'arrêt
+async function gracefulShutdown() {
+    log.info("🛑 Arrêt du bot avec tendresse...");
     
     // Arrêter la sauvegarde automatique
-    stopAutoSave();
-    
-    // Effectuer une dernière sauvegarde si Google Drive est disponible
-    if (drive && authClient) {
-        try {
-            log.info("💾 Sauvegarde finale en cours...");
-            const success = await saveAllData();
-            if (success) {
-                log.info("💾 Sauvegarde finale terminée avec succès");
-            } else {
-                log.warning("⚠️ Échec de la sauvegarde finale");
-            }
-        } catch (error) {
-            log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
-        }
-    } else {
-        log.warning("⚠️ Google Drive non disponible - Sauvegarde finale ignorée");
+    if (saveInterval) {
+        clearInterval(saveInterval);
+        log.info("⏹️ Sauvegarde automatique arrêtée");
     }
     
-    log.info("👋 NakamaBot s'arrête avec amour - À bientôt !");
+    // Sauvegarder une dernière fois
+    try {
+        log.info("💾 Sauvegarde finale des données sur GitHub...");
+        await saveDataToGitHub();
+        log.info("✅ Données sauvegardées avec succès !");
+    } catch (error) {
+        log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
+    }
+    
+    log.info("👋 Au revoir ! Données sauvegardées sur GitHub !");
+    log.info(`📂 Repository: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
     process.exit(0);
 }
 
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+// Gestion propre de l'arrêt
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
 
 // Gestion des erreurs non capturées
-process.on('unhandledRejection', (reason, promise) => {
-    log.error(`❌ Promesse non gérée: ${reason}`);
+process.on('uncaughtException', async (error) => {
+    log.error(`❌ Erreur non capturée: ${error.message}`);
+    await gracefulShutdown();
 });
 
-process.on('uncaughtException', (error) => {
-    log.error(`❌ Exception non capturée: ${error.message}`);
-    gracefulShutdown('UNCAUGHT_EXCEPTION');
+process.on('unhandledRejection', async (reason, promise) => {
+    log.error(`❌ Promesse rejetée: ${reason}`);
+    await gracefulShutdown();
 });
 
 // Démarrer le bot
 startBot().catch(error => {
-    log.error(`❌ Erreur fatale au démarrage: ${error.message}`);
+    log.error(`❌ Erreur démarrage: ${error.message}`);
     process.exit(1);
 });
