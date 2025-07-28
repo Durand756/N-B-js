@@ -33,6 +33,53 @@ const log = {
 
 // === GESTION JSONBIN.IO ===
 
+// Créer un nouveau bin JSONBin
+async function createNewJSONBin() {
+    if (!JSONBIN_API_KEY) {
+        log.error("❌ JSONBIN_API_KEY manquant pour créer un nouveau bin");
+        return null;
+    }
+
+    try {
+        const initialData = {
+            userList: [],
+            userMemory: {},
+            userLastImage: {},
+            lastUpdate: new Date().toISOString(),
+            version: "4.0 Amicale + Vision + JSONBin",
+            totalUsers: 0,
+            totalConversations: 0,
+            totalImages: 0,
+            created: new Date().toISOString(),
+            bot: "NakamaBot"
+        };
+
+        const response = await axios.post(
+            'https://api.jsonbin.io/v3/b',
+            initialData,
+            {
+                headers: {
+                    'X-Master-Key': JSONBIN_API_KEY,
+                    'Content-Type': 'application/json',
+                    'X-Bin-Name': 'NakamaBot-Data'
+                },
+                timeout: 15000
+            }
+        );
+
+        if (response.status === 200 || response.status === 201) {
+            const newBinId = response.data.metadata.id;
+            log.info(`🎉 Nouveau bin JSONBin créé avec succès !`);
+            log.info(`📝 Nouvel ID de bin: ${newBinId}`);
+            log.info(`⚠️  Veuillez mettre à jour votre variable JSONBIN_BIN_ID avec: ${newBinId}`);
+            return newBinId;
+        }
+    } catch (error) {
+        log.error(`❌ Erreur création bin JSONBin: ${error.message}`);
+        return null;
+    }
+}
+
 // Charger les données depuis JSONBin
 async function loadDataFromJSONBin() {
     if (!JSONBIN_API_KEY || !JSONBIN_BIN_ID) {
@@ -41,6 +88,8 @@ async function loadDataFromJSONBin() {
     }
 
     try {
+        log.info(`🔍 Tentative de chargement du bin: ${JSONBIN_BIN_ID}`);
+        
         const response = await axios.get(
             `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`,
             {
@@ -83,10 +132,25 @@ async function loadDataFromJSONBin() {
         }
     } catch (error) {
         if (error.response?.status === 404) {
-            log.info("📝 Bin JSONBin vide, initialisation des données...");
-            await saveDataToJSONBin();
+            log.warning("❌ Bin JSONBin introuvable (404) - Le bin n'existe pas ou l'ID est incorrect");
+            log.info("🔧 Tentative de création d'un nouveau bin...");
+            
+            const newBinId = await createNewJSONBin();
+            if (newBinId) {
+                log.info("✅ Nouveau bin créé, mais vous devez mettre à jour JSONBIN_BIN_ID");
+                log.info("⚠️  Redémarrez l'application après avoir mis à jour la variable d'environnement");
+            } else {
+                log.error("❌ Impossible de créer un nouveau bin");
+            }
+        } else if (error.response?.status === 401) {
+            log.error("❌ Clé API JSONBin invalide (401) - Vérifiez votre JSONBIN_API_KEY");
+        } else if (error.response?.status === 403) {
+            log.error("❌ Accès refusé JSONBin (403) - Vérifiez les permissions de votre clé API");
         } else {
             log.error(`❌ Erreur chargement JSONBin: ${error.message}`);
+            if (error.response) {
+                log.error(`📊 Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data)}`);
+            }
         }
     }
 }
@@ -99,12 +163,14 @@ async function saveDataToJSONBin() {
     }
 
     try {
+        log.debug(`💾 Tentative de sauvegarde sur bin: ${JSONBIN_BIN_ID}`);
+        
         const dataToSave = {
             userList: Array.from(userList),
             userMemory: Object.fromEntries(userMemory),
             userLastImage: Object.fromEntries(userLastImage),
             lastUpdate: new Date().toISOString(),
-            version: "4.0 Amicale + Vision",
+            version: "4.0 Amicale + Vision + JSONBin",
             totalUsers: userList.size,
             totalConversations: userMemory.size,
             totalImages: userLastImage.size
@@ -128,7 +194,26 @@ async function saveDataToJSONBin() {
             log.error(`❌ Erreur sauvegarde JSONBin: ${response.status}`);
         }
     } catch (error) {
-        log.error(`❌ Erreur sauvegarde JSONBin: ${error.message}`);
+        if (error.response?.status === 404) {
+            log.error("❌ Bin JSONBin introuvable pour la sauvegarde (404)");
+            log.error(`🔍 Bin ID utilisé: ${JSONBIN_BIN_ID}`);
+            log.error("💡 Solutions:");
+            log.error("   1. Vérifiez que le JSONBIN_BIN_ID est correct");
+            log.error("   2. Créez un nouveau bin sur jsonbin.io");
+            log.error("   3. Ou utilisez la route /create-bin pour créer automatiquement un nouveau bin");
+        } else if (error.response?.status === 401) {
+            log.error("❌ Clé API JSONBin invalide pour la sauvegarde (401)");
+            log.error("💡 Vérifiez votre JSONBIN_API_KEY");
+        } else if (error.response?.status === 403) {
+            log.error("❌ Accès refusé JSONBin pour la sauvegarde (403)");
+            log.error("💡 Vérifiez les permissions de votre clé API");
+        } else {
+            log.error(`❌ Erreur sauvegarde JSONBin: ${error.message}`);
+            if (error.response) {
+                log.error(`📊 Status: ${error.response.status}`);
+                log.error(`📊 Data: ${JSON.stringify(error.response.data)}`);
+            }
+        }
     }
 }
 
@@ -692,7 +777,103 @@ app.post('/webhook', async (req, res) => {
     res.status(200).json({ status: "ok" });
 });
 
-// Route pour forcer la sauvegarde (admin seulement)
+// Route pour créer un nouveau bin JSONBin (admin seulement)
+app.post('/create-bin', async (req, res) => {
+    try {
+        if (!JSONBIN_API_KEY) {
+            return res.status(400).json({
+                success: false,
+                error: "JSONBIN_API_KEY manquant"
+            });
+        }
+
+        const newBinId = await createNewJSONBin();
+        
+        if (newBinId) {
+            res.json({
+                success: true,
+                message: "Nouveau bin JSONBin créé avec succès !",
+                newBinId: newBinId,
+                instructions: [
+                    `Mettez à jour votre variable d'environnement: JSONBIN_BIN_ID=${newBinId}`,
+                    "Redémarrez l'application pour utiliser le nouveau bin",
+                    "Les données actuelles seront sauvegardées automatiquement"
+                ],
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: "Impossible de créer un nouveau bin"
+            });
+        }
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Route pour tester la connexion JSONBin
+app.get('/test-jsonbin', async (req, res) => {
+    try {
+        if (!JSONBIN_API_KEY || !JSONBIN_BIN_ID) {
+            return res.status(400).json({
+                success: false,
+                error: "Configuration JSONBin manquante",
+                missing: {
+                    api_key: !JSONBIN_API_KEY,
+                    bin_id: !JSONBIN_BIN_ID
+                }
+            });
+        }
+
+        // Tester la lecture
+        const response = await axios.get(
+            `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`,
+            {
+                headers: {
+                    'X-Master-Key': JSONBIN_API_KEY,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000
+            }
+        );
+
+        res.json({
+            success: true,
+            message: "Connexion JSONBin OK !",
+            bin_id: JSONBIN_BIN_ID,
+            status: response.status,
+            data_exists: Boolean(response.data.record),
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        let errorMessage = error.message;
+        let suggestions = [];
+
+        if (error.response?.status === 404) {
+            errorMessage = "Bin introuvable (404)";
+            suggestions = [
+                "Vérifiez que le JSONBIN_BIN_ID est correct",
+                "Utilisez POST /create-bin pour créer un nouveau bin"
+            ];
+        } else if (error.response?.status === 401) {
+            errorMessage = "Clé API invalide (401)";
+            suggestions = ["Vérifiez votre JSONBIN_API_KEY"];
+        }
+
+        res.status(error.response?.status || 500).json({
+            success: false,
+            error: errorMessage,
+            suggestions: suggestions,
+            bin_id: JSONBIN_BIN_ID,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
 app.post('/force-save', async (req, res) => {
     try {
         await saveDataToJSONBin();
