@@ -572,7 +572,6 @@ async function sendMessage(recipientId, text) {
         }
     }
 }
-
 // Envoyer une image
 async function sendImageMessage(recipientId, imageUrl, caption = "") {
     if (!PAGE_ACCESS_TOKEN) {
@@ -802,6 +801,8 @@ app.get('/webhook', (req, res) => {
     }
 });
 
+// Remplacez la route POST /webhook existante par cette version corrigée
+
 app.post('/webhook', async (req, res) => {
     try {
         const data = req.body;
@@ -855,6 +856,8 @@ app.post('/webhook', async (req, res) => {
                                     
                                     if (sendResult.success) {
                                         log.info(`✅ Réponse image envoyée à ${senderId}`);
+                                        addToMemory(senderIdStr, 'user', '[Image envoyée]');
+                                        addToMemory(senderIdStr, 'assistant', response);
                                     } else {
                                         log.error(`❌ Échec envoi réponse image à ${senderId}: ${sendResult.error}`);
                                     }
@@ -872,6 +875,9 @@ app.post('/webhook', async (req, res) => {
                         if (messageText) {
                             log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}`);
                             
+                            // Ajouter le message utilisateur à la mémoire
+                            addToMemory(senderIdStr, 'user', messageText);
+                            
                             try {
                                 // Traiter commande
                                 const response = await processCommand(senderId, messageText);
@@ -884,12 +890,17 @@ app.post('/webhook', async (req, res) => {
                                         
                                         if (sendResult.success) {
                                             log.info(`✅ Image générée envoyée à ${senderId}`);
+                                            // Ajouter la réponse image à la mémoire
+                                            const memoryText = response.caption || `[Image générée: ${response.url}]`;
+                                            addToMemory(senderIdStr, 'assistant', memoryText);
                                         } else {
                                             log.error(`❌ Échec envoi image générée à ${senderId}: ${sendResult.error}`);
                                             // Fallback texte
-                                            const fallbackResult = await sendMessage(senderId, "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕");
+                                            const fallbackMsg = "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕";
+                                            const fallbackResult = await sendMessage(senderId, fallbackMsg);
                                             if (fallbackResult.success) {
                                                 log.info(`✅ Message fallback envoyé à ${senderId}`);
+                                                addToMemory(senderIdStr, 'assistant', fallbackMsg);
                                             } else {
                                                 log.error(`❌ Échec envoi fallback à ${senderId}: ${fallbackResult.error}`);
                                             }
@@ -900,13 +911,17 @@ app.post('/webhook', async (req, res) => {
                                         
                                         if (sendResult.success) {
                                             log.info(`✅ Réponse envoyée à ${senderId}`);
+                                            // Ajouter la réponse à la mémoire seulement si envoyée avec succès
+                                            addToMemory(senderIdStr, 'assistant', response);
                                         } else {
                                             log.error(`❌ Échec envoi réponse à ${senderId}: ${sendResult.error}`);
                                             
                                             // Essayer d'envoyer un message d'erreur générique
-                                            const errorResult = await sendMessage(senderId, "💔 Oh non ! Petite erreur technique ! Réessaie dans quelques secondes ! 💕");
+                                            const errorMsg = "💔 Oh non ! Petite erreur technique ! Réessaie dans quelques secondes ! 💕";
+                                            const errorResult = await sendMessage(senderId, errorMsg);
                                             if (errorResult.success) {
                                                 log.info(`✅ Message d'erreur envoyé à ${senderId}`);
+                                                addToMemory(senderIdStr, 'assistant', errorMsg);
                                             } else {
                                                 log.error(`❌ Impossible d'envoyer même le message d'erreur à ${senderId}`);
                                             }
@@ -915,9 +930,11 @@ app.post('/webhook', async (req, res) => {
                                         log.warning(`⚠️ Réponse invalide pour ${senderId}: ${typeof response} - ${JSON.stringify(response).substring(0, 100)}`);
                                         
                                         // Envoyer un message d'erreur
-                                        const errorResult = await sendMessage(senderId, "🤔 Hmm, j'ai eu un petit souci avec ma réponse ! Peux-tu réessayer ? 💕");
+                                        const errorMsg = "🤔 Hmm, j'ai eu un petit souci avec ma réponse ! Peux-tu réessayer ? 💕";
+                                        const errorResult = await sendMessage(senderId, errorMsg);
                                         if (errorResult.success) {
                                             log.info(`✅ Message d'erreur réponse invalide envoyé à ${senderId}`);
+                                            addToMemory(senderIdStr, 'assistant', errorMsg);
                                         } else {
                                             log.error(`❌ Échec envoi message d'erreur à ${senderId}: ${errorResult.error}`);
                                         }
@@ -926,9 +943,11 @@ app.post('/webhook', async (req, res) => {
                                     log.warning(`⚠️ Aucune réponse générée pour ${senderId} avec le message: ${messageText}`);
                                     
                                     // Envoyer une réponse par défaut
-                                    const defaultResult = await sendMessage(senderId, "🤖 Désolée, je n'ai pas bien compris ! Tape /help pour voir ce que je peux faire ! ✨");
+                                    const defaultMsg = "🤖 Désolée, je n'ai pas bien compris ! Tape /help pour voir ce que je peux faire ! ✨";
+                                    const defaultResult = await sendMessage(senderId, defaultMsg);
                                     if (defaultResult.success) {
                                         log.info(`✅ Réponse par défaut envoyée à ${senderId}`);
+                                        addToMemory(senderIdStr, 'assistant', defaultMsg);
                                     } else {
                                         log.error(`❌ Échec envoi réponse par défaut à ${senderId}: ${defaultResult.error}`);
                                     }
@@ -937,9 +956,11 @@ app.post('/webhook', async (req, res) => {
                                 log.error(`❌ Erreur traitement commande pour ${senderId}: ${commandError.message}`);
                                 
                                 // Envoyer un message d'erreur à l'utilisateur
-                                const errorResult = await sendMessage(senderId, "💥 Oups ! J'ai eu un petit problème ! Réessaie ou tape /help ! 💕");
+                                const errorMsg = "💥 Oups ! J'ai eu un petit problème ! Réessaie ou tape /help ! 💕";
+                                const errorResult = await sendMessage(senderId, errorMsg);
                                 if (errorResult.success) {
                                     log.info(`✅ Message d'erreur commande envoyé à ${senderId}`);
+                                    addToMemory(senderIdStr, 'assistant', errorMsg);
                                 } else {
                                     log.error(`❌ Échec envoi message d'erreur commande à ${senderId}: ${errorResult.error}`);
                                 }
@@ -948,9 +969,11 @@ app.post('/webhook', async (req, res) => {
                             log.warning(`⚠️ Message vide reçu de ${senderId}`);
                             
                             // Répondre pour les messages vides
-                            const emptyResult = await sendMessage(senderId, "🤔 J'ai reçu un message vide ! Écris-moi quelque chose ou tape /help ! 💕");
+                            const emptyMsg = "🤔 J'ai reçu un message vide ! Écris-moi quelque chose ou tape /help ! 💕";
+                            const emptyResult = await sendMessage(senderId, emptyMsg);
                             if (emptyResult.success) {
                                 log.info(`✅ Réponse message vide envoyée à ${senderId}`);
+                                addToMemory(senderIdStr, 'assistant', emptyMsg);
                             } else {
                                 log.error(`❌ Échec envoi réponse message vide à ${senderId}: ${emptyResult.error}`);
                             }
