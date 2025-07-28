@@ -520,47 +520,98 @@ function isAdmin(userId) {
 
 // Envoyer un message
 async function sendMessage(recipientId, text) {
+    // Vérification du token
     if (!PAGE_ACCESS_TOKEN) {
-        log.error("❌ PAGE_ACCESS_TOKEN manquant");
-        return { success: false, error: "No token" };
+        log.error("❌ CRITIQUE: PAGE_ACCESS_TOKEN manquant");
+        return { success: false, error: "No PAGE_ACCESS_TOKEN" };
     }
-    
+
+    // Vérification du message
     if (!text || typeof text !== 'string') {
-        log.warning("⚠️ Message vide");
-        return { success: false, error: "Empty message" };
+        log.error(`❌ CRITIQUE: Message invalide pour ${recipientId}: ${typeof text} - ${text}`);
+        return { success: false, error: "Invalid message" };
     }
-    
+
+    // Vérification du recipientId
+    if (!recipientId) {
+        log.error("❌ CRITIQUE: recipientId manquant");
+        return { success: false, error: "No recipient ID" };
+    }
+
     // Limiter taille
     if (text.length > 2000) {
         text = text.substring(0, 1950) + "...\n✨ [Message tronqué avec amour]";
     }
-    
+
     const data = {
         recipient: { id: String(recipientId) },
         message: { text: text }
     };
-    
+
+    // Log détaillé de la tentative
+    log.info(`📤 TENTATIVE ENVOI à ${recipientId}`);
+    log.debug(`📝 Message: ${text.substring(0, 100)}...`);
+    log.debug(`🔑 Token utilisé: ${PAGE_ACCESS_TOKEN.substring(0, 20)}...`);
+
     try {
+        log.debug(`📡 Appel Facebook API...`);
+        
         const response = await axios.post(
             "https://graph.facebook.com/v18.0/me/messages",
             data,
             {
                 params: { access_token: PAGE_ACCESS_TOKEN },
-                timeout: 15000
+                timeout: 15000,
+                headers: {
+                    'Content-Type': 'application/json'
+                }
             }
         );
-        
+
+        log.debug(`📊 Réponse Facebook - Status: ${response.status}`);
+        log.debug(`📊 Réponse Facebook - Data: ${JSON.stringify(response.data)}`);
+
         if (response.status === 200) {
-            return { success: true };
+            log.info(`✅ MESSAGE ENVOYÉ AVEC SUCCÈS à ${recipientId}`);
+            return { success: true, messageId: response.data?.message_id };
         } else {
-            log.error(`❌ Erreur Facebook API: ${response.status}`);
-            return { success: false, error: `API Error ${response.status}` };
+            log.error(`❌ ÉCHEC ENVOI - Status: ${response.status}`);
+            log.error(`📊 Données réponse: ${JSON.stringify(response.data)}`);
+            return { success: false, error: `API Error ${response.status}`, data: response.data };
         }
+
     } catch (error) {
-        log.error(`❌ Erreur envoi: ${error.message}`);
-        return { success: false, error: error.message };
+        log.error(`❌ ERREUR CRITIQUE ENVOI à ${recipientId}:`);
+        log.error(`   Message: ${error.message}`);
+        
+        if (error.response) {
+            log.error(`   Status HTTP: ${error.response.status}`);
+            log.error(`   Data: ${JSON.stringify(error.response.data)}`);
+            
+            // Diagnostics spécifiques selon l'erreur
+            if (error.response.status === 400) {
+                log.error(`   🔍 DIAGNOSTIC: Token invalide ou permissions manquantes`);
+                log.error(`   💡 SOLUTION: Vérifiez PAGE_ACCESS_TOKEN et permissions pages_messaging`);
+            } else if (error.response.status === 403) {
+                log.error(`   🔍 DIAGNOSTIC: Accès refusé - utilisateur a bloqué le bot ou app non approuvée`);
+            } else if (error.response.status === 190) {
+                log.error(`   🔍 DIAGNOSTIC: Token expiré`);
+                log.error(`   💡 SOLUTION: Régénérez le PAGE_ACCESS_TOKEN`);
+            }
+            
+            return { 
+                success: false, 
+                error: error.message, 
+                status: error.response.status,
+                details: error.response.data 
+            };
+        } else {
+            log.error(`   Type: ${error.code || 'Inconnu'}`);
+            return { success: false, error: error.message };
+        }
     }
 }
+
 
 // Envoyer une image
 async function sendImageMessage(recipientId, imageUrl, caption = "") {
