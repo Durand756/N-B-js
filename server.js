@@ -46,11 +46,12 @@ const log = {
     debug: (msg) => console.log(`${new Date().toISOString()} - DEBUG - ${msg}`)
 };
 
-// === GOOGLE DRIVE INTEGRATION - CORRIGÉE ===
+// === GOOGLE DRIVE INTEGRATION - VERSION CORRIGÉE ===
 
-let driveService = null;
+let authClient = null;
+let drive = null;
 
-// Initialiser Google Drive - VERSION CORRIGÉE
+// Initialiser Google Drive - VERSION SIMPLIFIÉE ET CORRIGÉE
 async function initGoogleDrive() {
     try {
         if (!GDRIVE_CONFIG.private_key || !GDRIVE_CONFIG.client_email || !GDRIVE_FOLDER_ID) {
@@ -61,8 +62,8 @@ async function initGoogleDrive() {
             return false;
         }
 
-        // Créer l'authentification avec scope étendu
-        const auth = new google.auth.JWT(
+        // Créer l'authentification JWT - TECHNIQUE RECOMMANDÉE
+        authClient = new google.auth.JWT(
             GDRIVE_CONFIG.client_email,
             null,
             GDRIVE_CONFIG.private_key,
@@ -72,37 +73,32 @@ async function initGoogleDrive() {
             ]
         );
 
-        // Initialiser le service Drive
-        driveService = google.drive({ version: 'v3', auth });
+        // Initialiser le service Drive avec l'auth client
+        drive = google.drive({ version: 'v3', auth: authClient });
         
         log.info(`🔍 Test d'accès au dossier Google Drive ID: ${GDRIVE_FOLDER_ID}`);
         log.info(`🔑 Service account: ${GDRIVE_CONFIG.client_email}`);
         
-        // Test de connexion AMÉLIORÉ avec gestion d'erreurs détaillée
+        // Test de connexion SIMPLIFIÉ
         try {
-            // D'abord tester l'authentification générale
-            const aboutResponse = await driveService.about.get({ fields: 'user' });
+            // Tester l'authentification
+            const aboutResponse = await drive.about.get({ fields: 'user' });
             log.info(`✅ Authentification réussie pour: ${aboutResponse.data.user?.emailAddress || 'Service Account'}`);
             
-            // Ensuite tester l'accès au dossier spécifique
-            const folderResponse = await driveService.files.get({ 
+            // Tester l'accès au dossier
+            const folderResponse = await drive.files.get({ 
                 fileId: GDRIVE_FOLDER_ID,
-                fields: 'id, name, parents, permissions',
-                supportsAllDrives: true
+                fields: 'id, name'
             });
             
             log.info(`✅ Accès au dossier réussi: "${folderResponse.data.name}" (ID: ${folderResponse.data.id})`);
             
-            // Test de création d'un fichier temporaire pour vérifier les permissions d'écriture
-            const testFileName = `test_connection_${Date.now()}.json`;
-            const testData = { test: true, timestamp: new Date().toISOString() };
-            
-            const testCreateResult = await createOrUpdateGDriveFile(testFileName, testData);
-            if (testCreateResult) {
+            // Test d'écriture simple
+            const testResult = await createOrUpdateGDriveFile(`test_connection_${Date.now()}.json`, { test: true, timestamp: new Date().toISOString() });
+            if (testResult) {
                 log.info("✅ Test d'écriture réussi - permissions OK");
                 // Nettoyer le fichier de test
-                await deleteGDriveFile(testFileName);
-                log.info("🧹 Fichier de test supprimé");
+                await deleteGDriveFile(`test_connection_${Date.now()}.json`);
             } else {
                 log.warning("⚠️ Test d'écriture échoué - vérifiez les permissions du dossier");
                 return false;
@@ -139,80 +135,82 @@ async function initGoogleDrive() {
     }
 }
 
-// Nouvelle fonction utilitaire pour créer ou mettre à jour un fichier
-async function createOrUpdateGDriveFile(filename, data) {
-    if (!driveService) {
+// Créer ou mettre à jour un fichier - VERSION CORRIGÉE SELON VOTRE TECHNIQUE
+async function createOrUpdateGDriveFile(filename, jsonData) {
+    if (!drive || !authClient) {
         log.warning("⚠️ Google Drive non initialisé");
-        return false;
+        return null;
     }
 
     try {
-        const jsonData = JSON.stringify(data, null, 2);
-        
         // Vérifier si le fichier existe déjà
-        const existingFiles = await driveService.files.list({
+        const existingFiles = await drive.files.list({
             q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
-            fields: 'files(id, name)',
-            supportsAllDrives: true
+            fields: 'files(id, name)'
         });
-
-        const media = {
-            mimeType: 'application/json',
-            body: jsonData
-        };
-
-        const fileMetadata = {
-            name: filename,
-            parents: [GDRIVE_FOLDER_ID]
-        };
 
         if (existingFiles.data.files.length > 0) {
             // Mettre à jour le fichier existant
             const fileId = existingFiles.data.files[0].id;
-            await driveService.files.update({
+            const media = {
+                mimeType: 'application/json',
+                body: JSON.stringify(jsonData, null, 2)
+            };
+
+            const res = await drive.files.update({
                 fileId: fileId,
                 media: media,
-                fields: 'id',
-                supportsAllDrives: true
+                fields: 'id'
             });
+
             log.debug(`💾 Fichier ${filename} mis à jour sur Google Drive`);
+            return res?.data?.id || null;
         } else {
-            // Créer un nouveau fichier
-            await driveService.files.create({
-                resource: fileMetadata,
-                media: media,
+            // Créer un nouveau fichier - TECHNIQUE EXACTE QUE VOUS AVEZ FOURNIE
+            const fileMetadata = {
+                name: filename,
+                mimeType: 'application/json',
+                parents: [GDRIVE_FOLDER_ID], // le dossier partagé !
+            };
+            
+            const media = {
+                mimeType: 'application/json',
+                body: JSON.stringify(jsonData, null, 2),
+            };
+            
+            const res = await drive.files.create({
+                requestBody: fileMetadata,
+                media,
                 fields: 'id',
-                supportsAllDrives: true
             });
+            
             log.debug(`💾 Fichier ${filename} créé sur Google Drive`);
+            return res?.data?.id || null;
         }
 
-        return true;
     } catch (error) {
-        log.error(`❌ Erreur sauvegarde ${filename}: ${error.message}`);
+        log.error(`❌ Erreur dans createOrUpdateGDriveFile: ${error.message}`);
         if (error.code === 403) {
             log.error(`❌ Permissions insuffisantes - vérifiez le partage du dossier`);
         }
-        return false;
+        return null;
     }
 }
 
-// Nouvelle fonction utilitaire pour supprimer un fichier
+// Supprimer un fichier - VERSION SIMPLIFIÉE
 async function deleteGDriveFile(filename) {
-    if (!driveService) return false;
+    if (!drive) return false;
     
     try {
-        const files = await driveService.files.list({
+        const files = await drive.files.list({
             q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
-            fields: 'files(id)',
-            supportsAllDrives: true
+            fields: 'files(id)'
         });
 
         if (files.data.files.length > 0) {
             const fileId = files.data.files[0].id;
-            await driveService.files.delete({
-                fileId: fileId,
-                supportsAllDrives: true
+            await drive.files.delete({
+                fileId: fileId
             });
             return true;
         }
@@ -223,23 +221,23 @@ async function deleteGDriveFile(filename) {
     }
 }
 
-// Sauvegarder les données sur Google Drive - VERSION CORRIGÉE
+// Sauvegarder sur Google Drive - SIMPLIFIÉE
 async function saveToGoogleDrive(filename, data) {
-    return await createOrUpdateGDriveFile(filename, data);
+    const fileId = await createOrUpdateGDriveFile(filename, data);
+    return Boolean(fileId);
 }
 
-// Charger les données depuis Google Drive - VERSION CORRIGÉE
+// Charger depuis Google Drive - VERSION CORRIGÉE
 async function loadFromGoogleDrive(filename) {
-    if (!driveService) {
+    if (!drive) {
         log.warning("⚠️ Google Drive non initialisé");
         return null;
     }
 
     try {
-        const files = await driveService.files.list({
+        const files = await drive.files.list({
             q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
-            fields: 'files(id, name)',
-            supportsAllDrives: true
+            fields: 'files(id, name)'
         });
 
         if (files.data.files.length === 0) {
@@ -248,10 +246,9 @@ async function loadFromGoogleDrive(filename) {
         }
 
         const fileId = files.data.files[0].id;
-        const response = await driveService.files.get({
+        const response = await drive.files.get({
             fileId: fileId,
-            alt: 'media',
-            supportsAllDrives: true
+            alt: 'media'
         });
 
         const data = JSON.parse(response.data);
@@ -263,7 +260,7 @@ async function loadFromGoogleDrive(filename) {
     }
 }
 
-// Sauvegarder toutes les données - INCHANGÉE
+// Sauvegarder toutes les données
 async function saveAllData() {
     try {
         const timestamp = new Date().toISOString();
@@ -274,7 +271,7 @@ async function saveAllData() {
             userList: Array.from(userList),
             userLastImage: Object.fromEntries(userLastImage),
             lastSave: timestamp,
-            version: "4.0 Amicale + Vision"
+            version: "4.0 Amicale + Vision - Corrigée"
         };
 
         const success = await saveToGoogleDrive('nakamabot_data.json', userData);
@@ -290,7 +287,7 @@ async function saveAllData() {
     }
 }
 
-// Charger toutes les données - INCHANGÉE
+// Charger toutes les données
 async function loadAllData() {
     try {
         const userData = await loadFromGoogleDrive('nakamabot_data.json');
@@ -329,7 +326,7 @@ async function loadAllData() {
     }
 }
 
-// Sauvegarde automatique périodique - INCHANGÉE
+// Sauvegarde automatique périodique
 let autoSaveInterval = null;
 
 function startAutoSave() {
@@ -349,7 +346,7 @@ function stopAutoSave() {
     }
 }
 
-// === FONCTIONS UTILITAIRES ORIGINALES - INCHANGÉES ===
+// === FONCTIONS UTILITAIRES ORIGINALES ===
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -624,7 +621,7 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
     }
 }
 
-// === CHARGEMENT DES COMMANDES - INCHANGÉ ===
+// === CHARGEMENT DES COMMANDES ===
 
 const COMMANDS = new Map();
 
@@ -736,7 +733,7 @@ async function processCommand(senderId, messageText) {
     return `❓ Oh ! La commande /${command} m'est inconnue ! Tape /help pour voir tout ce que je sais faire ! ✨💕`;
 }
 
-// === ROUTES EXPRESS - QUELQUES AMÉLIORATIONS ===
+// === ROUTES EXPRESS ===
 
 // Route d'accueil
 app.get('/', (req, res) => {
@@ -761,7 +758,7 @@ app.get('/', (req, res) => {
             "Sauvegarde Google Drive automatique"
         ],
         google_drive: {
-            enabled: Boolean(driveService),
+            enabled: Boolean(drive && authClient),
             auto_save: Boolean(autoSaveInterval),
             folder_id: GDRIVE_FOLDER_ID,
             service_account: GDRIVE_CONFIG.client_email
@@ -838,7 +835,7 @@ app.post('/admin/test-gdrive', async (req, res) => {
             success: testResult,
             message: testResult ? "Test Google Drive réussi" : "Test Google Drive échoué",
             details: {
-                service_initialized: Boolean(driveService),
+                service_initialized: Boolean(drive && authClient),
                 folder_id: GDRIVE_FOLDER_ID,
                 service_account: GDRIVE_CONFIG.client_email,
                 auto_save_active: Boolean(autoSaveInterval)
@@ -980,7 +977,7 @@ app.get('/stats', (req, res) => {
             "Google Drive Auto-Save"
         ],
         google_drive: {
-            enabled: Boolean(driveService),
+            enabled: Boolean(drive && authClient),
             auto_save_active: Boolean(autoSaveInterval)
         },
         note: "Statistiques détaillées réservées aux admins via /stats"
@@ -996,7 +993,7 @@ app.get('/health', (req, res) => {
             ai: Boolean(MISTRAL_API_KEY),
             vision: Boolean(MISTRAL_API_KEY),
             facebook: Boolean(PAGE_ACCESS_TOKEN),
-            google_drive: Boolean(driveService),
+            google_drive: Boolean(drive && authClient),
             auto_save: Boolean(autoSaveInterval)
         },
         data: {
@@ -1008,7 +1005,7 @@ app.get('/health', (req, res) => {
         google_drive_details: {
             service_account: GDRIVE_CONFIG.client_email,
             folder_id: GDRIVE_FOLDER_ID,
-            connected: Boolean(driveService)
+            connected: Boolean(drive && authClient)
         },
         version: "4.0 Amicale + Vision + Google Drive - CORRIGÉE",
         creator: "Durand",
@@ -1026,7 +1023,7 @@ app.get('/health', (req, res) => {
     if (COMMANDS.size === 0) {
         issues.push("Aucune commande chargée");
     }
-    if (!driveService) {
+    if (!drive || !authClient) {
         issues.push("Google Drive non connecté - Vérifiez les permissions du dossier");
     }
     if (!autoSaveInterval) {
@@ -1108,11 +1105,11 @@ async function startBot() {
     log.info(`👥 ${userList.size} utilisateurs chargés`);
     log.info(`💬 ${userMemory.size} conversations restaurées`);
     log.info(`📸 ${userLastImage.size} images en mémoire`);
-    log.info(`💾 Google Drive: ${driveService ? '✅ Connecté' : '❌ Déconnecté'}`);
+    log.info(`💾 Google Drive: ${drive && authClient ? '✅ Connecté' : '❌ Déconnecté'}`);
     log.info(`🔄 Sauvegarde auto: ${autoSaveInterval ? '✅ Active (5min)' : '❌ Inactive'}`);
     log.info(`🌐 Serveur sur le port ${PORT}`);
     
-    if (driveService) {
+    if (drive && authClient) {
         log.info("🎉 NakamaBot Amicale + Vision + Google Drive prête à aider avec gentillesse !");
     } else {
         log.warning("⚠️ NakamaBot démarrée SANS Google Drive - Fonctionnement dégradé");
@@ -1136,7 +1133,7 @@ async function gracefulShutdown(signal) {
     stopAutoSave();
     
     // Effectuer une dernière sauvegarde si Google Drive est disponible
-    if (driveService) {
+    if (drive && authClient) {
         try {
             log.info("💾 Sauvegarde finale en cours...");
             const success = await saveAllData();
