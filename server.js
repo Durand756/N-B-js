@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { google } = require('googleapis');
 
 const app = express();
 app.use(bodyParser.json());
@@ -12,13 +13,27 @@ app.use(bodyParser.json());
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "nakamaverifytoken";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "";
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || "";
-const JSONBIN_API_KEY = process.env.JSONBIN_API_KEY || "";
-const JSONBIN_BIN_ID = process.env.JSONBIN_BIN_ID || "";
 const ADMIN_IDS = new Set(
     (process.env.ADMIN_IDS || "").split(",").map(id => id.trim()).filter(id => id)
 );
 
-// Mémoire du bot (stockage local temporaire + sauvegarde permanente)
+// Configuration Google Drive
+const GDRIVE_CONFIG = {
+    type: process.env.GOOGLE_TYPE || "service_account",
+    project_id: process.env.GOOGLE_PROJECT_ID || "",
+    private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID || "",
+    private_key: (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, '\n'),
+    client_email: process.env.GOOGLE_CLIENT_EMAIL || "",
+    client_id: process.env.GOOGLE_CLIENT_ID || "",
+    auth_uri: process.env.GOOGLE_AUTH_URI || "https://accounts.google.com/o/oauth2/auth",
+    token_uri: process.env.GOOGLE_TOKEN_URI || "https://oauth2.googleapis.com/token",
+    auth_provider_x509_cert_url: process.env.GOOGLE_AUTH_PROVIDER_X509_CERT_URL || "",
+    client_x509_cert_url: process.env.GOOGLE_CLIENT_X509_CERT_URL || ""
+};
+
+const GDRIVE_FOLDER_ID = process.env.GDRIVE_FOLDER_ID || "";
+
+// Mémoire du bot (stockage local)
 const userMemory = new Map();
 const userList = new Set();
 const userLastImage = new Map();
@@ -31,212 +46,210 @@ const log = {
     debug: (msg) => console.log(`${new Date().toISOString()} - DEBUG - ${msg}`)
 };
 
-// === GESTION JSONBIN.IO ===
+// === GOOGLE DRIVE INTEGRATION ===
 
-// Créer un nouveau bin JSONBin
-async function createNewJSONBin() {
-    if (!JSONBIN_API_KEY) {
-        log.error("❌ JSONBIN_API_KEY manquant pour créer un nouveau bin");
-        return null;
+let driveService = null;
+
+// Initialiser Google Drive
+async function initGoogleDrive() {
+    try {
+        if (!GDRIVE_CONFIG.private_key || !GDRIVE_CONFIG.client_email || !GDRIVE_FOLDER_ID) {
+            log.warning("⚠️ Configuration Google Drive incomplète - sauvegarde désactivée");
+            return false;
+        }
+
+        const auth = new google.auth.JWT(
+            GDRIVE_CONFIG.client_email,
+            null,
+            GDRIVE_CONFIG.private_key,
+            ['https://www.googleapis.com/auth/drive.file']
+        );
+
+        driveService = google.drive({ version: 'v3', auth });
+        
+        // Test de connexion
+        await driveService.files.get({ fileId: GDRIVE_FOLDER_ID });
+        log.info("✅ Google Drive connecté avec succès");
+        return true;
+    } catch (error) {
+        log.error(`❌ Erreur initialisation Google Drive: ${error.message}`);
+        return false;
+    }
+}
+
+// Sauvegarder les données sur Google Drive
+async function saveToGoogleDrive(filename, data) {
+    if (!driveService) {
+        log.warning("⚠️ Google Drive non initialisé");
+        return false;
     }
 
     try {
-        const initialData = {
-            userList: [],
-            userMemory: {},
-            userLastImage: {},
-            lastUpdate: new Date().toISOString(),
-            version: "4.0 Amicale + Vision + JSONBin",
-            totalUsers: 0,
-            totalConversations: 0,
-            totalImages: 0,
-            created: new Date().toISOString(),
-            bot: "NakamaBot"
+        const jsonData = JSON.stringify(data, null, 2);
+        const buffer = Buffer.from(jsonData, 'utf-8');
+
+        // Vérifier si le fichier existe déjà
+        const existingFiles = await driveService.files.list({
+            q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
+            fields: 'files(id, name)'
+        });
+
+        const media = {
+            mimeType: 'application/json',
+            body: buffer
         };
 
-        const response = await axios.post(
-            'https://api.jsonbin.io/v3/b',
-            initialData,
-            {
-                headers: {
-                    'X-Master-Key': JSONBIN_API_KEY,
-                    'Content-Type': 'application/json',
-                    'X-Bin-Name': 'NakamaBot-Data'
-                },
-                timeout: 15000
-            }
-        );
+        const fileMetadata = {
+            name: filename,
+            parents: [GDRIVE_FOLDER_ID]
+        };
 
-        if (response.status === 200 || response.status === 201) {
-            const newBinId = response.data.metadata.id;
-            log.info(`🎉 Nouveau bin JSONBin créé avec succès !`);
-            log.info(`📝 Nouvel ID de bin: ${newBinId}`);
-            log.info(`⚠️  Veuillez mettre à jour votre variable JSONBIN_BIN_ID avec: ${newBinId}`);
-            return newBinId;
+        if (existingFiles.data.files.length > 0) {
+            // Mettre à jour le fichier existant
+            const fileId = existingFiles.data.files[0].id;
+            await driveService.files.update({
+                fileId: fileId,
+                media: media,
+                fields: 'id'
+            });
+            log.info(`💾 Fichier ${filename} mis à jour sur Google Drive`);
+        } else {
+            // Créer un nouveau fichier
+            await driveService.files.create({
+                resource: fileMetadata,
+                media: media,
+                fields: 'id'
+            });
+            log.info(`💾 Fichier ${filename} créé sur Google Drive`);
         }
+
+        return true;
     } catch (error) {
-        log.error(`❌ Erreur création bin JSONBin: ${error.message}`);
+        log.error(`❌ Erreur sauvegarde ${filename}: ${error.message}`);
+        return false;
+    }
+}
+
+// Charger les données depuis Google Drive
+async function loadFromGoogleDrive(filename) {
+    if (!driveService) {
+        log.warning("⚠️ Google Drive non initialisé");
+        return null;
+    }
+
+    try {
+        const files = await driveService.files.list({
+            q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
+            fields: 'files(id, name)'
+        });
+
+        if (files.data.files.length === 0) {
+            log.info(`📄 Fichier ${filename} non trouvé sur Google Drive`);
+            return null;
+        }
+
+        const fileId = files.data.files[0].id;
+        const response = await driveService.files.get({
+            fileId: fileId,
+            alt: 'media'
+        });
+
+        const data = JSON.parse(response.data);
+        log.info(`📥 Fichier ${filename} chargé depuis Google Drive`);
+        return data;
+    } catch (error) {
+        log.error(`❌ Erreur chargement ${filename}: ${error.message}`);
         return null;
     }
 }
 
-// Charger les données depuis JSONBin
-async function loadDataFromJSONBin() {
-    if (!JSONBIN_API_KEY || !JSONBIN_BIN_ID) {
-        log.warning("⚠️ Configuration JSONBin manquante, utilisation du stockage temporaire uniquement");
-        return;
-    }
-
+// Sauvegarder toutes les données
+async function saveAllData() {
     try {
-        log.info(`🔍 Tentative de chargement du bin: ${JSONBIN_BIN_ID}`);
+        const timestamp = new Date().toISOString();
         
-        const response = await axios.get(
-            `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`,
-            {
-                headers: {
-                    'X-Master-Key': JSONBIN_API_KEY,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 10000
-            }
-        );
-
-        if (response.status === 200 && response.data.record) {
-            const data = response.data.record;
-            
-            // Charger userList
-            if (data.userList && Array.isArray(data.userList)) {
-                data.userList.forEach(userId => userList.add(userId));
-                log.info(`✅ ${data.userList.length} utilisateurs chargés depuis JSONBin`);
-            }
-
-            // Charger userMemory
-            if (data.userMemory && typeof data.userMemory === 'object') {
-                Object.entries(data.userMemory).forEach(([userId, memory]) => {
-                    if (Array.isArray(memory)) {
-                        userMemory.set(userId, memory);
-                    }
-                });
-                log.info(`✅ ${Object.keys(data.userMemory).length} conversations chargées depuis JSONBin`);
-            }
-
-            // Charger userLastImage
-            if (data.userLastImage && typeof data.userLastImage === 'object') {
-                Object.entries(data.userLastImage).forEach(([userId, imageUrl]) => {
-                    userLastImage.set(userId, imageUrl);
-                });
-                log.info(`✅ ${Object.keys(data.userLastImage).length} images chargées depuis JSONBin`);
-            }
-
-            log.info("🎉 Données chargées avec succès depuis JSONBin !");
-        }
-    } catch (error) {
-        if (error.response?.status === 404) {
-            log.warning("❌ Bin JSONBin introuvable (404) - Le bin n'existe pas ou l'ID est incorrect");
-            log.info("🔧 Tentative de création d'un nouveau bin...");
-            
-            const newBinId = await createNewJSONBin();
-            if (newBinId) {
-                log.info("✅ Nouveau bin créé, mais vous devez mettre à jour JSONBIN_BIN_ID");
-                log.info("⚠️  Redémarrez l'application après avoir mis à jour la variable d'environnement");
-            } else {
-                log.error("❌ Impossible de créer un nouveau bin");
-            }
-        } else if (error.response?.status === 401) {
-            log.error("❌ Clé API JSONBin invalide (401) - Vérifiez votre JSONBIN_API_KEY");
-        } else if (error.response?.status === 403) {
-            log.error("❌ Accès refusé JSONBin (403) - Vérifiez les permissions de votre clé API");
-        } else {
-            log.error(`❌ Erreur chargement JSONBin: ${error.message}`);
-            if (error.response) {
-                log.error(`📊 Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data)}`);
-            }
-        }
-    }
-}
-
-// Sauvegarder les données vers JSONBin
-async function saveDataToJSONBin() {
-    if (!JSONBIN_API_KEY || !JSONBIN_BIN_ID) {
-        log.debug("🔄 Pas de sauvegarde JSONBin (config manquante)");
-        return;
-    }
-
-    try {
-        log.debug(`💾 Tentative de sauvegarde sur bin: ${JSONBIN_BIN_ID}`);
-        
-        const dataToSave = {
-            userList: Array.from(userList),
+        // Convertir les Maps et Sets en objets sérialisables
+        const userData = {
             userMemory: Object.fromEntries(userMemory),
+            userList: Array.from(userList),
             userLastImage: Object.fromEntries(userLastImage),
-            lastUpdate: new Date().toISOString(),
-            version: "4.0 Amicale + Vision + JSONBin",
-            totalUsers: userList.size,
-            totalConversations: userMemory.size,
-            totalImages: userLastImage.size
+            lastSave: timestamp,
+            version: "4.0 Amicale + Vision"
         };
 
-        const response = await axios.put(
-            `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`,
-            dataToSave,
-            {
-                headers: {
-                    'X-Master-Key': JSONBIN_API_KEY,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 15000
-            }
-        );
-
-        if (response.status === 200) {
-            log.info(`💾 Données sauvegardées sur JSONBin (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs)`);
-        } else {
-            log.error(`❌ Erreur sauvegarde JSONBin: ${response.status}`);
+        const success = await saveToGoogleDrive('nakamabot_data.json', userData);
+        
+        if (success) {
+            log.info(`💾 Données sauvegardées avec succès (${userList.size} utilisateurs, ${userMemory.size} conversations)`);
         }
+        
+        return success;
     } catch (error) {
-        if (error.response?.status === 404) {
-            log.error("❌ Bin JSONBin introuvable pour la sauvegarde (404)");
-            log.error(`🔍 Bin ID utilisé: ${JSONBIN_BIN_ID}`);
-            log.error("💡 Solutions:");
-            log.error("   1. Vérifiez que le JSONBIN_BIN_ID est correct");
-            log.error("   2. Créez un nouveau bin sur jsonbin.io");
-            log.error("   3. Ou utilisez la route /create-bin pour créer automatiquement un nouveau bin");
-        } else if (error.response?.status === 401) {
-            log.error("❌ Clé API JSONBin invalide pour la sauvegarde (401)");
-            log.error("💡 Vérifiez votre JSONBIN_API_KEY");
-        } else if (error.response?.status === 403) {
-            log.error("❌ Accès refusé JSONBin pour la sauvegarde (403)");
-            log.error("💡 Vérifiez les permissions de votre clé API");
-        } else {
-            log.error(`❌ Erreur sauvegarde JSONBin: ${error.message}`);
-            if (error.response) {
-                log.error(`📊 Status: ${error.response.status}`);
-                log.error(`📊 Data: ${JSON.stringify(error.response.data)}`);
-            }
-        }
+        log.error(`❌ Erreur sauvegarde complète: ${error.message}`);
+        return false;
     }
 }
 
-// Sauvegarder automatiquement toutes les 5 minutes
-let saveInterval;
-function startAutoSave() {
-    if (saveInterval) {
-        clearInterval(saveInterval);
+// Charger toutes les données
+async function loadAllData() {
+    try {
+        const userData = await loadFromGoogleDrive('nakamabot_data.json');
+        
+        if (!userData) {
+            log.info("📄 Aucune sauvegarde trouvée, démarrage avec des données vides");
+            return;
+        }
+
+        // Restaurer les données
+        if (userData.userMemory) {
+            userMemory.clear();
+            for (const [userId, memory] of Object.entries(userData.userMemory)) {
+                userMemory.set(userId, memory);
+            }
+        }
+
+        if (userData.userList) {
+            userList.clear();
+            userData.userList.forEach(userId => userList.add(userId));
+        }
+
+        if (userData.userLastImage) {
+            userLastImage.clear();
+            for (const [userId, imageUrl] of Object.entries(userData.userLastImage)) {
+                userLastImage.set(userId, imageUrl);
+            }
+        }
+
+        log.info(`📥 Données restaurées: ${userList.size} utilisateurs, ${userMemory.size} conversations, ${userLastImage.size} images`);
+        if (userData.lastSave) {
+            log.info(`📅 Dernière sauvegarde: ${userData.lastSave}`);
+        }
+    } catch (error) {
+        log.error(`❌ Erreur chargement des données: ${error.message}`);
     }
-    
-    saveInterval = setInterval(async () => {
-        await saveDataToJSONBin();
-    }, 5 * 60 * 1000); // 5 minutes
+}
+
+// Sauvegarde automatique périodique
+let autoSaveInterval = null;
+
+function startAutoSave() {
+    // Sauvegarder toutes les 5 minutes
+    autoSaveInterval = setInterval(async () => {
+        await saveAllData();
+    }, 5 * 60 * 1000);
     
     log.info("🔄 Sauvegarde automatique activée (toutes les 5 minutes)");
 }
 
-// Sauvegarder lors de changements importants
-async function saveDataImmediate() {
-    await saveDataToJSONBin();
+function stopAutoSave() {
+    if (autoSaveInterval) {
+        clearInterval(autoSaveInterval);
+        autoSaveInterval = null;
+        log.info("🛑 Sauvegarde automatique désactivée");
+    }
 }
 
-// === UTILITAIRES ===
+// === FONCTIONS UTILITAIRES ORIGINALES ===
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -366,7 +379,7 @@ async function webSearch(query) {
     }
 }
 
-// Gestion de la mémoire avec sauvegarde
+// Gestion de la mémoire avec sauvegarde automatique
 function addToMemory(userId, msgType, content) {
     if (!userId || !msgType || !content) {
         return;
@@ -393,10 +406,10 @@ function addToMemory(userId, msgType, content) {
         memory.shift();
     }
     
-    // Sauvegarder de manière asynchrone (pas d'attente)
-    saveDataImmediate().catch(err => 
-        log.error(`❌ Erreur sauvegarde mémoire: ${err.message}`)
-    );
+    // Sauvegarder de manière asynchrone (sans attendre)
+    saveAllData().catch(error => {
+        log.error(`❌ Erreur sauvegarde automatique: ${error.message}`);
+    });
 }
 
 function getMemoryContext(userId) {
@@ -414,8 +427,6 @@ function getMemoryContext(userId) {
 function isAdmin(userId) {
     return ADMIN_IDS.has(String(userId));
 }
-
-// === FONCTIONS D'ENVOI AVEC SAUVEGARDE ===
 
 // Envoyer un message
 async function sendMessage(recipientId, text) {
@@ -517,14 +528,12 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
 
 const COMMANDS = new Map();
 
-// Contexte partagé pour toutes les commandes
+// Contexte partagé pour toutes les commandes avec Google Drive
 const commandContext = {
     // Variables globales
     VERIFY_TOKEN,
     PAGE_ACCESS_TOKEN,
     MISTRAL_API_KEY,
-    JSONBIN_API_KEY,
-    JSONBIN_BIN_ID,
     ADMIN_IDS,
     userMemory,
     userList,
@@ -543,10 +552,11 @@ const commandContext = {
     sendMessage,
     sendImageMessage,
     
-    // Fonctions de sauvegarde
-    saveDataToJSONBin,
-    saveDataImmediate,
-    loadDataFromJSONBin
+    // Fonctions Google Drive
+    saveAllData,
+    loadAllData,
+    saveToGoogleDrive,
+    loadFromGoogleDrive
 };
 
 // Fonction pour charger automatiquement toutes les commandes
@@ -631,7 +641,7 @@ async function processCommand(senderId, messageText) {
 // Route d'accueil
 app.get('/', (req, res) => {
     res.json({
-        status: "🤖 NakamaBot v4.0 Amicale + Vision + JSONBin Online ! 💖",
+        status: "🤖 NakamaBot v4.0 Amicale + Vision + Google Drive Online ! 💖",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: "2025",
@@ -639,12 +649,7 @@ app.get('/', (req, res) => {
         users: userList.size,
         conversations: userMemory.size,
         images_stored: userLastImage.size,
-        version: "4.0 Amicale + Vision + JSONBin",
-        storage: {
-            type: "JSONBin.io",
-            persistent: Boolean(JSONBIN_API_KEY && JSONBIN_BIN_ID),
-            auto_save: "Every 5 minutes"
-        },
+        version: "4.0 Amicale + Vision + Google Drive",
         features: [
             "Génération d'images IA",
             "Transformation anime", 
@@ -653,10 +658,68 @@ app.get('/', (req, res) => {
             "Broadcast admin",
             "Recherche 2025",
             "Stats réservées admin",
-            "Sauvegarde permanente JSONBin"
+            "Sauvegarde Google Drive automatique"
         ],
+        google_drive: {
+            enabled: Boolean(driveService),
+            auto_save: Boolean(autoSaveInterval)
+        },
         last_update: new Date().toISOString()
     });
+});
+
+// Route pour forcer une sauvegarde (admin seulement)
+app.post('/admin/save', async (req, res) => {
+    const adminId = req.body.admin_id;
+    
+    if (!adminId || !isAdmin(adminId)) {
+        return res.status(403).json({ error: "Accès refusé - Admin requis" });
+    }
+    
+    try {
+        const success = await saveAllData();
+        if (success) {
+            res.json({ 
+                success: true, 
+                message: "Sauvegarde forcée effectuée",
+                timestamp: new Date().toISOString(),
+                data: {
+                    users: userList.size,
+                    conversations: userMemory.size,
+                    images: userLastImage.size
+                }
+            });
+        } else {
+            res.status(500).json({ error: "Échec de la sauvegarde" });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Route pour restaurer les données (admin seulement)
+app.post('/admin/restore', async (req, res) => {
+    const adminId = req.body.admin_id;
+    
+    if (!adminId || !isAdmin(adminId)) {
+        return res.status(403).json({ error: "Accès refusé - Admin requis" });
+    }
+    
+    try {
+        await loadAllData();
+        res.json({ 
+            success: true, 
+            message: "Données restaurées depuis Google Drive",
+            timestamp: new Date().toISOString(),
+            data: {
+                users: userList.size,
+                conversations: userMemory.size,
+                images: userLastImage.size
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // Webhook Facebook Messenger
@@ -696,17 +759,8 @@ app.post('/webhook', async (req, res) => {
                 
                 // Messages non-echo
                 if (event.message && !event.message.is_echo) {
-                    // Ajouter utilisateur avec sauvegarde
-                    const wasNewUser = !userList.has(senderIdStr);
+                    // Ajouter utilisateur (automatiquement sauvegardé via addToMemory)
                     userList.add(senderIdStr);
-                    
-                    if (wasNewUser) {
-                        log.info(`👋 Nouvel utilisateur: ${senderId}`);
-                        // Sauvegarder immédiatement pour les nouveaux utilisateurs
-                        saveDataImmediate().catch(err => 
-                            log.error(`❌ Erreur sauvegarde nouvel utilisateur: ${err.message}`)
-                        );
-                    }
                     
                     // Vérifier si c'est une image
                     if (event.message.attachments) {
@@ -718,10 +772,10 @@ app.post('/webhook', async (req, res) => {
                                     userLastImage.set(senderIdStr, imageUrl);
                                     log.info(`📸 Image reçue de ${senderId}`);
                                     
-                                    // Sauvegarder l'image
-                                    saveDataImmediate().catch(err => 
-                                        log.error(`❌ Erreur sauvegarde image: ${err.message}`)
-                                    );
+                                    // Déclencher une sauvegarde
+                                    saveAllData().catch(error => {
+                                        log.error(`❌ Erreur sauvegarde image: ${error.message}`);
+                                    });
                                     
                                     // Répondre automatiquement
                                     const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
@@ -777,146 +831,6 @@ app.post('/webhook', async (req, res) => {
     res.status(200).json({ status: "ok" });
 });
 
-// Route pour créer un nouveau bin JSONBin (admin seulement)
-app.post('/create-bin', async (req, res) => {
-    try {
-        if (!JSONBIN_API_KEY) {
-            return res.status(400).json({
-                success: false,
-                error: "JSONBIN_API_KEY manquant"
-            });
-        }
-
-        const newBinId = await createNewJSONBin();
-        
-        if (newBinId) {
-            res.json({
-                success: true,
-                message: "Nouveau bin JSONBin créé avec succès !",
-                newBinId: newBinId,
-                instructions: [
-                    `Mettez à jour votre variable d'environnement: JSONBIN_BIN_ID=${newBinId}`,
-                    "Redémarrez l'application pour utiliser le nouveau bin",
-                    "Les données actuelles seront sauvegardées automatiquement"
-                ],
-                timestamp: new Date().toISOString()
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                error: "Impossible de créer un nouveau bin"
-            });
-        }
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Route pour tester la connexion JSONBin
-app.get('/test-jsonbin', async (req, res) => {
-    try {
-        if (!JSONBIN_API_KEY || !JSONBIN_BIN_ID) {
-            return res.status(400).json({
-                success: false,
-                error: "Configuration JSONBin manquante",
-                missing: {
-                    api_key: !JSONBIN_API_KEY,
-                    bin_id: !JSONBIN_BIN_ID
-                }
-            });
-        }
-
-        // Tester la lecture
-        const response = await axios.get(
-            `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`,
-            {
-                headers: {
-                    'X-Master-Key': JSONBIN_API_KEY,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 10000
-            }
-        );
-
-        res.json({
-            success: true,
-            message: "Connexion JSONBin OK !",
-            bin_id: JSONBIN_BIN_ID,
-            status: response.status,
-            data_exists: Boolean(response.data.record),
-            timestamp: new Date().toISOString()
-        });
-
-    } catch (error) {
-        let errorMessage = error.message;
-        let suggestions = [];
-
-        if (error.response?.status === 404) {
-            errorMessage = "Bin introuvable (404)";
-            suggestions = [
-                "Vérifiez que le JSONBIN_BIN_ID est correct",
-                "Utilisez POST /create-bin pour créer un nouveau bin"
-            ];
-        } else if (error.response?.status === 401) {
-            errorMessage = "Clé API invalide (401)";
-            suggestions = ["Vérifiez votre JSONBIN_API_KEY"];
-        }
-
-        res.status(error.response?.status || 500).json({
-            success: false,
-            error: errorMessage,
-            suggestions: suggestions,
-            bin_id: JSONBIN_BIN_ID,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-app.post('/force-save', async (req, res) => {
-    try {
-        await saveDataToJSONBin();
-        res.json({
-            success: true,
-            message: "Données sauvegardées avec succès !",
-            timestamp: new Date().toISOString(),
-            stats: {
-                users: userList.size,
-                conversations: userMemory.size,
-                images: userLastImage.size
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Route pour recharger les données (admin seulement)
-app.post('/reload-data', async (req, res) => {
-    try {
-        await loadDataFromJSONBin();
-        res.json({
-            success: true,
-            message: "Données rechargées avec succès !",
-            timestamp: new Date().toISOString(),
-            stats: {
-                users: userList.size,
-                conversations: userMemory.size,
-                images: userLastImage.size
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
 // Statistiques publiques limitées
 app.get('/stats', (req, res) => {
     res.json({
@@ -924,15 +838,10 @@ app.get('/stats', (req, res) => {
         conversations_count: userMemory.size,
         images_stored: userLastImage.size,
         commands_available: COMMANDS.size,
-        version: "4.0 Amicale + Vision + JSONBin",
+        version: "4.0 Amicale + Vision + Google Drive",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: 2025,
-        storage: {
-            type: "JSONBin.io",
-            persistent: Boolean(JSONBIN_API_KEY && JSONBIN_BIN_ID),
-            auto_save_interval: "5 minutes"
-        },
         features: [
             "AI Image Generation",
             "Anime Transformation", 
@@ -940,8 +849,12 @@ app.get('/stats', (req, res) => {
             "Friendly Chat",
             "Admin Stats",
             "Help Suggestions",
-            "Persistent Storage"
+            "Google Drive Auto-Save"
         ],
+        google_drive: {
+            enabled: Boolean(driveService),
+            auto_save_active: Boolean(autoSaveInterval)
+        },
         note: "Statistiques détaillées réservées aux admins via /stats"
     });
 });
@@ -955,7 +868,8 @@ app.get('/health', (req, res) => {
             ai: Boolean(MISTRAL_API_KEY),
             vision: Boolean(MISTRAL_API_KEY),
             facebook: Boolean(PAGE_ACCESS_TOKEN),
-            storage: Boolean(JSONBIN_API_KEY && JSONBIN_BIN_ID)
+            google_drive: Boolean(driveService),
+            auto_save: Boolean(autoSaveInterval)
         },
         data: {
             users: userList.size,
@@ -963,7 +877,7 @@ app.get('/health', (req, res) => {
             images_stored: userLastImage.size,
             commands_loaded: COMMANDS.size
         },
-        version: "4.0 Amicale + Vision + JSONBin",
+        version: "4.0 Amicale + Vision + Google Drive",
         creator: "Durand",
         timestamp: new Date().toISOString()
     };
@@ -976,11 +890,14 @@ app.get('/health', (req, res) => {
     if (!PAGE_ACCESS_TOKEN) {
         issues.push("Token Facebook manquant");
     }
-    if (!JSONBIN_API_KEY || !JSONBIN_BIN_ID) {
-        issues.push("Configuration JSONBin manquante");
-    }
     if (COMMANDS.size === 0) {
         issues.push("Aucune commande chargée");
+    }
+    if (!driveService) {
+        issues.push("Google Drive non connecté");
+    }
+    if (!autoSaveInterval) {
+        issues.push("Sauvegarde automatique inactive");
     }
     
     if (issues.length > 0) {
@@ -997,14 +914,21 @@ app.get('/health', (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 async function startBot() {
-    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + JSONBin");
+    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + Google Drive");
     log.info("💖 Personnalité super gentille et amicale, comme une très bonne amie");
     log.info("👨‍💻 Créée par Durand");
     log.info("📅 Année: 2025");
 
-    // Charger les données depuis JSONBin
-    log.info("📥 Chargement des données depuis JSONBin...");
-    await loadDataFromJSONBin();
+    // Initialiser Google Drive
+    const driveInitialized = await initGoogleDrive();
+    
+    if (driveInitialized) {
+        // Charger les données existantes
+        await loadAllData();
+        
+        // Démarrer la sauvegarde automatique
+        startAutoSave();
+    }
 
     // Charger toutes les commandes
     loadCommands();
@@ -1017,77 +941,68 @@ async function startBot() {
     if (!MISTRAL_API_KEY) {
         missingVars.push("MISTRAL_API_KEY");
     }
-    if (!JSONBIN_API_KEY) {
-        missingVars.push("JSONBIN_API_KEY");
-    }
-    if (!JSONBIN_BIN_ID) {
-        missingVars.push("JSONBIN_BIN_ID");
+    if (!GDRIVE_FOLDER_ID) {
+        missingVars.push("GDRIVE_FOLDER_ID");
     }
 
     if (missingVars.length > 0) {
         log.error(`❌ Variables manquantes: ${missingVars.join(', ')}`);
     } else {
-        log.info("✅ Configuration complète OK");
+        log.info("✅ Configuration OK");
     }
 
     log.info(`🎨 ${COMMANDS.size} commandes disponibles`);
-    log.info(`👥 ${userList.size} utilisateurs en mémoire`);
-    log.info(`💬 ${userMemory.size} conversations en mémoire`);
-    log.info(`🖼️ ${userLastImage.size} images en mémoire`);
     log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
+    log.info(`👥 ${userList.size} utilisateurs chargés`);
+    log.info(`💬 ${userMemory.size} conversations restaurées`);
+    log.info(`📸 ${userLastImage.size} images en mémoire`);
+    log.info(`💾 Google Drive: ${driveService ? '✅ Connecté' : '❌ Déconnecté'}`);
+    log.info(`🔄 Sauvegarde auto: ${autoSaveInterval ? '✅ Active' : '❌ Inactive'}`);
     log.info(`🌐 Serveur sur le port ${PORT}`);
-    
-    // Démarrer la sauvegarde automatique
-    startAutoSave();
-    
-    log.info("🎉 NakamaBot Amicale + Vision + JSONBin prête à aider avec gentillesse !");
+    log.info("🎉 NakamaBot Amicale + Vision + Google Drive prête à aider avec gentillesse !");
 
     app.listen(PORT, () => {
         log.info(`🌐 Serveur démarré sur le port ${PORT}`);
-        log.info("💾 Sauvegarde automatique JSONBin activée");
     });
 }
 
-// Fonction de nettoyage lors de l'arrêt
-async function gracefulShutdown() {
-    log.info("🛑 Arrêt du bot avec tendresse...");
+// Gestion propre de l'arrêt avec sauvegarde finale
+process.on('SIGINT', async () => {
+    log.info("🛑 Arrêt du bot avec tendresse - Sauvegarde finale...");
     
     // Arrêter la sauvegarde automatique
-    if (saveInterval) {
-        clearInterval(saveInterval);
-        log.info("⏹️ Sauvegarde automatique arrêtée");
-    }
+    stopAutoSave();
     
-    // Sauvegarder une dernière fois
+    // Effectuer une dernière sauvegarde
     try {
-        log.info("💾 Sauvegarde finale des données...");
-        await saveDataToJSONBin();
-        log.info("✅ Données sauvegardées avec succès !");
+        await saveAllData();
+        log.info("💾 Sauvegarde finale terminée");
     } catch (error) {
         log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
     }
     
-    log.info("👋 Au revoir ! Données sauvegardées sur JSONBin !");
     process.exit(0);
-}
-
-// Gestion propre de l'arrêt
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
-
-// Gestion des erreurs non capturées
-process.on('uncaughtException', async (error) => {
-    log.error(`❌ Erreur non capturée: ${error.message}`);
-    await gracefulShutdown();
 });
 
-process.on('unhandledRejection', async (reason, promise) => {
-    log.error(`❌ Promesse rejetée: ${reason}`);
-    await gracefulShutdown();
+process.on('SIGTERM', async () => {
+    log.info("🛑 Arrêt du bot avec tendresse - Sauvegarde finale...");
+    
+    // Arrêter la sauvegarde automatique
+    stopAutoSave();
+    
+    // Effectuer une dernière sauvegarde
+    try {
+        await saveAllData();
+        log.info("💾 Sauvegarde finale terminée");
+    } catch (error) {
+        log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
+    }
+    
+    process.exit(0);
 });
 
 // Démarrer le bot
 startBot().catch(error => {
-    log.error(`❌ Erreur démarrage: ${error.message}`);
+    log.error(`❌ Erreur fatale au démarrage: ${error.message}`);
     process.exit(1);
 });
