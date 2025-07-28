@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
 
-const app = express();
+const app = express(); 
 app.use(bodyParser.json());
 
 // Configuration
@@ -22,7 +22,7 @@ const GDRIVE_CONFIG = {
     type: process.env.GOOGLE_TYPE || "service_account",
     project_id: process.env.GOOGLE_PROJECT_ID || "",
     private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID || "",
-    private_key: ("-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDHYHbn5uGL6tlt\nUoHJVozkKNU0R2Tt/NoKY8nHZsDdPou6+ESAp4fGcuAjjOhIFQxITB0Ryqfwdwqr\n/fqs1oF8FIWED3Ri0oG7AMnMxIbtGiTv3i2MnVYdYxjcqk3miyT8EHz0595CTUON\nl/+yJeNwkP4o7sknm3A4S26pOykKSEvZr1j37FU7b6wqkf7mK5MNOM0UY9DxDynR\njU8bBiaUAxghZG7cTp9R6VpyJUzYB9zgS02T9A4KeZdbWFHUwMtYqeFhmTd5YEGU\nsgJy6oAFhqWm+JHhvEIk27tHWum7aX0aoQ9egHlCZPnsqYALLjSRDulu9ScjWbEw\nNoqXk6d1AgMBAAECggEAF/4JQQ3dHXfE821m1eI28SviwDhJMoRnfrGUcgzw747b\nxMOkhrDiW2SuiUinGSmDQV37b40qGXtRyvG0zUDA8zwK9yHe+Rdo6iaFokESFY08\nXasoYw/58W5f6woJdtFOwZCAYP5YFjVzCCJ+8CK0FHM2Spm1ljET14poRjAq16Q1\nx+Lz9044iFQBIqmShCXrfJge4CXq1dRLwH1EgRIWiI411xcM9OJDkrR2f8rgD8wu\nmad7EFuhg5gAUfOiyu2M4UAp3qwMGtIaCKrHs6IiWsvWZqhXpr8pfl+l5TTmFqPg\nRa17wEWS7oKQsJtuFGNPDB2vKOLsOrmFbZSmeRBPzwKBgQD/Zz1T8XZIOpajSrjo\npXgI1KAvy3qIBEcVU/dG9YSXxiJIJkkhvqCk1dMpZuYj7D5IPSjS6tFF5k/biRo3\nSk6ngn+BM0/mH3QRFVS+InvLBLlUCjk8ltBdwPklqSphwVTwSZCpPt6vCeRNoRCx\nP/6UIowG51N2Byj0I3liIat5QwKBgQDH17b0UN7vn/v+76IgHRP1phUBD0zwchvj\n+BNDyCFfty4rVNCbqATs5qdIlfRkSSb5DykkiCp2fufsOLCAvZ//KaLp+ynrYXqt\n/1iUn9YT9/uVuxs4CvbKhJnIcIpfUZx7PM76Hnw+InIfzO6YTGHxTz6HwGsrrSJ/\n5AwNOCAU5wKBgGVHBya2ZXUW5o0yIEkA9KxrxGmvgpNVPurSNQhKa53Tz9xUckOT\nWBiFQgr05uXv1HLI7dtVik7xmVEw+Nhb+vyp3u3Y7yIN7vSnRMdw3S4QXX1Z4ICK\nPW4wC5xHjKrfA1OVmGvEpoE6pvGxoPDos4cCfAxwxsPS6waE2qlzOJAJAoGBAJj7\n4AjkJ+YU+RpOZDRlTjRNMeMfzWx8TjGUZVsMR9A4MNXnFdMzKqIYaJM+iFqFTZp4\nKqzWuHsB55WESEol3+e7/gVUyuBwPTQaN7t/KKkcu7ICDHI4oniiTf+Nd8BEf6Aw\nCtqan84JHIiPn09jmc7bNSlC+kfzQGfbMgakopqdAoGAYc/HOV1mPJwYZbjW2T5x\nbG7VJwPrNSVjWnyfhb51EAbDMmme5ygfc8CY/TDKMzUOVq0yw1Bb6VvqhLePv+oo\nPRE/pp6GgMaJrHDcyYzMFiUYglOa6VgrK1ugzZ4dSYrGWDHGPa91Jtt9hxiTWldZ\nylcBwJjMQrLp/tRWyyqXxkE=\n-----END PRIVATE KEY-----\n").replace(/\\n/g, '\n'),
+    private_key: (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, '\n'),
     client_email: process.env.GOOGLE_CLIENT_EMAIL || "",
     client_id: process.env.GOOGLE_CLIENT_ID || "",
     auth_uri: process.env.GOOGLE_AUTH_URI || "https://accounts.google.com/o/oauth2/auth",
