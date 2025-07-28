@@ -469,8 +469,7 @@ async function webSearch(query) {
     }
 }
 
-// Gestion de la mémoire SANS sauvegarde automatique
-// Gestion de la mémoire SANS sauvegarde automatique
+// Gestion de la mémoire avec sauvegarde
 function addToMemory(userId, msgType, content) {
     if (!userId || !msgType || !content) {
         return;
@@ -497,7 +496,10 @@ function addToMemory(userId, msgType, content) {
         memory.shift();
     }
     
-    // PAS de sauvegarde automatique ici - sera fait après envoi réussi
+    // Sauvegarder de manière asynchrone (pas d'attente)
+    saveDataImmediate().catch(err => 
+        log.error(`❌ Erreur sauvegarde mémoire: ${err.message}`)
+    );
 }
 
 function getMemoryContext(userId) {
@@ -520,98 +522,47 @@ function isAdmin(userId) {
 
 // Envoyer un message
 async function sendMessage(recipientId, text) {
-    // Vérification du token
     if (!PAGE_ACCESS_TOKEN) {
-        log.error("❌ CRITIQUE: PAGE_ACCESS_TOKEN manquant");
-        return { success: false, error: "No PAGE_ACCESS_TOKEN" };
+        log.error("❌ PAGE_ACCESS_TOKEN manquant");
+        return { success: false, error: "No token" };
     }
-
-    // Vérification du message
+    
     if (!text || typeof text !== 'string') {
-        log.error(`❌ CRITIQUE: Message invalide pour ${recipientId}: ${typeof text} - ${text}`);
-        return { success: false, error: "Invalid message" };
+        log.warning("⚠️ Message vide");
+        return { success: false, error: "Empty message" };
     }
-
-    // Vérification du recipientId
-    if (!recipientId) {
-        log.error("❌ CRITIQUE: recipientId manquant");
-        return { success: false, error: "No recipient ID" };
-    }
-
+    
     // Limiter taille
     if (text.length > 2000) {
         text = text.substring(0, 1950) + "...\n✨ [Message tronqué avec amour]";
     }
-
+    
     const data = {
         recipient: { id: String(recipientId) },
         message: { text: text }
     };
-
-    // Log détaillé de la tentative
-    log.info(`📤 TENTATIVE ENVOI à ${recipientId}`);
-    log.debug(`📝 Message: ${text.substring(0, 100)}...`);
-    log.debug(`🔑 Token utilisé: ${PAGE_ACCESS_TOKEN.substring(0, 20)}...`);
-
+    
     try {
-        log.debug(`📡 Appel Facebook API...`);
-        
         const response = await axios.post(
             "https://graph.facebook.com/v18.0/me/messages",
             data,
             {
                 params: { access_token: PAGE_ACCESS_TOKEN },
-                timeout: 15000,
-                headers: {
-                    'Content-Type': 'application/json'
-                }
+                timeout: 15000
             }
         );
-
-        log.debug(`📊 Réponse Facebook - Status: ${response.status}`);
-        log.debug(`📊 Réponse Facebook - Data: ${JSON.stringify(response.data)}`);
-
-        if (response.status === 200) {
-            log.info(`✅ MESSAGE ENVOYÉ AVEC SUCCÈS à ${recipientId}`);
-            return { success: true, messageId: response.data?.message_id };
-        } else {
-            log.error(`❌ ÉCHEC ENVOI - Status: ${response.status}`);
-            log.error(`📊 Données réponse: ${JSON.stringify(response.data)}`);
-            return { success: false, error: `API Error ${response.status}`, data: response.data };
-        }
-
-    } catch (error) {
-        log.error(`❌ ERREUR CRITIQUE ENVOI à ${recipientId}:`);
-        log.error(`   Message: ${error.message}`);
         
-        if (error.response) {
-            log.error(`   Status HTTP: ${error.response.status}`);
-            log.error(`   Data: ${JSON.stringify(error.response.data)}`);
-            
-            // Diagnostics spécifiques selon l'erreur
-            if (error.response.status === 400) {
-                log.error(`   🔍 DIAGNOSTIC: Token invalide ou permissions manquantes`);
-                log.error(`   💡 SOLUTION: Vérifiez PAGE_ACCESS_TOKEN et permissions pages_messaging`);
-            } else if (error.response.status === 403) {
-                log.error(`   🔍 DIAGNOSTIC: Accès refusé - utilisateur a bloqué le bot ou app non approuvée`);
-            } else if (error.response.status === 190) {
-                log.error(`   🔍 DIAGNOSTIC: Token expiré`);
-                log.error(`   💡 SOLUTION: Régénérez le PAGE_ACCESS_TOKEN`);
-            }
-            
-            return { 
-                success: false, 
-                error: error.message, 
-                status: error.response.status,
-                details: error.response.data 
-            };
+        if (response.status === 200) {
+            return { success: true };
         } else {
-            log.error(`   Type: ${error.code || 'Inconnu'}`);
-            return { success: false, error: error.message };
+            log.error(`❌ Erreur Facebook API: ${response.status}`);
+            return { success: false, error: `API Error ${response.status}` };
         }
+    } catch (error) {
+        log.error(`❌ Erreur envoi: ${error.message}`);
+        return { success: false, error: error.message };
     }
 }
-
 
 // Envoyer une image
 async function sendImageMessage(recipientId, imageUrl, caption = "") {
@@ -851,12 +802,14 @@ app.post('/webhook', async (req, res) => {
                 
                 // Messages non-echo
                 if (event.message && !event.message.is_echo) {
-                    // Ajouter utilisateur SANS sauvegarde immédiate
+                    // Ajouter utilisateur avec sauvegarde
                     const wasNewUser = !userList.has(senderIdStr);
                     userList.add(senderIdStr);
                     
                     if (wasNewUser) {
                         log.info(`👋 Nouvel utilisateur: ${senderId}`);
+                        // Sauvegarder en arrière-plan pour les nouveaux utilisateurs
+                        saveDataImmediate();
                     }
                     
                     // Vérifier si c'est une image
@@ -869,17 +822,12 @@ app.post('/webhook', async (req, res) => {
                                     userLastImage.set(senderIdStr, imageUrl);
                                     log.info(`📸 Image reçue de ${senderId}`);
                                     
-                                    // Répondre automatiquement et ENVOYER D'ABORD
-                                    const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
-                                    const sendResult = await sendMessage(senderId, response);
+                                    // Sauvegarder l'image en arrière-plan
+                                    saveDataImmediate();
                                     
-                                    if (sendResult.success) {
-                                        log.info(`✅ Réponse image envoyée à ${senderId}`);
-                                        // SAUVEGARDER SEULEMENT APRÈS ENVOI RÉUSSI
-                                        saveDataImmediate();
-                                    } else {
-                                        log.warning(`❌ Échec envoi réponse image à ${senderId}`);
-                                    }
+                                    // Répondre automatiquement
+                                    const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
+                                    await sendMessage(senderId, response);
                                     continue;
                                 }
                             }
@@ -892,46 +840,30 @@ app.post('/webhook', async (req, res) => {
                     if (messageText) {
                         log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}...`);
                         
-                        // AJOUTER D'ABORD LE MESSAGE UTILISATEUR À LA MÉMOIRE
-                        addToMemory(senderIdStr, 'user', messageText);
-                        
                         // Traiter commande
                         const response = await processCommand(senderId, messageText);
                         
                         if (response) {
                             // Vérifier si c'est une image
                             if (typeof response === 'object' && response.type === 'image') {
-                                // ENVOYER L'IMAGE D'ABORD
+                                // Envoyer image
                                 const sendResult = await sendImageMessage(senderId, response.url, response.caption);
                                 
                                 if (sendResult.success) {
                                     log.info(`✅ Image envoyée à ${senderId}`);
-                                    // AJOUTER RÉPONSE BOT À LA MÉMOIRE ET SAUVEGARDER APRÈS ENVOI
-                                    const botResponse = response.caption || "Image générée avec amour ! 🎨✨";
-                                    addToMemory(senderIdStr, 'assistant', botResponse);
-                                    saveDataImmediate();
                                 } else {
-                                    log.error(`❌ Échec envoi image à ${senderId}: ${sendResult.error}`);
+                                    log.warning(`❌ Échec envoi image à ${senderId}`);
                                     // Fallback texte
-                                    const fallbackMsg = "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕";
-                                    const fallbackResult = await sendMessage(senderId, fallbackMsg);
-                                    if (fallbackResult.success) {
-                                        addToMemory(senderIdStr, 'assistant', fallbackMsg);
-                                        saveDataImmediate();
-                                    }
+                                    await sendMessage(senderId, "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕");
                                 }
                             } else {
-                                // ENVOYER LE MESSAGE TEXTE D'ABORD
+                                // Message texte normal
                                 const sendResult = await sendMessage(senderId, response);
                                 
                                 if (sendResult.success) {
                                     log.info(`✅ Réponse envoyée à ${senderId}`);
-                                    // AJOUTER RÉPONSE BOT À LA MÉMOIRE ET SAUVEGARDER APRÈS ENVOI
-                                    addToMemory(senderIdStr, 'assistant', response);
-                                    saveDataImmediate();
                                 } else {
-                                    log.error(`❌ Échec envoi à ${senderId}: ${sendResult.error}`);
-                                    // Ne pas ajouter à la mémoire si l'envoi a échoué
+                                    log.warning(`❌ Échec envoi à ${senderId}`);
                                 }
                             }
                         }
@@ -1268,12 +1200,10 @@ async function startBot() {
     startAutoSave();
     
     log.info("🎉 NakamaBot Amicale + Vision + GitHub prête à aider avec gentillesse !");
-    log.info("🔧 CORRECTION: Messages envoyés AVANT sauvegarde pour cohérence logs/réalité");
 
     app.listen(PORT, () => {
         log.info(`🌐 Serveur démarré sur le port ${PORT}`);
         log.info("💾 Sauvegarde automatique GitHub activée");
-        log.info("✅ Ordre corrigé: Envoi → Succès → Sauvegarde mémoire → Logs cohérents");
         log.info(`📊 Dashboard: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
     });
 }
