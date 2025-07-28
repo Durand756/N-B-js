@@ -186,12 +186,26 @@ async function loadDataFromGitHub() {
     }
 }
 
-// Sauvegarder les données vers GitHub
+// Variable pour éviter les sauvegardes simultanées
+let isSaving = false;
+let saveQueue = [];
+
+// Sauvegarder les données vers GitHub avec gestion des conflits
 async function saveDataToGitHub() {
     if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
         log.debug("🔄 Pas de sauvegarde GitHub (config manquante)");
         return;
     }
+
+    // Éviter les sauvegardes simultanées
+    if (isSaving) {
+        log.debug("⏳ Sauvegarde déjà en cours, ajout à la queue");
+        return new Promise((resolve) => {
+            saveQueue.push(resolve);
+        });
+    }
+
+    isSaving = true;
 
     try {
         log.debug(`💾 Tentative de sauvegarde sur GitHub: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
@@ -217,37 +231,60 @@ async function saveDataToGitHub() {
             content: encodeBase64(dataToSave)
         };
 
-        // Vérifier si le fichier existe déjà pour obtenir le SHA
-        try {
-            const existingResponse = await axios.get(url, {
-                headers: {
-                    'Authorization': `token ${GITHUB_TOKEN}`,
-                    'Accept': 'application/vnd.github.v3+json'
-                },
-                timeout: 10000
-            });
+        // Retry avec récupération du SHA le plus récent
+        let maxRetries = 3;
+        let success = false;
 
-            if (existingResponse.data?.sha) {
-                commitData.sha = existingResponse.data.sha;
+        for (let attempt = 1; attempt <= maxRetries && !success; attempt++) {
+            try {
+                // Récupérer le SHA le plus récent à chaque tentative
+                const existingResponse = await axios.get(url, {
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    },
+                    timeout: 10000
+                });
+
+                if (existingResponse.data?.sha) {
+                    commitData.sha = existingResponse.data.sha;
+                }
+
+                const response = await axios.put(url, commitData, {
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    },
+                    timeout: 15000
+                });
+
+                if (response.status === 200 || response.status === 201) {
+                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs)`);
+                    success = true;
+                } else {
+                    log.error(`❌ Erreur sauvegarde GitHub: ${response.status}`);
+                }
+
+            } catch (retryError) {
+                if (retryError.response?.status === 409 && attempt < maxRetries) {
+                    log.warning(`⚠️ Conflit SHA détecté (409), tentative ${attempt}/${maxRetries}, retry dans 1s...`);
+                    await sleep(1000);
+                    continue;
+                } else if (retryError.response?.status === 404 && attempt === 1) {
+                    // Fichier n'existe pas encore, pas de SHA nécessaire
+                    log.debug("📝 Premier fichier, pas de SHA nécessaire");
+                    delete commitData.sha;
+                    continue;
+                } else {
+                    throw retryError;
+                }
             }
-        } catch (error) {
-            // Fichier n'existe pas encore, pas de problème
-            log.debug("📝 Premier fichier, pas de SHA nécessaire");
         }
 
-        const response = await axios.put(url, commitData, {
-            headers: {
-                'Authorization': `token ${GITHUB_TOKEN}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            timeout: 15000
-        });
-
-        if (response.status === 200 || response.status === 201) {
-            log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs)`);
-        } else {
-            log.error(`❌ Erreur sauvegarde GitHub: ${response.status}`);
+        if (!success) {
+            log.error("❌ Échec de sauvegarde après plusieurs tentatives");
         }
+
     } catch (error) {
         if (error.response?.status === 404) {
             log.error("❌ Repository GitHub introuvable pour la sauvegarde (404)");
@@ -262,13 +299,21 @@ async function saveDataToGitHub() {
         } else if (error.response?.status === 403) {
             log.error("❌ Accès refusé GitHub pour la sauvegarde (403)");
             log.error("💡 Vérifiez les permissions de votre token (repo, contents)");
+        } else if (error.response?.status === 409) {
+            log.warning("⚠️ Conflit SHA persistant - sauvegarde ignorée pour éviter les blocages");
         } else {
             log.error(`❌ Erreur sauvegarde GitHub: ${error.message}`);
             if (error.response) {
                 log.error(`📊 Status: ${error.response.status}`);
-                log.error(`📊 Data: ${JSON.stringify(error.response.data)}`);
             }
         }
+    } finally {
+        isSaving = false;
+        
+        // Traiter la queue des sauvegardes en attente
+        const queueCallbacks = [...saveQueue];
+        saveQueue = [];
+        queueCallbacks.forEach(callback => callback());
     }
 }
 
@@ -286,9 +331,12 @@ function startAutoSave() {
     log.info("🔄 Sauvegarde automatique GitHub activée (toutes les 5 minutes)");
 }
 
-// Sauvegarder lors de changements importants
+// Sauvegarder lors de changements importants (non-bloquant)
 async function saveDataImmediate() {
-    await saveDataToGitHub();
+    // Lancer la sauvegarde en arrière-plan sans attendre
+    saveDataToGitHub().catch(err => 
+        log.debug(`🔄 Sauvegarde en arrière-plan: ${err.message}`)
+    );
 }
 
 // === UTILITAIRES ===
@@ -760,10 +808,8 @@ app.post('/webhook', async (req, res) => {
                     
                     if (wasNewUser) {
                         log.info(`👋 Nouvel utilisateur: ${senderId}`);
-                        // Sauvegarder immédiatement pour les nouveaux utilisateurs
-                        saveDataImmediate().catch(err => 
-                            log.error(`❌ Erreur sauvegarde nouvel utilisateur: ${err.message}`)
-                        );
+                        // Sauvegarder en arrière-plan pour les nouveaux utilisateurs
+                        saveDataImmediate();
                     }
                     
                     // Vérifier si c'est une image
@@ -776,10 +822,8 @@ app.post('/webhook', async (req, res) => {
                                     userLastImage.set(senderIdStr, imageUrl);
                                     log.info(`📸 Image reçue de ${senderId}`);
                                     
-                                    // Sauvegarder l'image
-                                    saveDataImmediate().catch(err => 
-                                        log.error(`❌ Erreur sauvegarde image: ${err.message}`)
-                                    );
+                                    // Sauvegarder l'image en arrière-plan
+                                    saveDataImmediate();
                                     
                                     // Répondre automatiquement
                                     const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
