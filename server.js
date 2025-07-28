@@ -470,6 +470,7 @@ async function webSearch(query) {
 }
 
 // Gestion de la mémoire SANS sauvegarde automatique
+// Gestion de la mémoire SANS sauvegarde automatique
 function addToMemory(userId, msgType, content) {
     if (!userId || !msgType || !content) {
         return;
