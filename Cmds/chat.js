@@ -25,8 +25,9 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     if (['2025', 'actualité', 'récent', 'nouveau', 'maintenant', 'aujourd\'hui'].some(word => args.toLowerCase().includes(word))) {
         const searchResult = await webSearch(args);
         if (searchResult) {
+            // ✅ CORRECTION : Utiliser 'assistant' au lieu de 'bot'
             addToMemory(String(senderId), 'user', args);
-            addToMemory(String(senderId), 'bot', searchResult);
+            addToMemory(String(senderId), 'assistant', searchResult);
             return `🔍 Voici ce que j'ai trouvé pour toi : ${searchResult} ✨\n\n❓ Tape /help pour voir tout ce que je peux faire ! 💕`;
         }
     }
@@ -44,8 +45,9 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     const response = await callMistralAPI(messages, 200, 0.7);
     
     if (response) {
+        // ✅ CORRECTION : Utiliser 'assistant' au lieu de 'bot'
         addToMemory(String(senderId), 'user', args);
-        addToMemory(String(senderId), 'bot', response);
+        addToMemory(String(senderId), 'assistant', response);
         
         // Ajouter souvent une proposition d'aide
         if (Math.random() < 0.3) { // 30% de chance
