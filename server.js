@@ -17,7 +17,7 @@ const ADMIN_IDS = new Set(
     (process.env.ADMIN_IDS || "").split(",").map(id => id.trim()).filter(id => id)
 );
 
-// Configuration Google Drive
+// Configuration Google Drive - CORRIGÉE
 const GDRIVE_CONFIG = {
     type: process.env.GOOGLE_TYPE || "service_account",
     project_id: process.env.GOOGLE_PROJECT_ID || "",
@@ -46,39 +46,101 @@ const log = {
     debug: (msg) => console.log(`${new Date().toISOString()} - DEBUG - ${msg}`)
 };
 
-// === GOOGLE DRIVE INTEGRATION ===
+// === GOOGLE DRIVE INTEGRATION - CORRIGÉE ===
 
 let driveService = null;
 
-// Initialiser Google Drive
+// Initialiser Google Drive - VERSION CORRIGÉE
 async function initGoogleDrive() {
     try {
         if (!GDRIVE_CONFIG.private_key || !GDRIVE_CONFIG.client_email || !GDRIVE_FOLDER_ID) {
             log.warning("⚠️ Configuration Google Drive incomplète - sauvegarde désactivée");
+            log.warning(`⚠️ private_key: ${Boolean(GDRIVE_CONFIG.private_key)}`);
+            log.warning(`⚠️ client_email: ${Boolean(GDRIVE_CONFIG.client_email)}`);
+            log.warning(`⚠️ folder_id: ${Boolean(GDRIVE_FOLDER_ID)}`);
             return false;
         }
 
+        // Créer l'authentification avec scope étendu
         const auth = new google.auth.JWT(
             GDRIVE_CONFIG.client_email,
             null,
             GDRIVE_CONFIG.private_key,
-            ['https://www.googleapis.com/auth/drive.file']
+            [
+                'https://www.googleapis.com/auth/drive',
+                'https://www.googleapis.com/auth/drive.file'
+            ]
         );
 
+        // Initialiser le service Drive
         driveService = google.drive({ version: 'v3', auth });
         
-        // Test de connexion
-        await driveService.files.get({ fileId: GDRIVE_FOLDER_ID });
-        log.info("✅ Google Drive connecté avec succès");
-        return true;
+        log.info(`🔍 Test d'accès au dossier Google Drive ID: ${GDRIVE_FOLDER_ID}`);
+        log.info(`🔑 Service account: ${GDRIVE_CONFIG.client_email}`);
+        
+        // Test de connexion AMÉLIORÉ avec gestion d'erreurs détaillée
+        try {
+            // D'abord tester l'authentification générale
+            const aboutResponse = await driveService.about.get({ fields: 'user' });
+            log.info(`✅ Authentification réussie pour: ${aboutResponse.data.user?.emailAddress || 'Service Account'}`);
+            
+            // Ensuite tester l'accès au dossier spécifique
+            const folderResponse = await driveService.files.get({ 
+                fileId: GDRIVE_FOLDER_ID,
+                fields: 'id, name, parents, permissions',
+                supportsAllDrives: true
+            });
+            
+            log.info(`✅ Accès au dossier réussi: "${folderResponse.data.name}" (ID: ${folderResponse.data.id})`);
+            
+            // Test de création d'un fichier temporaire pour vérifier les permissions d'écriture
+            const testFileName = `test_connection_${Date.now()}.json`;
+            const testData = { test: true, timestamp: new Date().toISOString() };
+            
+            const testCreateResult = await createOrUpdateGDriveFile(testFileName, testData);
+            if (testCreateResult) {
+                log.info("✅ Test d'écriture réussi - permissions OK");
+                // Nettoyer le fichier de test
+                await deleteGDriveFile(testFileName);
+                log.info("🧹 Fichier de test supprimé");
+            } else {
+                log.warning("⚠️ Test d'écriture échoué - vérifiez les permissions du dossier");
+                return false;
+            }
+            
+            log.info("✅ Google Drive connecté et configuré avec succès !");
+            return true;
+            
+        } catch (accessError) {
+            log.error(`❌ Erreur d'accès au dossier Google Drive:`);
+            log.error(`   Status: ${accessError.code || 'N/A'}`);
+            log.error(`   Message: ${accessError.message}`);
+            
+            if (accessError.code === 404) {
+                log.error(`❌ SOLUTION REQUISE: Le dossier ${GDRIVE_FOLDER_ID} n'existe pas ou le service account n'y a pas accès`);
+                log.error(`❌ ÉTAPES À SUIVRE:`);
+                log.error(`   1. Vérifiez que l'ID du dossier est correct`);
+                log.error(`   2. Partagez le dossier avec l'email: ${GDRIVE_CONFIG.client_email}`);
+                log.error(`   3. Donnez des permissions 'Éditeur' au service account`);
+            } else if (accessError.code === 403) {
+                log.error(`❌ PERMISSIONS INSUFFISANTES: Le service account n'a pas les droits d'accès`);
+                log.error(`❌ SOLUTION: Partagez le dossier avec: ${GDRIVE_CONFIG.client_email} (permissions Éditeur)`);
+            }
+            
+            return false;
+        }
+        
     } catch (error) {
         log.error(`❌ Erreur initialisation Google Drive: ${error.message}`);
+        if (error.message.includes('private_key')) {
+            log.error(`❌ Vérifiez que GOOGLE_PRIVATE_KEY est correctement formatée avec \\n pour les retours à la ligne`);
+        }
         return false;
     }
 }
 
-// Sauvegarder les données sur Google Drive
-async function saveToGoogleDrive(filename, data) {
+// Nouvelle fonction utilitaire pour créer ou mettre à jour un fichier
+async function createOrUpdateGDriveFile(filename, data) {
     if (!driveService) {
         log.warning("⚠️ Google Drive non initialisé");
         return false;
@@ -86,17 +148,17 @@ async function saveToGoogleDrive(filename, data) {
 
     try {
         const jsonData = JSON.stringify(data, null, 2);
-        const buffer = Buffer.from(jsonData, 'utf-8');
-
+        
         // Vérifier si le fichier existe déjà
         const existingFiles = await driveService.files.list({
             q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
-            fields: 'files(id, name)'
+            fields: 'files(id, name)',
+            supportsAllDrives: true
         });
 
         const media = {
             mimeType: 'application/json',
-            body: buffer
+            body: jsonData
         };
 
         const fileMetadata = {
@@ -110,27 +172,63 @@ async function saveToGoogleDrive(filename, data) {
             await driveService.files.update({
                 fileId: fileId,
                 media: media,
-                fields: 'id'
+                fields: 'id',
+                supportsAllDrives: true
             });
-            log.info(`💾 Fichier ${filename} mis à jour sur Google Drive`);
+            log.debug(`💾 Fichier ${filename} mis à jour sur Google Drive`);
         } else {
             // Créer un nouveau fichier
             await driveService.files.create({
                 resource: fileMetadata,
                 media: media,
-                fields: 'id'
+                fields: 'id',
+                supportsAllDrives: true
             });
-            log.info(`💾 Fichier ${filename} créé sur Google Drive`);
+            log.debug(`💾 Fichier ${filename} créé sur Google Drive`);
         }
 
         return true;
     } catch (error) {
         log.error(`❌ Erreur sauvegarde ${filename}: ${error.message}`);
+        if (error.code === 403) {
+            log.error(`❌ Permissions insuffisantes - vérifiez le partage du dossier`);
+        }
         return false;
     }
 }
 
-// Charger les données depuis Google Drive
+// Nouvelle fonction utilitaire pour supprimer un fichier
+async function deleteGDriveFile(filename) {
+    if (!driveService) return false;
+    
+    try {
+        const files = await driveService.files.list({
+            q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
+            fields: 'files(id)',
+            supportsAllDrives: true
+        });
+
+        if (files.data.files.length > 0) {
+            const fileId = files.data.files[0].id;
+            await driveService.files.delete({
+                fileId: fileId,
+                supportsAllDrives: true
+            });
+            return true;
+        }
+        return false;
+    } catch (error) {
+        log.error(`❌ Erreur suppression ${filename}: ${error.message}`);
+        return false;
+    }
+}
+
+// Sauvegarder les données sur Google Drive - VERSION CORRIGÉE
+async function saveToGoogleDrive(filename, data) {
+    return await createOrUpdateGDriveFile(filename, data);
+}
+
+// Charger les données depuis Google Drive - VERSION CORRIGÉE
 async function loadFromGoogleDrive(filename) {
     if (!driveService) {
         log.warning("⚠️ Google Drive non initialisé");
@@ -140,7 +238,8 @@ async function loadFromGoogleDrive(filename) {
     try {
         const files = await driveService.files.list({
             q: `name='${filename}' and parents in '${GDRIVE_FOLDER_ID}' and trashed=false`,
-            fields: 'files(id, name)'
+            fields: 'files(id, name)',
+            supportsAllDrives: true
         });
 
         if (files.data.files.length === 0) {
@@ -151,7 +250,8 @@ async function loadFromGoogleDrive(filename) {
         const fileId = files.data.files[0].id;
         const response = await driveService.files.get({
             fileId: fileId,
-            alt: 'media'
+            alt: 'media',
+            supportsAllDrives: true
         });
 
         const data = JSON.parse(response.data);
@@ -163,7 +263,7 @@ async function loadFromGoogleDrive(filename) {
     }
 }
 
-// Sauvegarder toutes les données
+// Sauvegarder toutes les données - INCHANGÉE
 async function saveAllData() {
     try {
         const timestamp = new Date().toISOString();
@@ -190,7 +290,7 @@ async function saveAllData() {
     }
 }
 
-// Charger toutes les données
+// Charger toutes les données - INCHANGÉE
 async function loadAllData() {
     try {
         const userData = await loadFromGoogleDrive('nakamabot_data.json');
@@ -229,7 +329,7 @@ async function loadAllData() {
     }
 }
 
-// Sauvegarde automatique périodique
+// Sauvegarde automatique périodique - INCHANGÉE
 let autoSaveInterval = null;
 
 function startAutoSave() {
@@ -249,7 +349,7 @@ function stopAutoSave() {
     }
 }
 
-// === FONCTIONS UTILITAIRES ORIGINALES ===
+// === FONCTIONS UTILITAIRES ORIGINALES - INCHANGÉES ===
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -524,7 +624,7 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
     }
 }
 
-// === CHARGEMENT DES COMMANDES ===
+// === CHARGEMENT DES COMMANDES - INCHANGÉ ===
 
 const COMMANDS = new Map();
 
@@ -636,7 +736,7 @@ async function processCommand(senderId, messageText) {
     return `❓ Oh ! La commande /${command} m'est inconnue ! Tape /help pour voir tout ce que je sais faire ! ✨💕`;
 }
 
-// === ROUTES EXPRESS ===
+// === ROUTES EXPRESS - QUELQUES AMÉLIORATIONS ===
 
 // Route d'accueil
 app.get('/', (req, res) => {
@@ -649,7 +749,7 @@ app.get('/', (req, res) => {
         users: userList.size,
         conversations: userMemory.size,
         images_stored: userLastImage.size,
-        version: "4.0 Amicale + Vision + Google Drive",
+        version: "4.0 Amicale + Vision + Google Drive - CORRIGÉE",
         features: [
             "Génération d'images IA",
             "Transformation anime", 
@@ -662,7 +762,9 @@ app.get('/', (req, res) => {
         ],
         google_drive: {
             enabled: Boolean(driveService),
-            auto_save: Boolean(autoSaveInterval)
+            auto_save: Boolean(autoSaveInterval),
+            folder_id: GDRIVE_FOLDER_ID,
+            service_account: GDRIVE_CONFIG.client_email
         },
         last_update: new Date().toISOString()
     });
@@ -716,6 +818,32 @@ app.post('/admin/restore', async (req, res) => {
                 conversations: userMemory.size,
                 images: userLastImage.size
             }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Route pour tester la connexion Google Drive (admin seulement)
+app.post('/admin/test-gdrive', async (req, res) => {
+    const adminId = req.body.admin_id;
+    
+    if (!adminId || !isAdmin(adminId)) {
+        return res.status(403).json({ error: "Accès refusé - Admin requis" });
+    }
+    
+    try {
+        const testResult = await initGoogleDrive();
+        res.json({ 
+            success: testResult,
+            message: testResult ? "Test Google Drive réussi" : "Test Google Drive échoué",
+            details: {
+                service_initialized: Boolean(driveService),
+                folder_id: GDRIVE_FOLDER_ID,
+                service_account: GDRIVE_CONFIG.client_email,
+                auto_save_active: Boolean(autoSaveInterval)
+            },
+            timestamp: new Date().toISOString()
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -838,7 +966,7 @@ app.get('/stats', (req, res) => {
         conversations_count: userMemory.size,
         images_stored: userLastImage.size,
         commands_available: COMMANDS.size,
-        version: "4.0 Amicale + Vision + Google Drive",
+        version: "4.0 Amicale + Vision + Google Drive - CORRIGÉE",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: 2025,
@@ -859,7 +987,7 @@ app.get('/stats', (req, res) => {
     });
 });
 
-// Santé du bot
+// Santé du bot - AMÉLIORÉE
 app.get('/health', (req, res) => {
     const healthStatus = {
         status: "healthy",
@@ -877,7 +1005,12 @@ app.get('/health', (req, res) => {
             images_stored: userLastImage.size,
             commands_loaded: COMMANDS.size
         },
-        version: "4.0 Amicale + Vision + Google Drive",
+        google_drive_details: {
+            service_account: GDRIVE_CONFIG.client_email,
+            folder_id: GDRIVE_FOLDER_ID,
+            connected: Boolean(driveService)
+        },
+        version: "4.0 Amicale + Vision + Google Drive - CORRIGÉE",
         creator: "Durand",
         timestamp: new Date().toISOString()
     };
@@ -894,7 +1027,7 @@ app.get('/health', (req, res) => {
         issues.push("Aucune commande chargée");
     }
     if (!driveService) {
-        issues.push("Google Drive non connecté");
+        issues.push("Google Drive non connecté - Vérifiez les permissions du dossier");
     }
     if (!autoSaveInterval) {
         issues.push("Sauvegarde automatique inactive");
@@ -909,31 +1042,17 @@ app.get('/health', (req, res) => {
     res.status(statusCode).json(healthStatus);
 });
 
-// === DÉMARRAGE ===
+// === DÉMARRAGE AMÉLIORÉ ===
 
 const PORT = process.env.PORT || 5000;
 
 async function startBot() {
-    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + Google Drive");
+    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + Google Drive - VERSION CORRIGÉE");
     log.info("💖 Personnalité super gentille et amicale, comme une très bonne amie");
     log.info("👨‍💻 Créée par Durand");
     log.info("📅 Année: 2025");
 
-    // Initialiser Google Drive
-    const driveInitialized = await initGoogleDrive();
-    
-    if (driveInitialized) {
-        // Charger les données existantes
-        await loadAllData();
-        
-        // Démarrer la sauvegarde automatique
-        startAutoSave();
-    }
-
-    // Charger toutes les commandes
-    loadCommands();
-
-    // Vérifier variables
+    // Vérifier variables critiques d'abord
     const missingVars = [];
     if (!PAGE_ACCESS_TOKEN) {
         missingVars.push("PAGE_ACCESS_TOKEN");
@@ -944,61 +1063,110 @@ async function startBot() {
     if (!GDRIVE_FOLDER_ID) {
         missingVars.push("GDRIVE_FOLDER_ID");
     }
-
-    if (missingVars.length > 0) {
-        log.error(`❌ Variables manquantes: ${missingVars.join(', ')}`);
-    } else {
-        log.info("✅ Configuration OK");
+    if (!GDRIVE_CONFIG.client_email) {
+        missingVars.push("GOOGLE_CLIENT_EMAIL");
+    }
+    if (!GDRIVE_CONFIG.private_key) {
+        missingVars.push("GOOGLE_PRIVATE_KEY");
     }
 
+    if (missingVars.length > 0) {
+        log.error(`❌ Variables manquantes CRITIQUES: ${missingVars.join(', ')}`);
+        log.error("❌ Le bot ne pourra pas fonctionner correctement sans ces variables !");
+    } else {
+        log.info("✅ Toutes les variables d'environnement critiques sont présentes");
+    }
+
+    // Initialiser Google Drive avec diagnostic détaillé
+    log.info("🔧 Initialisation Google Drive...");
+    const driveInitialized = await initGoogleDrive();
+    
+    if (driveInitialized) {
+        log.info("✅ Google Drive initialisé avec succès !");
+        
+        // Charger les données existantes
+        log.info("📥 Chargement des données existantes...");
+        await loadAllData();
+        
+        // Démarrer la sauvegarde automatique
+        startAutoSave();
+    } else {
+        log.error("❌ Google Drive non initialisé - Sauvegarde désactivée");
+        log.error("🛠️ ACTIONS REQUISES POUR CORRIGER:");
+        log.error(`   1. Vérifiez que le dossier ${GDRIVE_FOLDER_ID} existe`);
+        log.error(`   2. Partagez ce dossier avec: ${GDRIVE_CONFIG.client_email || 'SERVICE_ACCOUNT_EMAIL'}`);
+        log.error(`   3. Donnez des permissions 'Éditeur' au service account`);
+        log.error(`   4. Vérifiez que GOOGLE_PRIVATE_KEY est correctement formatée`);
+    }
+
+    // Charger toutes les commandes
+    log.info("📂 Chargement des commandes...");
+    loadCommands();
+
     log.info(`🎨 ${COMMANDS.size} commandes disponibles`);
-    log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
+    log.info(`🔐 ${ADMIN_IDS.size} administrateurs configurés`);
     log.info(`👥 ${userList.size} utilisateurs chargés`);
     log.info(`💬 ${userMemory.size} conversations restaurées`);
     log.info(`📸 ${userLastImage.size} images en mémoire`);
     log.info(`💾 Google Drive: ${driveService ? '✅ Connecté' : '❌ Déconnecté'}`);
-    log.info(`🔄 Sauvegarde auto: ${autoSaveInterval ? '✅ Active' : '❌ Inactive'}`);
+    log.info(`🔄 Sauvegarde auto: ${autoSaveInterval ? '✅ Active (5min)' : '❌ Inactive'}`);
     log.info(`🌐 Serveur sur le port ${PORT}`);
-    log.info("🎉 NakamaBot Amicale + Vision + Google Drive prête à aider avec gentillesse !");
+    
+    if (driveService) {
+        log.info("🎉 NakamaBot Amicale + Vision + Google Drive prête à aider avec gentillesse !");
+    } else {
+        log.warning("⚠️ NakamaBot démarrée SANS Google Drive - Fonctionnement dégradé");
+    }
 
     app.listen(PORT, () => {
         log.info(`🌐 Serveur démarré sur le port ${PORT}`);
+        log.info("🔗 Routes disponibles:");
+        log.info("   GET /           - Statut du bot");
+        log.info("   GET /health     - Santé détaillée");
+        log.info("   GET /stats      - Statistiques publiques");
+        log.info("   POST /admin/*   - Routes administrateur");
     });
 }
 
-// Gestion propre de l'arrêt avec sauvegarde finale
-process.on('SIGINT', async () => {
-    log.info("🛑 Arrêt du bot avec tendresse - Sauvegarde finale...");
+// Gestion propre de l'arrêt avec sauvegarde finale - AMÉLIORÉE
+async function gracefulShutdown(signal) {
+    log.info(`🛑 Signal ${signal} reçu - Arrêt du bot avec tendresse...`);
     
     // Arrêter la sauvegarde automatique
     stopAutoSave();
     
-    // Effectuer une dernière sauvegarde
-    try {
-        await saveAllData();
-        log.info("💾 Sauvegarde finale terminée");
-    } catch (error) {
-        log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
+    // Effectuer une dernière sauvegarde si Google Drive est disponible
+    if (driveService) {
+        try {
+            log.info("💾 Sauvegarde finale en cours...");
+            const success = await saveAllData();
+            if (success) {
+                log.info("💾 Sauvegarde finale terminée avec succès");
+            } else {
+                log.warning("⚠️ Échec de la sauvegarde finale");
+            }
+        } catch (error) {
+            log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
+        }
+    } else {
+        log.warning("⚠️ Google Drive non disponible - Sauvegarde finale ignorée");
     }
     
+    log.info("👋 NakamaBot s'arrête avec amour - À bientôt !");
     process.exit(0);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// Gestion des erreurs non capturées
+process.on('unhandledRejection', (reason, promise) => {
+    log.error(`❌ Promesse non gérée: ${reason}`);
 });
 
-process.on('SIGTERM', async () => {
-    log.info("🛑 Arrêt du bot avec tendresse - Sauvegarde finale...");
-    
-    // Arrêter la sauvegarde automatique
-    stopAutoSave();
-    
-    // Effectuer une dernière sauvegarde
-    try {
-        await saveAllData();
-        log.info("💾 Sauvegarde finale terminée");
-    } catch (error) {
-        log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
-    }
-    
-    process.exit(0);
+process.on('uncaughtException', (error) => {
+    log.error(`❌ Exception non capturée: ${error.message}`);
+    gracefulShutdown('UNCAUGHT_EXCEPTION');
 });
 
 // Démarrer le bot
