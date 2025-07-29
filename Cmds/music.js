@@ -36,7 +36,7 @@ Exemples :
         return `🎶 Voici le lien YouTube pour "${query}" :
 ${videoUrl}
 
-ℹ️ Tu peux écouter la musique directement ici, sans téléchargement ni stockage serveur.`;
+ℹ️ Tu peux écouter la musique directement ici.`;
     } catch (error) {
         log.error(`Erreur /music: ${error.message}`);
         return `⚠️ Oups, une erreur est survenue pendant la recherche. Essaie plus tard.`;
