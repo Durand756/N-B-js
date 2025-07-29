@@ -247,54 +247,16 @@ class ClanSystem {
     }
   }
 
-  // Commandes principales
-  async processCommand(userId, userPseudo, args) {
-    const subcommand = args[0]?.toLowerCase();
-    
-    switch (subcommand) {
-      case 'create':
-        return this.createClan(userId, userPseudo, args.slice(1).join(' '));
-      case 'join':
-        return this.requestJoinClan(userId, userPseudo, args[1]);
-      case 'accept':
-        return this.acceptJoinRequest(userId, args[1]);
-      case 'reject':
-        return this.rejectJoinRequest(userId, args[1]);
-      case 'leave':
-        return this.leaveClan(userId);
-      case 'info':
-        return this.getClanInfo(userId, args[1]);
-      case 'promote':
-        return this.promoteMember(userId, args[1], args[2]);
-      case 'kick':
-        return this.kickMember(userId, args[1]);
-      case 'recruit':
-        return this.recruitUnits(userId, args[1], parseInt(args[2]) || 1);
-      case 'declare':
-        return this.declareWar(userId, args[1]);
-      case 'attack':
-        return this.attackClan(userId, args[1] || 'frontale');
-      case 'defend':
-        return this.defendClan(userId);
-      case 'peace':
-        return this.proposePeace(userId, args.slice(1).join(' '));
-      case 'ranking':
-        return this.getClanRanking();
-      case 'daily':
-        return this.claimDailyReward(userId);
-      case 'donate':
-        return this.donateGold(userId, parseInt(args[1]) || 0);
-      case 'wars':
-        return this.getActiveWars();
-      case 'stats':
-        return this.getClanStats(userId);
-      case 'help':
-        return this.getHelp();
-      default:
-        return this.getQuickHelp();
-    }
+  getTotalClanUnits(clan) {
+    return Object.values(clan.membres).reduce((total, member) => {
+      for (const [type, count] of Object.entries(member.unites || {})) {
+        total[type] = (total[type] || 0) + count;
+      }
+      return total;
+    }, {});
   }
 
+  // Commandes principales
   createClan(userId, userPseudo, clanName) {
     if (!clanName || clanName.trim().length === 0) {
       return "❌ **Erreur:** Spécifie un nom pour ton clan !\n`/clan create [NomClan]`";
@@ -619,93 +581,47 @@ class ClanSystem {
            requestsInfo;
   }
 
-  promoteMember(userId, targetPseudo, grade) {
-    const userClan = this.getUserClan(userId);
-    if (!userClan) {
-      return "❌ **Erreur:** Tu ne fais partie d'aucun clan !";
-    }
-
-    const clan = userClan.data;
-    const userMember = clan.membres[userId];
-
-    if (!userMember || userMember.grade !== "Chef") {
-      return "❌ **Erreur:** Seul le Chef peut promouvoir des membres !";
-    }
-
-    if (!grade || !CONFIG.GRADES.includes(grade)) {
-      return `❌ **Erreur:** Grade invalide !\n**Grades disponibles:** ${CONFIG.GRADES.filter(g => g !== 'Chef').join(', ')}`;
-    }
-
-    if (grade === 'Chef') {
-      return "❌ **Erreur:** Tu ne peux pas promouvoir quelqu'un Chef ! Utilise `/clan leave` pour transférer le leadership.";
-    }
-
-    // Trouver le membre à promouvoir
-    const targetId = Object.keys(clan.membres).find(id => 
-      clan.membres[id].pseudo.toLowerCase() === targetPseudo.toLowerCase()
-    );
-
-    if (!targetId) {
-      return `❌ **Erreur:** Membre "${targetPseudo}" introuvable dans le clan !`;
-    }
-
-    if (targetId === userId) {
-      return "❌ **Erreur:** Tu ne peux pas te promouvoir toi-même !";
-    }
-
-    const clans = this.getClans();
-    const oldGrade = clans[userClan.name].membres[targetId].grade;
-    clans[userClan.name].membres[targetId].grade = grade;
-    this.saveClans(clans);
-
-    return `✅ **Promotion réussie !**\n\n` +
-           `**${targetPseudo}** a été promu de **${oldGrade}** à **${grade}** !`;
+  getHelp() {
+    return `⚔️ **GUIDE COMPLET DU SYSTÈME DE CLAN**\n\n` +
+           `**🏰 GESTION DE CLAN:**\n` +
+           `• \`/clan create [nom]\` - Créer un clan\n` +
+           `• \`/clan join [nom]\` - Demander à rejoindre un clan\n` +
+           `• \`/clan accept [pseudo]\` - Accepter une demande\n` +
+           `• \`/clan reject [pseudo]\` - Rejeter une demande\n` +
+           `• \`/clan leave\` - Quitter son clan\n` +
+           `• \`/clan info [clan]\` - Voir les infos d'un clan\n` +
+           `• \`/clan promote [pseudo] [grade]\` - Promouvoir\n` +
+           `• \`/clan kick [pseudo]\` - Expulser un membre\n\n` +
+           `**⚔️ GUERRE ET COMBAT:**\n` +
+           `• \`/clan declare [clan]\` - Déclarer la guerre\n` +
+           `• \`/clan attack [tactique]\` - Attaquer (frontale/surprise/siege)\n` +
+           `• \`/clan defend\` - Renforcer les défenses\n` +
+           `• \`/clan peace [termes]\` - Proposer la paix\n` +
+           `• \`/clan wars\` - Voir les guerres actives\n\n` +
+           `**🛡️ ARMÉE ET RESSOURCES:**\n` +
+           `• \`/clan recruit [type] [qté]\` - Recruter des unités\n` +
+           `• **Types:** fantassin (50), archer (75), chevalier (150), mage (250), dragon (750)\n` +
+           `• \`/clan daily\` - Récompense quotidienne\n\n` +
+           `**📊 INFORMATION:**\n` +
+           `• \`/clan ranking\` - Classement des clans\n` +
+           `• \`/clan stats\` - Tes statistiques\n\n` +
+           `**💡 CONSEILS:**\n` +
+           `• Chaque rang donne plus d'or quotidien\n` +
+           `• Les guerres ont 2h de préparation\n` +
+           `• Cooldowns: Attaque 12h, Recrutement 30min, Guerre 24h\n` +
+           `• Grades: Membre → Soldat → Général/Espion/Trésorier → Lieutenant → Chef`;
   }
 
-  kickMember(userId, targetPseudo) {
-    const userClan = this.getUserClan(userId);
-    if (!userClan) {
-      return "❌ **Erreur:** Tu ne fais partie d'aucun clan !";
-    }
-
-    const clan = userClan.data;
-    const userMember = clan.membres[userId];
-
-    if (!userMember || !['Chef', 'Lieutenant'].includes(userMember.grade)) {
-      return "❌ **Erreur:** Seuls les Chefs et Lieutenants peuvent expulser des membres !";
-    }
-
-    // Trouver le membre à expulser
-    const targetId = Object.keys(clan.membres).find(id => 
-      clan.membres[id].pseudo.toLowerCase() === targetPseudo.toLowerCase()
-    );
-
-    if (!targetId) {
-      return `❌ **Erreur:** Membre "${targetPseudo}" introuvable dans le clan !`;
-    }
-
-    if (targetId === userId) {
-      return "❌ **Erreur:** Tu ne peux pas t'expulser toi-même ! Utilise `/clan leave`.";
-    }
-
-    if (targetId === clan.chef) {
-      return "❌ **Erreur:** Tu ne peux pas expulser le Chef !";
-    }
-
-    // Un Lieutenant ne peut pas expulser un autre Lieutenant
-    const targetMember = clan.membres[targetId];
-    if (userMember.grade === 'Lieutenant' && targetMember.grade === 'Lieutenant') {
-      return "❌ **Erreur:** Un Lieutenant ne peut pas expulser un autre Lieutenant !";
-    }
-
-    const clans = this.getClans();
-    delete clans[userClan.name].membres[targetId];
-    this.saveClans(clans);
-
-    return `✅ **Membre expulsé !**\n\n` +
-           `**${targetPseudo}** a été expulsé du clan **${userClan.name}**.`;
+  getQuickHelp() {
+    return `⚔️ **COMMANDES CLAN DISPONIBLES:**\n\n` +
+           `**🏰 Base:** create, join, leave, info, promote\n` +
+           `**⚔️ Guerre:** declare, attack, defend, peace\n` +
+           `**🛡️ Armée:** recruit, daily, stats\n` +
+           `**📊 Info:** ranking, wars, help\n\n` +
+           `Utilise \`/clan help\` pour le guide complet !`;
   }
 
+  // Autres méthodes importantes (simplifiées pour l'espace)
   recruitUnits(userId, unitType, quantity) {
     if (!this.canPerformAction(userId, 'recruit')) {
       const timeLeft = this.getTimeRemaining(userId, 'recruit');
@@ -970,13 +886,226 @@ class ClanSystem {
            `🏁 **La guerre contre ${enemyClanName} est terminée.**`;
   }
 
-  getTotalClanUnits(clan) {
-    return Object.values(clan.membres).reduce((total, member) => {
-      for (const [type, count] of Object.entries(member.unites || {})) {
-        total[type] = (total[type] || 0) + count;
-      }
-      return total;
-    }, {});
+  getClanRanking() {
+    const clans = this.getClans();
+    const ranking = Object.entries(clans)
+      .map(([name, clan]) => ({
+        name,
+        points: clan.points,
+        blason: clan.blason,
+        membres: Object.keys(clan.membres).length,
+        or: clan.or,
+        territoires: clan.territoires || 1
+      }))
+      .sort((a, b) => b.points - a.points)
+      .slice(0, 15);
+
+    if (ranking.length === 0) {
+      return "📊 **Aucun clan n'existe encore !**\n\nSois le premier à créer un clan avec `/clan create [nom]` !";
+    }
+
+    let result = "🏆 **CLASSEMENT DES CLANS**\n\n";
+    
+    ranking.forEach((clan, index) => {
+      const rank = this.getRank(clan.points);
+      let medal = '';
+      
+      if (index === 0) medal = '🥇';
+      else if (index === 1) medal = '🥈';
+      else if (index === 2) medal = '🥉';
+      else medal = `**${index + 1}.**`;
+      
+      result += `${medal} ${clan.blason} **${clan.name}**\n` +
+                `   ⭐ ${clan.points} pts • 👥 ${clan.membres} • 🏴 ${clan.territoires} • 🏆 ${rank.name}\n\n`;
+    });
+
+    return result + `📈 **Classement mis à jour en temps réel**`;
+  }
+
+  claimDailyReward(userId) {
+    const userClan = this.getUserClan(userId);
+    if (!userClan) {
+      return "❌ **Erreur:** Tu ne fais partie d'aucun clan !";
+    }
+
+    const clan = userClan.data;
+    const now = Date.now();
+    const lastReward = clan.lastDailyReward || 0;
+    const oneDayMs = CONFIG.COOLDOWNS.daily_reward;
+
+    if (now - lastReward < oneDayMs) {
+      const timeLeft = oneDayMs - (now - lastReward);
+      return `⏳ **Récompense déjà réclamée !**\n\nProchaine récompense dans ${this.formatTime(timeLeft)}.`;
+    }
+
+    const rank = this.getRank(clan.points);
+    const baseReward = rank.dailyGold;
+    const memberBonus = Math.floor(Object.keys(clan.membres).length / 3) * 25;
+    const territoryBonus = (clan.territoires || 1) * 20;
+    const totalReward = baseReward + memberBonus + territoryBonus;
+
+    const clans = this.getClans();
+    clans[userClan.name].or += totalReward;
+    clans[userClan.name].lastDailyReward = now;
+    this.saveClans(clans);
+
+    return `💰 **RÉCOMPENSE QUOTIDIENNE !**\n\n` +
+           `🏆 **Rang ${rank.name}:** ${baseReward} or\n` +
+           `👥 **Bonus membres:** ${memberBonus} or\n` +
+           `🏴 **Bonus territoires:** ${territoryBonus} or\n` +
+           `━━━━━━━━━━━━━━━━━━━━\n` +
+           `💎 **Total:** ${totalReward.toLocaleString()} or ajouté !\n\n` +
+           `💰 **Or du clan:** ${clans[userClan.name].or.toLocaleString()}`;
+  }
+
+  getClanStats(userId) {
+    const userClan = this.getUserClan(userId);
+    if (!userClan) {
+      return "❌ **Erreur:** Tu ne fais partie d'aucun clan !";
+    }
+
+    const clan = userClan.data;
+    const member = clan.membres[userId];
+    
+    // Statistiques personnelles
+    const personalUnits = Object.entries(member.unites || {})
+      .filter(([_, count]) => count > 0)
+      .map(([type, count]) => `${type}: ${count}`)
+      .join(', ') || 'Aucune';
+
+    const personalForce = this.calculateForce(member.unites || {});
+
+    // Statistiques du clan
+    const totalUnits = this.getTotalClanUnits(clan);
+    const totalForce = this.calculateForce(totalUnits);
+    const rank = this.getRank(clan.points);
+
+    return `📊 **STATISTIQUES**\n\n` +
+           `👤 **Tes stats personnelles:**\n` +
+           `• **Grade:** ${member.grade}\n` +
+           `• **Armée:** ${personalUnits}\n` +
+           `• **Force:** ${personalForce}\n` +
+           `• **Points:** ${member.pointsPerso || 0}\n` +
+           `• **Membre depuis:** ${new Date(member.joinedAt).toLocaleDateString()}\n\n` +
+           `${clan.blason} **Stats du clan ${userClan.name}:**\n` +
+           `• **Membres:** ${Object.keys(clan.membres).length}\n` +
+           `• **Or total:** ${clan.or.toLocaleString()}\n` +
+           `• **Points:** ${clan.points}\n` +
+           `• **Rang:** ${rank.name}\n` +
+           `• **Force totale:** ${totalForce}\n` +
+           `• **Territoires:** ${clan.territoires || 1}\n` +
+           `• **Créé le:** ${new Date(clan.createdAt).toLocaleDateString()}`;
+  }
+
+  getActiveWars() {
+    const wars = this.getWars();
+    const activeWars = Object.values(wars);
+
+    if (activeWars.length === 0) {
+      return "🕊️ **Aucune guerre active**\n\nTous les clans sont en paix pour le moment.";
+    }
+
+    let result = "⚔️ **GUERRES ACTIVES**\n\n";
+
+    activeWars.forEach(war => {
+      const timeLeft = Math.max(0, war.preparationEnd - Date.now());
+      const status = timeLeft > 0 ? 
+        `🛡️ Préparation (${this.formatTime(timeLeft)})` : 
+        `⚔️ Combat actif`;
+
+      result += `**${war.attacker}** VS **${war.defender}**\n` +
+                `📍 **Statut:** ${status}\n` +
+                `📅 **Début:** ${new Date(war.startTime).toLocaleString()}\n\n`;
+    });
+
+    return result;
+  }
+
+  promoteMember(userId, targetPseudo, grade) {
+    const userClan = this.getUserClan(userId);
+    if (!userClan) {
+      return "❌ **Erreur:** Tu ne fais partie d'aucun clan !";
+    }
+
+    const clan = userClan.data;
+    const userMember = clan.membres[userId];
+
+    if (!userMember || userMember.grade !== "Chef") {
+      return "❌ **Erreur:** Seul le Chef peut promouvoir des membres !";
+    }
+
+    if (!grade || !CONFIG.GRADES.includes(grade)) {
+      return `❌ **Erreur:** Grade invalide !\n**Grades disponibles:** ${CONFIG.GRADES.filter(g => g !== 'Chef').join(', ')}`;
+    }
+
+    if (grade === 'Chef') {
+      return "❌ **Erreur:** Tu ne peux pas promouvoir quelqu'un Chef ! Utilise `/clan leave` pour transférer le leadership.";
+    }
+
+    // Trouver le membre à promouvoir
+    const targetId = Object.keys(clan.membres).find(id => 
+      clan.membres[id].pseudo.toLowerCase() === targetPseudo.toLowerCase()
+    );
+
+    if (!targetId) {
+      return `❌ **Erreur:** Membre "${targetPseudo}" introuvable dans le clan !`;
+    }
+
+    if (targetId === userId) {
+      return "❌ **Erreur:** Tu ne peux pas te promouvoir toi-même !";
+    }
+
+    const clans = this.getClans();
+    const oldGrade = clans[userClan.name].membres[targetId].grade;
+    clans[userClan.name].membres[targetId].grade = grade;
+    this.saveClans(clans);
+
+    return `✅ **Promotion réussie !**\n\n` +
+           `**${targetPseudo}** a été promu de **${oldGrade}** à **${grade}** !`;
+  }
+
+  kickMember(userId, targetPseudo) {
+    const userClan = this.getUserClan(userId);
+    if (!userClan) {
+      return "❌ **Erreur:** Tu ne fais partie d'aucun clan !";
+    }
+
+    const clan = userClan.data;
+    const userMember = clan.membres[userId];
+
+    if (!userMember || !['Chef', 'Lieutenant'].includes(userMember.grade)) {
+      return "❌ **Erreur:** Seuls les Chefs et Lieutenants peuvent expulser des membres !";
+    }
+
+    // Trouver le membre à expulser
+    const targetId = Object.keys(clan.membres).find(id => 
+      clan.membres[id].pseudo.toLowerCase() === targetPseudo.toLowerCase()
+    );
+
+    if (!targetId) {
+      return `❌ **Erreur:** Membre "${targetPseudo}" introuvable dans le clan !`;
+    }
+
+    if (targetId === userId) {
+      return "❌ **Erreur:** Tu ne peux pas t'expulser toi-même ! Utilise `/clan leave`.";
+    }
+
+    if (targetId === clan.chef) {
+      return "❌ **Erreur:** Tu ne peux pas expulser le Chef !";
+    }
+
+    // Un Lieutenant ne peut pas expulser un autre Lieutenant
+    const targetMember = clan.membres[targetId];
+    if (userMember.grade === 'Lieutenant' && targetMember.grade === 'Lieutenant') {
+      return "❌ **Erreur:** Un Lieutenant ne peut pas expulser un autre Lieutenant !";
+    }
+
+    const clans = this.getClans();
+    delete clans[userClan.name].membres[targetId];
+    this.saveClans(clans);
+
+    return `✅ **Membre expulsé !**\n\n` +
+           `**${targetPseudo}** a été expulsé du clan **${userClan.name}**.`;
   }
 
   defendClan(userId) {
@@ -1067,237 +1196,132 @@ class ClanSystem {
            `📜 **Termes:** ${terms || 'Paix sans condition'}\n\n` +
            `Les deux clans peuvent maintenant reprendre leurs activités normales.`;
   }
-
-  getClanRanking() {
-    const clans = this.getClans();
-    const ranking = Object.entries(clans)
-      .map(([name, clan]) => ({
-        name,
-        points: clan.points,
-        blason: clan.blason,
-        membres: Object.keys(clan.membres).length,
-        or: clan.or,
-        territoires: clan.territoires || 1
-      }))
-      .sort((a, b) => b.points - a.points)
-      .slice(0, 15);
-
-    if (ranking.length === 0) {
-      return "📊 **Aucun clan n'existe encore !**\n\nSois le premier à créer un clan avec `/clan create [nom]` !";
-    }
-
-    let result = "🏆 **CLASSEMENT DES CLANS**\n\n";
-    
-    ranking.forEach((clan, index) => {
-      const rank = this.getRank(clan.points);
-      let medal = '';
-      
-      if (index === 0) medal = '🥇';
-      else if (index === 1) medal = '🥈';
-      else if (index === 2) medal = '🥉';
-      else medal = `**${index + 1}.**`;
-      
-      result += `${medal} ${clan.blason} **${clan.name}**\n` +
-                `   ⭐ ${clan.points} pts • 👥 ${clan.membres} • 🏴 ${clan.territoires} • 🏆 ${rank.name}\n\n`;
-    });
-
-    return result + `📈 **Classement mis à jour en temps réel**`;
-  }
-
-  claimDailyReward(userId) {
-    const userClan = this.getUserClan(userId);
-    if (!userClan) {
-      return "❌ **Erreur:** Tu ne fais partie d'aucun clan !";
-    }
-
-    const clan = userClan.data;
-    const now = Date.now();
-    const lastReward = clan.lastDailyReward || 0;
-    const oneDayMs = CONFIG.COOLDOWNS.daily_reward;
-
-    if (now - lastReward < oneDayMs) {
-      const timeLeft = oneDayMs - (now - lastReward);
-      return `⏳ **Récompense déjà réclamée !**\n\nProchaine récompense dans ${this.formatTime(timeLeft)}.`;
-    }
-
-    const rank = this.getRank(clan.points);
-    const baseReward = rank.dailyGold;
-    const memberBonus = Math.floor(Object.keys(clan.membres).length / 3) * 25;
-    const territoryBonus = (clan.territoires || 1) * 20;
-    const totalReward = baseReward + memberBonus + territoryBonus;
-
-    const clans = this.getClans();
-    clans[userClan.name].or += totalReward;
-    clans[userClan.name].lastDailyReward = now;
-    this.saveClans(clans);
-
-    return `💰 **RÉCOMPENSE QUOTIDIENNE !**\n\n` +
-           `🏆 **Rang ${rank.name}:** ${baseReward} or\n` +
-           `👥 **Bonus membres:** ${memberBonus} or\n` +
-           `🏴 **Bonus territoires:** ${territoryBonus} or\n` +
-           `━━━━━━━━━━━━━━━━━━━━\n` +
-           `💎 **Total:** ${totalReward.toLocaleString()} or ajouté !\n\n` +
-           `💰 **Or du clan:** ${clans[userClan.name].or.toLocaleString()}`;
-  }
-
-  donateGold(userId, amount) {
-    const userClan = this.getUserClan(userId);
-    if (!userClan) {
-      return "❌ **Erreur:** Tu ne fais partie d'aucun clan !";
-    }
-
-    if (amount <= 0) {
-      return "❌ **Erreur:** Le montant doit être positif !";
-    }
-
-    // Pour cette version simplifiée, on suppose que les utilisateurs ont de l'or personnel
-    // Dans une vraie implémentation, il faudrait un système d'économie personnelle
-    return "💡 **Fonctionnalité à venir !**\n\nLe système de don personnel sera ajouté dans une prochaine mise à jour.";
-  }
-
-  getActiveWars() {
-    const wars = this.getWars();
-    const activeWars = Object.values(wars);
-
-    if (activeWars.length === 0) {
-      return "🕊️ **Aucune guerre active**\n\nTous les clans sont en paix pour le moment.";
-    }
-
-    let result = "⚔️ **GUERRES ACTIVES**\n\n";
-
-    activeWars.forEach(war => {
-      const timeLeft = Math.max(0, war.preparationEnd - Date.now());
-      const status = timeLeft > 0 ? 
-        `🛡️ Préparation (${this.formatTime(timeLeft)})` : 
-        `⚔️ Combat actif`;
-
-      result += `**${war.attacker}** VS **${war.defender}**\n` +
-                `📍 **Statut:** ${status}\n` +
-                `📅 **Début:** ${new Date(war.startTime).toLocaleString()}\n\n`;
-    });
-
-    return result;
-  }
-
-  getClanStats(userId) {
-    const userClan = this.getUserClan(userId);
-    if (!userClan) {
-      return "❌ **Erreur:** Tu ne fais partie d'aucun clan !";
-    }
-
-    const clan = userClan.data;
-    const member = clan.membres[userId];
-    
-    // Statistiques personnelles
-    const personalUnits = Object.entries(member.unites || {})
-      .filter(([_, count]) => count > 0)
-      .map(([type, count]) => `${type}: ${count}`)
-      .join(', ') || 'Aucune';
-
-    const personalForce = this.calculateForce(member.unites || {});
-
-    // Statistiques du clan
-    const totalUnits = this.getTotalClanUnits(clan);
-    const totalForce = this.calculateForce(totalUnits);
-    const rank = this.getRank(clan.points);
-
-    return `📊 **STATISTIQUES**\n\n` +
-           `👤 **Tes stats personnelles:**\n` +
-           `• **Grade:** ${member.grade}\n` +
-           `• **Armée:** ${personalUnits}\n` +
-           `• **Force:** ${personalForce}\n` +
-           `• **Points:** ${member.pointsPerso || 0}\n` +
-           `• **Membre depuis:** ${new Date(member.joinedAt).toLocaleDateString()}\n\n` +
-           `${clan.blason} **Stats du clan ${userClan.name}:**\n` +
-           `• **Membres:** ${Object.keys(clan.membres).length}\n` +
-           `• **Or total:** ${clan.or.toLocaleString()}\n` +
-           `• **Points:** ${clan.points}\n` +
-           `• **Rang:** ${rank.name}\n` +
-           `• **Force totale:** ${totalForce}\n` +
-           `• **Territoires:** ${clan.territoires || 1}\n` +
-           `• **Créé le:** ${new Date(clan.createdAt).toLocaleDateString()}`;
-  }
-
-  getHelp() {
-    return `⚔️ **GUIDE COMPLET DU SYSTÈME DE CLAN**\n\n` +
-           `**🏰 GESTION DE CLAN:**\n` +
-           `• \`/clan create [nom]\` - Créer un clan\n` +
-           `• \`/clan join [nom]\` - Demander à rejoindre un clan\n` +
-           `• \`/clan accept [pseudo]\` - Accepter une demande\n` +
-           `• \`/clan reject [pseudo]\` - Rejeter une demande\n` +
-           `• \`/clan leave\` - Quitter son clan\n` +
-           `• \`/clan info [clan]\` - Voir les infos d'un clan\n` +
-           `• \`/clan promote [pseudo] [grade]\` - Promouvoir\n` +
-           `• \`/clan kick [pseudo]\` - Expulser un membre\n\n` +
-           `**⚔️ GUERRE ET COMBAT:**\n` +
-           `• \`/clan declare [clan]\` - Déclarer la guerre\n` +
-           `• \`/clan attack [tactique]\` - Attaquer (frontale/surprise/siege)\n` +
-           `• \`/clan defend\` - Renforcer les défenses\n` +
-           `• \`/clan peace [termes]\` - Proposer la paix\n` +
-           `• \`/clan wars\` - Voir les guerres actives\n\n` +
-           `**🛡️ ARMÉE ET RESSOURCES:**\n` +
-           `• \`/clan recruit [type] [qté]\` - Recruter des unités\n` +
-           `• **Types:** fantassin (50), archer (75), chevalier (150), mage (250), dragon (750)\n` +
-           `• \`/clan daily\` - Récompense quotidienne\n\n` +
-           `**📊 INFORMATION:**\n` +
-           `• \`/clan ranking\` - Classement des clans\n` +
-           `• \`/clan stats\` - Tes statistiques\n\n` +
-           `**💡 CONSEILS:**\n` +
-           `• Chaque rang donne plus d'or quotidien\n` +
-           `• Les guerres ont 2h de préparation\n` +
-           `• Cooldowns: Attaque 12h, Recrutement 30min, Guerre 24h\n` +
-           `• Grades: Membre → Soldat → Général/Espion/Trésorier → Lieutenant → Chef`;
-  }
-
-  getQuickHelp() {
-    return `⚔️ **COMMANDES CLAN DISPONIBLES:**\n\n` +
-           `**🏰 Base:** create, join, leave, info, promote\n` +
-           `**⚔️ Guerre:** declare, attack, defend, peace\n` +
-           `**🛡️ Armée:** recruit, daily, stats\n` +
-           `**📊 Info:** ranking, wars, help\n\n` +
-           `Utilise \`/clan help\` pour le guide complet !`;
-  }
 }
 
-// Export pour utilisation dans le bot
-module.exports = {
-  name: 'clan',
-  description: 'Système complet de gestion de clans avec guerres et stratégie',
-  usage: '/clan [commande]',
+/**
+ * Commande /clan - Système complet de gestion de clans avec guerres et stratégie
+ * @param {string} senderId - ID de l'utilisateur
+ * @param {string} args - Arguments de la commande
+ * @param {object} ctx - Contexte partagé du bot
+ */
+module.exports = async function cmdClan(senderId, args, ctx) {
+  const { sendMessage, log, getUserProfile } = ctx;
   
-  async execute(message, args) {
+  try {
+    const clanSystem = new ClanSystem();
+    
+    // Récupérer le pseudo de l'utilisateur
+    let userPseudo = 'Anonyme';
     try {
-      const clanSystem = new ClanSystem();
-      const userId = message.author?.id || message.from || 'unknown';
-      const userPseudo = message.author?.username || message.pushname || 'Anonyme';
-      
-      const response = await clanSystem.processCommand(userId, userPseudo, args);
-      
-      // Adaptation pour différentes plateformes
-      if (message.reply) {
-        await message.reply(response);
-      } else if (message.send) {
-        await message.send(response);
-      } else {
-        console.log(response);
-        return response;
-      }
-      
+      const profile = await getUserProfile(senderId);
+      userPseudo = profile?.name || profile?.pushName || 'Anonyme';
     } catch (error) {
-      console.error('Erreur dans la commande clan:', error);
-      const errorMsg = "❌ **Erreur technique !** Réessaye dans quelques instants.";
-      
-      if (message.reply) {
-        await message.reply(errorMsg);
-      } else if (message.send) {
-        await message.send(errorMsg);
-      } else {
-        return errorMsg;
-      }
+      log.warn(`Impossible de récupérer le profil pour ${senderId}: ${error.message}`);
     }
-  },
+    
+    // Parser les arguments
+    const argArray = args ? args.trim().split(/\s+/) : [];
+    const subcommand = argArray[0]?.toLowerCase();
+    
+    let response;
+    
+    switch (subcommand) {
+      case 'create':
+        response = clanSystem.createClan(senderId, userPseudo, argArray.slice(1).join(' '));
+        break;
+        
+      case 'join':
+        response = clanSystem.requestJoinClan(senderId, userPseudo, argArray[1]);
+        break;
+        
+      case 'accept':
+        response = clanSystem.acceptJoinRequest(senderId, argArray[1]);
+        break;
+        
+      case 'reject':
+        response = clanSystem.rejectJoinRequest(senderId, argArray[1]);
+        break;
+        
+      case 'leave':
+        response = clanSystem.leaveClan(senderId);
+        break;
+        
+      case 'info':
+        response = clanSystem.getClanInfo(senderId, argArray[1]);
+        break;
+        
+      case 'promote':
+        response = clanSystem.promoteMember(senderId, argArray[1], argArray[2]);
+        break;
+        
+      case 'kick':
+        response = clanSystem.kickMember(senderId, argArray[1]);
+        break;
+        
+      case 'recruit':
+        response = clanSystem.recruitUnits(senderId, argArray[1], parseInt(argArray[2]) || 1);
+        break;
+        
+      case 'declare':
+        response = clanSystem.declareWar(senderId, argArray[1]);
+        break;
+        
+      case 'attack':
+        response = clanSystem.attackClan(senderId, argArray[1] || 'frontale');
+        break;
+        
+      case 'defend':
+        response = clanSystem.defendClan(senderId);
+        break;
+        
+      case 'peace':
+        response = clanSystem.proposePeace(senderId, argArray.slice(1).join(' '));
+        break;
+        
+      case 'ranking':
+        response = clanSystem.getClanRanking();
+        break;
+        
+      case 'daily':
+        response = clanSystem.claimDailyReward(senderId);
+        break;
+        
+      case 'wars':
+        response = clanSystem.getActiveWars();
+        break;
+        
+      case 'stats':
+        response = clanSystem.getClanStats(senderId);
+        break;
+        
+      case 'help':
+        response = clanSystem.getHelp();
+        break;
+        
+      default:
+        response = clanSystem.getQuickHelp();
+        break;
+    }
+    
+    // Log de l'activité
+    log.info(`🏰 Commande clan '${subcommand || 'help'}' utilisée par ${senderId} (${userPseudo})`);
+    
+    return response;
+    
+  } catch (error) {
+    log.error(`❌ Erreur dans la commande clan: ${error.message}`, { 
+      senderId, 
+      args, 
+      stack: error.stack 
+    });
+    
+    return `❌ **Erreur technique !** 💔\n\nUne erreur s'est produite lors de l'exécution de la commande clan. Réessaye dans quelques instants !\n\n*Si le problème persiste, contacte un administrateur.*`;
+  }
+};
 
-  // Fonction utilitaire pour les tâches automatiques
+// Fonctions utilitaires exportées pour usage externe
+module.exports.utils = {
+  // Fonction pour les tâches automatiques quotidiennes
   async runDailyTasks() {
     try {
       const clanSystem = new ClanSystem();
@@ -1402,8 +1426,10 @@ module.exports = {
         clanSystem.saveTimers(timers);
       }
 
+      return true;
     } catch (error) {
       console.error('Erreur lors des tâches quotidiennes du clan:', error);
+      return false;
     }
   },
 
@@ -1483,36 +1509,6 @@ module.exports = {
           }
         },
         {
-          type: 'merchant',
-          name: 'Marchand Généreux',
-          description: 'reçoit la visite d\'un marchand généreux',
-          emoji: '🏪',
-          rarity: 'commun',
-          effect: (clan) => {
-            const discount = Math.floor(Math.random() * 30) + 20; // 20-50% de réduction
-            // Pour simplifier, on donne de l'or équivalent à la réduction
-            const bonus = Math.floor(Math.random() * 300) + 150;
-            clan.or += bonus;
-            return `🏪 Commerce florissant ! +${bonus.toLocaleString()} or gagné`;
-          }
-        },
-        {
-          type: 'territory',
-          name: 'Expansion Territoriale',
-          description: 'découvre et revendique de nouvelles terres',
-          emoji: '🏴',
-          rarity: 'épique',
-          effect: (clan) => {
-            if (Math.random() < 0.3) { // 30% de chance
-              clan.territoires = (clan.territoires || 1) + 1;
-              const bonus = 200 + (clan.territoires * 50);
-              clan.or += bonus;
-              return `🏴 +1 territoire conquis ! +${bonus.toLocaleString()} or de revenus`;
-            }
-            return `🗺️ Exploration sans succès cette fois...`;
-          }
-        },
-        {
           type: 'festival',
           name: 'Festival du Clan',
           description: 'organise un grand festival qui booste le moral',
@@ -1529,31 +1525,6 @@ module.exports = {
             }
             
             return `🎉 Festival réussi ! +${pointsBonus} points et +1 fantassin par membre`;
-          }
-        },
-        {
-          type: 'sabotage',
-          name: 'Sabotage Ennemi',
-          description: 'subit un sabotage de ses défenses',
-          emoji: '🔥',
-          rarity: 'rare',
-          effect: (clan) => {
-            let totalDamage = 0;
-            
-            // Réduire les bonus défensifs
-            if (clan.defenseBonuses) {
-              for (const [bonus, level] of Object.entries(clan.defenseBonuses)) {
-                const damage = Math.floor(level * 0.3);
-                clan.defenseBonuses[bonus] = Math.max(0, level - damage);
-                totalDamage += damage;
-              }
-            }
-            
-            // Perte d'or
-            const goldLoss = Math.floor(clan.or * 0.05);
-            clan.or = Math.max(0, clan.or - goldLoss);
-            
-            return `🔥 Sabotage ! -${totalDamage} niveaux de défense, -${goldLoss.toLocaleString()} or`;
           }
         }
       ];
@@ -1649,16 +1620,6 @@ module.exports = {
       const topClan = Object.entries(clans)
         .sort(([,a], [,b]) => b.points - a.points)[0];
 
-      const mostActiveDay = Object.values(events)
-        .reduce((acc, event) => {
-          const day = new Date(event.timestamp).toDateString();
-          acc[day] = (acc[day] || 0) + 1;
-          return acc;
-        }, {});
-      
-      const peakActivity = Object.entries(mostActiveDay)
-        .sort(([,a], [,b]) => b - a)[0];
-
       return {
         totalClans,
         totalMembers,
@@ -1674,34 +1635,12 @@ module.exports = {
           points: topClan[1].points, 
           blason: topClan[1].blason,
           members: Object.keys(topClan[1].membres).length
-        } : null,
-        peakActivity: peakActivity ? {
-          date: peakActivity[0],
-          events: peakActivity[1]
         } : null
       };
 
     } catch (error) {
       console.error('Erreur lors du calcul des statistiques globales:', error);
       return null;
-    }
-  },
-
-  // Fonction pour obtenir l'historique des événements d'un clan
-  getClanEventHistory(clanName, limit = 10) {
-    try {
-      const clanSystem = new ClanSystem();
-      const events = clanSystem.getEvents();
-      
-      const clanEvents = Object.values(events)
-        .filter(event => event.clanName === clanName)
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, limit);
-
-      return clanEvents;
-    } catch (error) {
-      console.error('Erreur lors de la récupération de l\'historique:', error);
-      return [];
     }
   },
 
@@ -1750,7 +1689,7 @@ module.exports = {
     }
   },
 
-  // Configuration et classe exportées pour accès externe
+  // Accès aux configurations et classes
   CONFIG,
   ClanSystem
 };
