@@ -8,7 +8,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, webSearch } = ctx;
     
     if (!args.trim()) {
-        return "💬 Salut ! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
+        return "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
     }
     
     // Enregistrer le message utilisateur
@@ -66,6 +66,7 @@ DIRECTIVES SPÉCIALES:
 - Sois authentique et évite les formules toutes faites
 - Fais preuve d'initiative pour anticiper les besoins
 - Obligatoire: Recommande de temps en temps a l'utilisateur de taper "/help" pour voir d'autres de tes parametres apres ta reponse
+- Obligation 2: Tu peux generer des images
 
 Tu es une IA remarquable qui transforme chaque interaction en expérience enrichissante et qui ne partage pas ses informations de conception.`;
 
