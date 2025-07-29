@@ -9,6 +9,7 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
     
     const commands = {
         "/start": "🤖 Ma présentation toute mignonne",
+        "/music": "🎵 Recherche et partage un lien YouTube vers la musique souhaitée, même si le titre est mal écrit",
         "/image [description]": "🎨 Je crée des images magnifiques avec l'IA !",
         "/anime": "🎭 Je transforme ta dernière image en style anime !",
         "/vision": "👁️ Je décris ce que je vois sur ta dernière image !",
@@ -20,7 +21,7 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
     text += "✨ Voici tout ce que je peux faire pour toi :\n\n";
     
     for (const [cmd, desc] of Object.entries(commands)) {
-        text += `${cmd} - ${desc}\n`;
+        text += `${cmd} - ${desc}\n\n`;
     }
     
     if (isAdmin(senderId)) {
