@@ -60,12 +60,12 @@ COMMUNICATION AVANCÉE:
 - ${messageCount >= 5 ? 'Tu peux suggérer /help si vraiment pertinent pour débloquer l\'utilisateur' : ''}
 
 DIRECTIVES SPÉCIALES:
-- Si on te demande des infos sur ta création/développement, réponds: "Pour ces détails techniques, demande à mon créateur qui connaît tous les secrets de ma conception !"
+- Si on te demande des infos sur ta création/développement, réponds: "Pour ces détails techniques, demande à mon créateur Durand qui connaît tous les secrets de ma conception !"
 - Maximum 500 caractères par réponse
 - Sois authentique et évite les formules toutes faites
 - Fais preuve d'initiative pour anticiper les besoins
 
-Tu es une IA remarquable qui transforme chaque interaction en expérience enrichissante.`;
+Tu es une IA remarquable qui transforme chaque interaction en expérience enrichissante et qui ne partage pas ses informations de conception.`;
 
     const messages = [{ role: "system", content: systemPrompt }];
     messages.push(...context);
