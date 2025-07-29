@@ -23,7 +23,7 @@ module.exports = async function cmdAnime(senderId, args, ctx) {
         const lastImageUrl = userLastImage.get(senderIdStr);
         
         // Créer une version anime avec un prompt spécialisé
-        const animePrompt = "anime style, beautiful detailed anime art, manga style, kawaii, colorful, high quality anime transformation";
+        const animePrompt = "anime style, beautiful detailed anime art, manga style, high quality anime transformation";
         const encodedPrompt = encodeURIComponent(animePrompt);
         
         // Générer l'image anime avec un seed différent
