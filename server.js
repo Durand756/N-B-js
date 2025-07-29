@@ -23,6 +23,7 @@ const ADMIN_IDS = new Set(
 const userMemory = new Map();
 const userList = new Set();
 const userLastImage = new Map();
+const clanData = new Map(); // Stockage des données spécifiques aux commandes
 
 // Configuration des logs
 const log = {
@@ -57,7 +58,6 @@ async function createGitHubRepo() {
     }
 
     try {
-        // Vérifier si le repo existe déjà
         const checkResponse = await axios.get(
             `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}`,
             {
@@ -75,7 +75,6 @@ async function createGitHubRepo() {
         }
     } catch (error) {
         if (error.response?.status === 404) {
-            // Le repo n'existe pas, le créer
             try {
                 const createResponse = await axios.post(
                     'https://api.github.com/user/repos',
@@ -112,7 +111,131 @@ async function createGitHubRepo() {
     return false;
 }
 
-// Charger les données depuis GitHub
+// Variable pour éviter les sauvegardes simultanées
+let isSaving = false;
+let saveQueue = [];
+
+// === SAUVEGARDE GITHUB AVEC SUPPORT CLANS ===
+async function saveDataToGitHub() {
+    if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
+        log.debug("🔄 Pas de sauvegarde GitHub (config manquante)");
+        return;
+    }
+
+    if (isSaving) {
+        log.debug("⏳ Sauvegarde déjà en cours, ajout à la queue");
+        return new Promise((resolve) => {
+            saveQueue.push(resolve);
+        });
+    }
+
+    isSaving = true;
+
+    try {
+        log.debug(`💾 Tentative de sauvegarde sur GitHub: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
+        
+        const filename = 'nakamabot-data.json';
+        const url = getGitHubApiUrl(filename);
+        
+        const dataToSave = {
+            userList: Array.from(userList),
+            userMemory: Object.fromEntries(userMemory),
+            userLastImage: Object.fromEntries(userLastImage),
+            
+            // ✅ AJOUT: Sauvegarder les données des clans et autres commandes
+            clanData: commandContext.clanData || null, // Données des clans depuis le contexte
+            commandData: Object.fromEntries(clanData), // Autres données de commandes
+            
+            lastUpdate: new Date().toISOString(),
+            version: "4.0 Amicale + Vision + GitHub + Clans",
+            totalUsers: userList.size,
+            totalConversations: userMemory.size,
+            totalImages: userLastImage.size,
+            totalClans: commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0,
+            bot: "NakamaBot",
+            creator: "Durand"
+        };
+
+        const commitData = {
+            message: `🤖 Sauvegarde automatique NakamaBot - ${new Date().toISOString()}`,
+            content: encodeBase64(dataToSave)
+        };
+
+        let maxRetries = 3;
+        let success = false;
+
+        for (let attempt = 1; attempt <= maxRetries && !success; attempt++) {
+            try {
+                const existingResponse = await axios.get(url, {
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    },
+                    timeout: 10000
+                });
+
+                if (existingResponse.data?.sha) {
+                    commitData.sha = existingResponse.data.sha;
+                }
+
+                const response = await axios.put(url, commitData, {
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    },
+                    timeout: 15000
+                });
+
+                if (response.status === 200 || response.status === 201) {
+                    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs, ${clanCount} clans)`);
+                    success = true;
+                } else {
+                    log.error(`❌ Erreur sauvegarde GitHub: ${response.status}`);
+                }
+
+            } catch (retryError) {
+                if (retryError.response?.status === 409 && attempt < maxRetries) {
+                    log.warning(`⚠️ Conflit SHA détecté (409), tentative ${attempt}/${maxRetries}, retry dans 1s...`);
+                    await sleep(1000);
+                    continue;
+                } else if (retryError.response?.status === 404 && attempt === 1) {
+                    log.debug("📝 Premier fichier, pas de SHA nécessaire");
+                    delete commitData.sha;
+                    continue;
+                } else {
+                    throw retryError;
+                }
+            }
+        }
+
+        if (!success) {
+            log.error("❌ Échec de sauvegarde après plusieurs tentatives");
+        }
+
+    } catch (error) {
+        if (error.response?.status === 404) {
+            log.error("❌ Repository GitHub introuvable pour la sauvegarde (404)");
+            log.error(`🔍 Repository utilisé: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
+        } else if (error.response?.status === 401) {
+            log.error("❌ Token GitHub invalide pour la sauvegarde (401)");
+        } else if (error.response?.status === 403) {
+            log.error("❌ Accès refusé GitHub pour la sauvegarde (403)");
+        } else if (error.response?.status === 409) {
+            log.warning("⚠️ Conflit SHA persistant - sauvegarde ignorée pour éviter les blocages");
+        } else {
+            log.error(`❌ Erreur sauvegarde GitHub: ${error.message}`);
+        }
+    } finally {
+        isSaving = false;
+        
+        const queueCallbacks = [...saveQueue];
+        saveQueue = [];
+        queueCallbacks.forEach(callback => callback());
+    }
+}
+
+// === CHARGEMENT GITHUB AVEC SUPPORT CLANS ===
 async function loadDataFromGitHub() {
     if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
         log.warning("⚠️ Configuration GitHub manquante, utilisation du stockage temporaire uniquement");
@@ -160,6 +283,21 @@ async function loadDataFromGitHub() {
                 log.info(`✅ ${Object.keys(data.userLastImage).length} images chargées depuis GitHub`);
             }
 
+            // ✅ AJOUT: Charger les données des clans
+            if (data.clanData && typeof data.clanData === 'object') {
+                commandContext.clanData = data.clanData;
+                const clanCount = Object.keys(data.clanData.clans || {}).length;
+                log.info(`✅ ${clanCount} clans chargés depuis GitHub`);
+            }
+
+            // ✅ AJOUT: Charger autres données de commandes
+            if (data.commandData && typeof data.commandData === 'object') {
+                Object.entries(data.commandData).forEach(([key, value]) => {
+                    clanData.set(key, value);
+                });
+                log.info(`✅ ${Object.keys(data.commandData).length} données de commandes chargées depuis GitHub`);
+            }
+
             log.info("🎉 Données chargées avec succès depuis GitHub !");
         }
     } catch (error) {
@@ -167,10 +305,8 @@ async function loadDataFromGitHub() {
             log.warning("📁 Aucune sauvegarde trouvée sur GitHub - Première utilisation");
             log.info("🔧 Création du fichier de sauvegarde initial...");
             
-            // Créer le repo si nécessaire
             const repoCreated = await createGitHubRepo();
             if (repoCreated) {
-                // Créer la première sauvegarde
                 await saveDataToGitHub();
             }
         } else if (error.response?.status === 401) {
@@ -183,137 +319,6 @@ async function loadDataFromGitHub() {
                 log.error(`📊 Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data)}`);
             }
         }
-    }
-}
-
-// Variable pour éviter les sauvegardes simultanées
-let isSaving = false;
-let saveQueue = [];
-
-// Sauvegarder les données vers GitHub avec gestion des conflits
-async function saveDataToGitHub() {
-    if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
-        log.debug("🔄 Pas de sauvegarde GitHub (config manquante)");
-        return;
-    }
-
-    // Éviter les sauvegardes simultanées
-    if (isSaving) {
-        log.debug("⏳ Sauvegarde déjà en cours, ajout à la queue");
-        return new Promise((resolve) => {
-            saveQueue.push(resolve);
-        });
-    }
-
-    isSaving = true;
-
-    try {
-        log.debug(`💾 Tentative de sauvegarde sur GitHub: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
-        
-        const filename = 'nakamabot-data.json';
-        const url = getGitHubApiUrl(filename);
-        
-        const dataToSave = {
-            userList: Array.from(userList),
-            userMemory: Object.fromEntries(userMemory),
-            userLastImage: Object.fromEntries(userLastImage),
-            lastUpdate: new Date().toISOString(),
-            version: "4.0 Amicale + Vision + GitHub",
-            totalUsers: userList.size,
-            totalConversations: userMemory.size,
-            totalImages: userLastImage.size,
-            bot: "NakamaBot",
-            creator: "Durand"
-        };
-
-        const commitData = {
-            message: `🤖 Sauvegarde automatique NakamaBot - ${new Date().toISOString()}`,
-            content: encodeBase64(dataToSave)
-        };
-
-        // Retry avec récupération du SHA le plus récent
-        let maxRetries = 3;
-        let success = false;
-
-        for (let attempt = 1; attempt <= maxRetries && !success; attempt++) {
-            try {
-                // Récupérer le SHA le plus récent à chaque tentative
-                const existingResponse = await axios.get(url, {
-                    headers: {
-                        'Authorization': `token ${GITHUB_TOKEN}`,
-                        'Accept': 'application/vnd.github.v3+json'
-                    },
-                    timeout: 10000
-                });
-
-                if (existingResponse.data?.sha) {
-                    commitData.sha = existingResponse.data.sha;
-                }
-
-                const response = await axios.put(url, commitData, {
-                    headers: {
-                        'Authorization': `token ${GITHUB_TOKEN}`,
-                        'Accept': 'application/vnd.github.v3+json'
-                    },
-                    timeout: 15000
-                });
-
-                if (response.status === 200 || response.status === 201) {
-                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs)`);
-                    success = true;
-                } else {
-                    log.error(`❌ Erreur sauvegarde GitHub: ${response.status}`);
-                }
-
-            } catch (retryError) {
-                if (retryError.response?.status === 409 && attempt < maxRetries) {
-                    log.warning(`⚠️ Conflit SHA détecté (409), tentative ${attempt}/${maxRetries}, retry dans 1s...`);
-                    await sleep(1000);
-                    continue;
-                } else if (retryError.response?.status === 404 && attempt === 1) {
-                    // Fichier n'existe pas encore, pas de SHA nécessaire
-                    log.debug("📝 Premier fichier, pas de SHA nécessaire");
-                    delete commitData.sha;
-                    continue;
-                } else {
-                    throw retryError;
-                }
-            }
-        }
-
-        if (!success) {
-            log.error("❌ Échec de sauvegarde après plusieurs tentatives");
-        }
-
-    } catch (error) {
-        if (error.response?.status === 404) {
-            log.error("❌ Repository GitHub introuvable pour la sauvegarde (404)");
-            log.error(`🔍 Repository utilisé: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
-            log.error("💡 Solutions:");
-            log.error("   1. Vérifiez que GITHUB_USERNAME et GITHUB_REPO sont corrects");
-            log.error("   2. Créez le repository manuellement sur GitHub");
-            log.error("   3. Ou utilisez la route /create-repo pour créer automatiquement");
-        } else if (error.response?.status === 401) {
-            log.error("❌ Token GitHub invalide pour la sauvegarde (401)");
-            log.error("💡 Vérifiez votre GITHUB_TOKEN");
-        } else if (error.response?.status === 403) {
-            log.error("❌ Accès refusé GitHub pour la sauvegarde (403)");
-            log.error("💡 Vérifiez les permissions de votre token (repo, contents)");
-        } else if (error.response?.status === 409) {
-            log.warning("⚠️ Conflit SHA persistant - sauvegarde ignorée pour éviter les blocages");
-        } else {
-            log.error(`❌ Erreur sauvegarde GitHub: ${error.message}`);
-            if (error.response) {
-                log.error(`📊 Status: ${error.response.status}`);
-            }
-        }
-    } finally {
-        isSaving = false;
-        
-        // Traiter la queue des sauvegardes en attente
-        const queueCallbacks = [...saveQueue];
-        saveQueue = [];
-        queueCallbacks.forEach(callback => callback());
     }
 }
 
@@ -333,7 +338,6 @@ function startAutoSave() {
 
 // Sauvegarder lors de changements importants (non-bloquant)
 async function saveDataImmediate() {
-    // Lancer la sauvegarde en arrière-plan sans attendre
     saveDataToGitHub().catch(err => 
         log.debug(`🔄 Sauvegarde en arrière-plan: ${err.message}`)
     );
@@ -476,7 +480,6 @@ function addToMemory(userId, msgType, content) {
         return;
     }
     
-    // Limiter la taille
     if (content.length > 1500) {
         content = content.substring(0, 1400) + "...[tronqué]";
     }
@@ -491,15 +494,12 @@ function addToMemory(userId, msgType, content) {
     if (memory.length > 0) {
         const lastMessage = memory[memory.length - 1];
         
-        // Éviter les doublons exacts (même type et contenu)
         if (lastMessage.type === msgType && lastMessage.content === content) {
             log.debug(`🔄 Doublon évité pour ${userId}: ${msgType.substring(0, 50)}...`);
-            return; // Ne pas ajouter
+            return;
         }
         
-        // Éviter les doublons de type "assistant" consécutifs avec contenu similaire
         if (msgType === 'assistant' && lastMessage.type === 'assistant') {
-            // Si les deux messages ont plus de 80% de similarité, ignorer
             const similarity = calculateSimilarity(lastMessage.content, content);
             if (similarity > 0.8) {
                 log.debug(`🔄 Doublon assistant évité (similarité: ${Math.round(similarity * 100)}%)`);
@@ -508,21 +508,18 @@ function addToMemory(userId, msgType, content) {
         }
     }
     
-    // Ajouter le nouveau message
     memory.push({
         type: msgType,
         content: content,
         timestamp: new Date().toISOString()
     });
     
-    // Garder seulement les 8 derniers messages
     if (memory.length > 8) {
         memory.shift();
     }
     
     log.debug(`💭 Ajouté en mémoire [${userId}]: ${msgType} (${content.length} chars)`);
     
-    // Sauvegarder de manière asynchrone
     saveDataImmediate().catch(err => 
         log.debug(`🔄 Erreur sauvegarde mémoire: ${err.message}`)
     );
@@ -532,14 +529,12 @@ function addToMemory(userId, msgType, content) {
 function calculateSimilarity(text1, text2) {
     if (!text1 || !text2) return 0;
     
-    // Normaliser les textes
     const normalize = (text) => text.toLowerCase().replace(/[^\w\s]/g, '').trim();
     const norm1 = normalize(text1);
     const norm2 = normalize(text2);
     
     if (norm1 === norm2) return 1;
     
-    // Calcul simple de similarité par mots communs
     const words1 = new Set(norm1.split(/\s+/));
     const words2 = new Set(norm2.split(/\s+/));
     
@@ -567,7 +562,6 @@ function isAdmin(userId) {
 
 // === FONCTIONS D'ENVOI AVEC SAUVEGARDE ===
 
-// ✅ ENVOYER UN MESSAGE - ÉVITER TRONCATURE RÉPÉTÉE
 async function sendMessage(recipientId, text) {
     if (!PAGE_ACCESS_TOKEN) {
         log.error("❌ PAGE_ACCESS_TOKEN manquant");
@@ -579,7 +573,6 @@ async function sendMessage(recipientId, text) {
         return { success: false, error: "Empty message" };
     }
     
-    // ✅ CORRECTION: Éviter la troncature répétée en vérifiant d'abord
     let finalText = text;
     if (finalText.length > 2000 && !finalText.includes("✨ [Message tronqué avec amour]")) {
         finalText = finalText.substring(0, 1950) + "...\n✨ [Message tronqué avec amour]";
@@ -612,7 +605,6 @@ async function sendMessage(recipientId, text) {
     }
 }
 
-// Envoyer une image
 async function sendImageMessage(recipientId, imageUrl, caption = "") {
     if (!PAGE_ACCESS_TOKEN) {
         log.error("❌ PAGE_ACCESS_TOKEN manquant");
@@ -648,7 +640,6 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
         );
         
         if (response.status === 200) {
-            // Envoyer la caption séparément si fournie
             if (caption) {
                 await sleep(500);
                 return await sendMessage(recipientId, caption);
@@ -668,7 +659,7 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
 
 const COMMANDS = new Map();
 
-// Contexte partagé pour toutes les commandes
+// === CONTEXTE DES COMMANDES AVEC SUPPORT CLANS ===
 const commandContext = {
     // Variables globales
     VERIFY_TOKEN,
@@ -681,6 +672,10 @@ const commandContext = {
     userMemory,
     userList,
     userLastImage,
+    
+    // ✅ AJOUT: Données persistantes pour les commandes
+    clanData: null, // Sera initialisé par les commandes
+    commandData: clanData, // Map pour autres données de commandes
     
     // Fonctions utilitaires
     log,
@@ -702,7 +697,6 @@ const commandContext = {
     createGitHubRepo
 };
 
-// Fonction pour charger automatiquement toutes les commandes
 function loadCommands() {
     const commandsDir = path.join(__dirname, 'Cmds');
     
@@ -720,19 +714,15 @@ function loadCommands() {
             const commandPath = path.join(commandsDir, file);
             const commandName = path.basename(file, '.js');
             
-            // Supprimer du cache si déjà chargé (pour le rechargement à chaud)
             delete require.cache[require.resolve(commandPath)];
             
-            // Charger la commande
             const commandModule = require(commandPath);
             
-            // Vérifier que le module exporte une fonction
             if (typeof commandModule !== 'function') {
                 log.error(`❌ ${file} doit exporter une fonction`);
                 continue;
             }
             
-            // Enregistrer la commande
             COMMANDS.set(commandName, commandModule);
             log.info(`✅ Commande '${commandName}' chargée`);
             
@@ -744,7 +734,6 @@ function loadCommands() {
     log.info(`🎉 ${COMMANDS.size} commandes chargées avec succès !`);
 }
 
-// ✅ TRAITER LES COMMANDES - LOGIQUE SIMPLIFIÉE
 async function processCommand(senderId, messageText) {
     const senderIdStr = String(senderId);
     
@@ -754,23 +743,19 @@ async function processCommand(senderId, messageText) {
     
     messageText = messageText.trim();
     
-    // Si ce n'est pas une commande, traiter comme un chat normal
     if (!messageText.startsWith('/')) {
         if (COMMANDS.has('chat')) {
-            // ✅ Les commandes gèrent leur propre mémoire, on ne fait rien ici
             return await COMMANDS.get('chat')(senderId, messageText, commandContext);
         }
         return "🤖 Coucou ! Tape /start ou /help pour découvrir ce que je peux faire ! ✨";
     }
     
-    // Parser la commande
     const parts = messageText.substring(1).split(' ');
     const command = parts[0].toLowerCase();
     const args = parts.slice(1).join(' ');
     
     if (COMMANDS.has(command)) {
         try {
-            // ✅ Les commandes gèrent leur propre mémoire
             return await COMMANDS.get(command)(senderId, args, commandContext);
         } catch (error) {
             log.error(`❌ Erreur commande ${command}: ${error.message}`);
@@ -783,10 +768,12 @@ async function processCommand(senderId, messageText) {
 
 // === ROUTES EXPRESS ===
 
-// Route d'accueil
+// === ROUTE D'ACCUEIL MISE À JOUR ===
 app.get('/', (req, res) => {
+    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+    
     res.json({
-        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub Online ! 💖",
+        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub + Clans Online ! 💖",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: "2025",
@@ -794,18 +781,21 @@ app.get('/', (req, res) => {
         users: userList.size,
         conversations: userMemory.size,
         images_stored: userLastImage.size,
-        version: "4.0 Amicale + Vision + GitHub",
+        clans_total: clanCount,
+        version: "4.0 Amicale + Vision + GitHub + Clans",
         storage: {
             type: "GitHub API",
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
-            auto_save: "Every 5 minutes"
+            auto_save: "Every 5 minutes",
+            includes: ["users", "conversations", "images", "clans", "command_data"]
         },
         features: [
             "Génération d'images IA",
             "Transformation anime", 
             "Analyse d'images IA",
             "Chat intelligent et doux",
+            "Système de clans persistant",
             "Broadcast admin",
             "Recherche 2025",
             "Stats réservées admin",
@@ -840,7 +830,6 @@ app.post('/webhook', async (req, res) => {
             return res.status(400).json({ error: "No data received" });
         }
         
-        // Traiter les messages
         for (const entry of data.entry || []) {
             for (const event of entry.messaging || []) {
                 const senderId = event.sender?.id;
@@ -851,9 +840,7 @@ app.post('/webhook', async (req, res) => {
                 
                 const senderIdStr = String(senderId);
                 
-                // Messages non-echo
                 if (event.message && !event.message.is_echo) {
-                    // Ajouter utilisateur avec sauvegarde
                     const wasNewUser = !userList.has(senderIdStr);
                     userList.add(senderIdStr);
                     
@@ -862,7 +849,6 @@ app.post('/webhook', async (req, res) => {
                         saveDataImmediate();
                     }
                     
-                    // Vérifier si c'est une image
                     if (event.message.attachments) {
                         for (const attachment of event.message.attachments) {
                             if (attachment.type === 'image') {
@@ -871,14 +857,12 @@ app.post('/webhook', async (req, res) => {
                                     userLastImage.set(senderIdStr, imageUrl);
                                     log.info(`📸 Image reçue de ${senderId}`);
                                     
-                                    // ✅ ENREGISTRER l'action image en mémoire
                                     addToMemory(senderId, 'user', '[Image envoyée]');
                                     
                                     saveDataImmediate();
                                     
                                     const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
                                     
-                                    // ✅ ENVOYER puis ENREGISTRER
                                     const sendResult = await sendMessage(senderId, response);
                                     if (sendResult.success) {
                                         addToMemory(senderId, 'assistant', response);
@@ -889,19 +873,13 @@ app.post('/webhook', async (req, res) => {
                         }
                     }
                     
-                    // Récupérer texte
                     const messageText = event.message.text?.trim();
                     
                     if (messageText) {
                         log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}...`);
                         
-                        // ✅ NOUVELLE LOGIQUE SIMPLIFIÉE:
-                        // 1. NE PAS enregistrer ici - laisser les commandes gérer
-                        
-                        // 2. Traiter la commande (les commandes gèrent leur propre mémoire)
                         const response = await processCommand(senderId, messageText);
                         
-                        // 3. SEULEMENT envoyer la réponse - NE PAS enregistrer ici
                         if (response) {
                             if (typeof response === 'object' && response.type === 'image') {
                                 const sendResult = await sendImageMessage(senderId, response.url, response.caption);
@@ -938,7 +916,7 @@ app.post('/webhook', async (req, res) => {
     res.status(200).json({ status: "ok" });
 });
 
-// Route pour créer un nouveau repository GitHub (admin seulement)
+// Route pour créer un nouveau repository GitHub
 app.post('/create-repo', async (req, res) => {
     try {
         if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
@@ -991,7 +969,6 @@ app.get('/test-github', async (req, res) => {
             });
         }
 
-        // Tester l'accès au repository
         const repoUrl = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}`;
         const response = await axios.get(repoUrl, {
             headers: {
@@ -1044,6 +1021,8 @@ app.get('/test-github', async (req, res) => {
 app.post('/force-save', async (req, res) => {
     try {
         await saveDataToGitHub();
+        const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+        
         res.json({
             success: true,
             message: "Données sauvegardées avec succès sur GitHub !",
@@ -1052,7 +1031,8 @@ app.post('/force-save', async (req, res) => {
             stats: {
                 users: userList.size,
                 conversations: userMemory.size,
-                images: userLastImage.size
+                images: userLastImage.size,
+                clans: clanCount
             }
         });
     } catch (error) {
@@ -1067,6 +1047,8 @@ app.post('/force-save', async (req, res) => {
 app.post('/reload-data', async (req, res) => {
     try {
         await loadDataFromGitHub();
+        const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+        
         res.json({
             success: true,
             message: "Données rechargées avec succès depuis GitHub !",
@@ -1075,7 +1057,8 @@ app.post('/reload-data', async (req, res) => {
             stats: {
                 users: userList.size,
                 conversations: userMemory.size,
-                images: userLastImage.size
+                images: userLastImage.size,
+                clans: clanCount
             }
         });
     } catch (error) {
@@ -1086,14 +1069,17 @@ app.post('/reload-data', async (req, res) => {
     }
 });
 
-// Statistiques publiques limitées
+// === STATISTIQUES PUBLIQUES MISES À JOUR ===
 app.get('/stats', (req, res) => {
+    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+    
     res.json({
         users_count: userList.size,
         conversations_count: userMemory.size,
         images_stored: userLastImage.size,
+        clans_total: clanCount,
         commands_available: COMMANDS.size,
-        version: "4.0 Amicale + Vision + GitHub",
+        version: "4.0 Amicale + Vision + GitHub + Clans",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: 2025,
@@ -1101,13 +1087,15 @@ app.get('/stats', (req, res) => {
             type: "GitHub API",
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
-            auto_save_interval: "5 minutes"
+            auto_save_interval: "5 minutes",
+            data_types: ["users", "conversations", "images", "clans", "command_data"]
         },
         features: [
             "AI Image Generation",
             "Anime Transformation", 
             "AI Image Analysis",
             "Friendly Chat",
+            "Persistent Clan System",
             "Admin Stats",
             "Help Suggestions",
             "GitHub Persistent Storage"
@@ -1116,8 +1104,10 @@ app.get('/stats', (req, res) => {
     });
 });
 
-// Santé du bot
+// === SANTÉ DU BOT MISE À JOUR ===
 app.get('/health', (req, res) => {
+    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+    
     const healthStatus = {
         status: "healthy",
         personality: "Super gentille et amicale, comme une très bonne amie 💖",
@@ -1131,15 +1121,15 @@ app.get('/health', (req, res) => {
             users: userList.size,
             conversations: userMemory.size,
             images_stored: userLastImage.size,
+            clans_total: clanCount,
             commands_loaded: COMMANDS.size
         },
-        version: "4.0 Amicale + Vision + GitHub",
+        version: "4.0 Amicale + Vision + GitHub + Clans",
         creator: "Durand",
         repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
         timestamp: new Date().toISOString()
     };
     
-    // Vérifier problèmes
     const issues = [];
     if (!MISTRAL_API_KEY) {
         issues.push("Clé IA manquante");
@@ -1180,7 +1170,7 @@ app.get('/github-history', async (req, res) => {
                 'Accept': 'application/vnd.github.v3+json'
             },
             params: {
-                per_page: 10 // Derniers 10 commits
+                per_page: 10
             },
             timeout: 10000
         });
@@ -1209,24 +1199,21 @@ app.get('/github-history', async (req, res) => {
     }
 });
 
-// === DÉMARRAGE ===
+// === DÉMARRAGE MODIFIÉ ===
 
 const PORT = process.env.PORT || 5000;
 
 async function startBot() {
-    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub");
+    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub + Clans");
     log.info("💖 Personnalité super gentille et amicale, comme une très bonne amie");
     log.info("👨‍💻 Créée par Durand");
     log.info("📅 Année: 2025");
 
-    // Charger les données depuis GitHub
     log.info("📥 Chargement des données depuis GitHub...");
     await loadDataFromGitHub();
 
-    // Charger toutes les commandes
     loadCommands();
 
-    // Vérifier variables
     const missingVars = [];
     if (!PAGE_ACCESS_TOKEN) {
         missingVars.push("PAGE_ACCESS_TOKEN");
@@ -1247,18 +1234,20 @@ async function startBot() {
         log.info("✅ Configuration complète OK");
     }
 
+    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+
     log.info(`🎨 ${COMMANDS.size} commandes disponibles`);
     log.info(`👥 ${userList.size} utilisateurs en mémoire`);
     log.info(`💬 ${userMemory.size} conversations en mémoire`);
     log.info(`🖼️ ${userLastImage.size} images en mémoire`);
+    log.info(`🏰 ${clanCount} clans en mémoire`);
     log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
     log.info(`📂 Repository: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
     log.info(`🌐 Serveur sur le port ${PORT}`);
     
-    // Démarrer la sauvegarde automatique
     startAutoSave();
     
-    log.info("🎉 NakamaBot Amicale + Vision + GitHub prête à aider avec gentillesse !");
+    log.info("🎉 NakamaBot Amicale + Vision + GitHub + Clans prête à aider avec gentillesse !");
 
     app.listen(PORT, () => {
         log.info(`🌐 Serveur démarré sur le port ${PORT}`);
@@ -1271,13 +1260,11 @@ async function startBot() {
 async function gracefulShutdown() {
     log.info("🛑 Arrêt du bot avec tendresse...");
     
-    // Arrêter la sauvegarde automatique
     if (saveInterval) {
         clearInterval(saveInterval);
         log.info("⏹️ Sauvegarde automatique arrêtée");
     }
     
-    // Sauvegarder une dernière fois
     try {
         log.info("💾 Sauvegarde finale des données sur GitHub...");
         await saveDataToGitHub();
