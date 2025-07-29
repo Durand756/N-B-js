@@ -5,7 +5,7 @@
  * @param {object} ctx - Contexte partagé du bot
  */
 module.exports = async function cmdClan(senderId, args, ctx) {
-    const { addToMemory, getMemoryContext, callMistralAPI, saveClanData, getClanData, cleanOldBattles } = ctx;
+    const { addToMemory, getMemoryContext, callMistralAPI, saveDataToGitHub, loadDataFromGitHub } = ctx;
     
     // Structure des données de clan
     const initializeClanData = () => ({
@@ -16,8 +16,23 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         battleHistory: {} // {clanId: [battles]} - nettoyé périodiquement
     });
     
-    // Récupération des données
-    let clanData = getClanData() || initializeClanData();
+    // Gestion du stockage persistant des clans
+    let clanData;
+    
+    // Charger les données de clan depuis le contexte global
+    if (!ctx.clanData) {
+        ctx.clanData = initializeClanData();
+    }
+    clanData = ctx.clanData;
+    
+    // Fonction de sauvegarde des données de clan
+    const saveClanData = (data) => {
+        ctx.clanData = data;
+        // Sauvegarder immédiatement sur GitHub via le contexte
+        saveDataToGitHub().catch(err => 
+            console.log(`🔄 Sauvegarde clan différée: ${err.message}`)
+        );
+    };
     
     // Nettoyage automatique des anciennes batailles (> 7 jours)
     const cleanupOldData = () => {
@@ -77,8 +92,8 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     switch (action) {
         case 'create':
         case 'créer':
-            const clanName = args_parts.slice(1).join(' ');
-            if (!clanName) {
+            const newClanName = args_parts.slice(1).join(' ');
+            if (!newClanName) {
                 return "⚔️ Usage: /clan create [nom du clan]\n\nExemple: /clan create Les Dragons de Feu 🐉";
             }
             
@@ -88,15 +103,15 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             // Vérifier si le nom existe déjà
             const existingClan = Object.values(clanData.clans).find(
-                clan => clan.name.toLowerCase() === clanName.toLowerCase()
+                clan => clan.name.toLowerCase() === newClanName.toLowerCase()
             );
             if (existingClan) {
                 return "❌ Un clan avec ce nom existe déjà ! Choisis un autre nom.";
             }
             
-            const clanId = generateClanId(clanName);
+            const clanId = generateClanId(newClanName);
             clanData.clans[clanId] = {
-                name: clanName,
+                name: newClanName,
                 leader: userId,
                 members: [userId],
                 level: 1,
@@ -109,7 +124,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             clanData.battleHistory[clanId] = [];
             
             saveClanData(clanData);
-            return `🎉 Clan "${clanName}" créé avec succès !\n👑 Tu es maintenant le chef de clan.\n💰 Trésorerie: 100 pièces\n⭐ Niveau: 1\n\nUtilise /clan help pour voir toutes tes options !`;
+            return `🎉 Clan "${newClanName}" créé avec succès !\n👑 Tu es maintenant le chef de clan.\n💰 Trésorerie: 100 pièces\n⭐ Niveau: 1\n\nUtilise /clan help pour voir toutes tes options !`;
 
         case 'info':
             const userClan = getUserClan(userId);
@@ -437,7 +452,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             }
             
             const disbandClanId = clanData.userClans[userId];
-            const clanName = disbandClan.name;
+            const disbandClanName = disbandClan.name;
             
             // Retirer tous les membres
             disbandClan.members.forEach(memberId => {
@@ -456,7 +471,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             });
             
             saveClanData(clanData);
-            return `💥 Le clan **${clanName}** a été dissous ! Tous les membres ont été libérés.`;
+            return `💥 Le clan **${disbandClanName}** a été dissous ! Tous les membres ont été libérés.`;
 
         case 'help':
         case 'aide':
