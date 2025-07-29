@@ -1,54 +1,44 @@
-/**
- * Commande /music - Recherche & Téléchargement d'une musique
- * @param {string} senderId - ID de l'utilisateur
- * @param {string} args - Titre (même mal écrit) de la musique
- * @param {object} ctx - Contexte du bot
- */
-const { exec } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const sanitize = require('sanitize-filename');
+const Youtube = require('youtube-search-api');
 
+/**
+ * Commande /music - Recherche et renvoi lien YouTube
+ * @param {string} senderId
+ * @param {string} args - Titre musique (même mal écrit)
+ * @param {object} ctx
+ */
 module.exports = async function cmdMusic(senderId, args, ctx) {
     const { addToMemory, log } = ctx;
 
     if (!args.trim()) {
-        return `🎵 Tu veux une chanson ? Tape simplement : /music [titre]
+        return `🎵 Tape /music suivi du titre pour recevoir un lien YouTube :
 Exemples :
-• /music bleind light
-• /music emeinem loose your self
-• /music shakira wakka wakka`;
+/music blinding light
+/music eminem lose yourself`;
     }
 
     const query = args.trim();
-    const safeQuery = sanitize(query).replace(/\s+/g, '_');
-    const tempPath = path.join(__dirname, '..', 'downloads', `${safeQuery}_${Date.now()}.mp3`);
-
-    // Étape 1 : Télécharger l’audio avec yt-dlp (YouTube audio uniquement)
-    const command = `yt-dlp -x --audio-format mp3 --audio-quality 0 "ytsearch1:${query}" -o "${tempPath}"`;
 
     try {
-        await new Promise((resolve, reject) => {
-            exec(command, { timeout: 30000 }, (err, stdout, stderr) => {
-                if (err) {
-                    log.debug(`❌ Erreur yt-dlp: ${stderr || err.message}`);
-                    return reject("💥 Erreur pendant le téléchargement de la musique.");
-                }
-                return resolve();
-            });
-        });
+        // Recherche YouTube gratuite
+        const results = await Youtube.GetListByKeyword(query, false, 1);
 
-        // Étape 2 : Ajouter à la mémoire
+        if (!results.items || results.items.length === 0) {
+            return `😢 Désolé, aucune vidéo trouvée pour "${query}". Essaie un autre titre.`;
+        }
+
+        const video = results.items[0];
+        const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
+
+        // Enregistrer dans la mémoire
         addToMemory(String(senderId), 'user', `/music ${query}`);
-        addToMemory(String(senderId), 'bot', `Musique téléchargée: ${query}`);
+        addToMemory(String(senderId), 'bot', `Lien YouTube envoyé : ${videoUrl}`);
 
-        // Étape 3 : Retourner le chemin du fichier (à adapter selon ton bot)
-        return {
-            type: "audio",
-            filePath: tempPath, // Ton bot Facebook doit prendre ce fichier et l'envoyer
-            caption: `🎶 Voici ta musique : "${query}"\n✅ Générée avec amour et yt-dlp.`
-        };
+        return `🎶 Voici le lien YouTube pour "${query}" :
+${videoUrl}
+
+ℹ️ Tu peux écouter la musique directement ici, sans téléchargement ni stockage serveur.`;
     } catch (error) {
-        return `😢 Oups ! Je n'ai pas pu trouver cette chanson : "${query}". Essaie avec un autre titre.`;
+        log.error(`Erreur /music: ${error.message}`);
+        return `⚠️ Oups, une erreur est survenue pendant la recherche. Essaie plus tard.`;
     }
 };
