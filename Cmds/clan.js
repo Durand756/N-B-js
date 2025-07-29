@@ -213,8 +213,8 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 return response;
             }
             
-            const myClan = getUserClan();
-            if (myClan.members.length >= 20) {
+            const inviterClan = getUserClan();
+            if (inviterClan.members.length >= 20) {
                 addToMemory(userId, 'user', `/clan ${args}`);
                 const response = "❌ Clan plein ! (20 max)";
                 addToMemory(userId, 'assistant', response);
@@ -236,11 +236,11 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 return response;
             }
             
-            data.invites[targetUser].push(myClan.id);
+            data.invites[targetUser].push(inviterClan.id);
             save();
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const inviteResponse = `📨 ${args_parts[1]} invité dans **${myClan.name}** !\nIl peut rejoindre avec: \`/clan join ${myClan.id}\``;
+            const inviteResponse = `📨 ${args_parts[1]} invité dans **${inviterClan.name}** !\nIl peut rejoindre avec: \`/clan join ${inviterClan.id}\``;
             addToMemory(userId, 'assistant', inviteResponse);
             return inviteResponse;
 
@@ -568,11 +568,11 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return helpResponse;
 
         default:
-            const myClan = getUserClan();
-            if (myClan) {
-                const protection = isProtected(myClan) ? '🛡️ Protégé' : '';
+            const userClan = getUserClan();
+            if (userClan) {
+                const protection = isProtected(userClan) ? '🛡️ Protégé' : '';
                 addToMemory(userId, 'user', `/clan ${args || 'info'}`);
-                const response = `🏰 **${myClan.name}** (${myClan.id})\n⭐ Niv.${myClan.level} • 👥 ${myClan.members.length}/20 • 💰 ${myClan.treasury} ${protection}\n\nTape \`/clan help\` pour toutes les options !`;
+                const response = `🏰 **${userClan.name}** (${userClan.id})\n⭐ Niv.${userClan.level} • 👥 ${userClan.members.length}/20 • 💰 ${userClan.treasury} ${protection}\n\nTape \`/clan help\` pour toutes les options !`;
                 addToMemory(userId, 'assistant', response);
                 return response;
             } else {
