@@ -4,7 +4,7 @@
  * @param {string} args - Message à diffuser
  * @param {object} ctx - Contexte partagé du bot
  */
-module.exports = async function cmdBroadcast(senderId, args, ctx) {
+module.exports = async function cmdBroadcast(senderId, args, ctx) { 
     const { isAdmin, userList, sendMessage, sleep, log } = ctx;
     
     if (!isAdmin(senderId)) {
