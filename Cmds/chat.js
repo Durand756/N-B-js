@@ -5,7 +5,7 @@
  * @param {object} ctx - Contexte partagé du bot 
  */
 module.exports = async function cmdChat(senderId, args, ctx) {
-    const { addToMemory, getMemoryContext, callMistralAPI, webSearch } = ctx;
+    const { addToMemory, getMemoryContext, callMistralAPI, webSearch } = ctx; 
     
     if (!args.trim()) {
         return "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
