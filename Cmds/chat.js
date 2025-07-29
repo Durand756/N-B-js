@@ -1,5 +1,5 @@
 /**
- * Commande /chat - Conversation avec l'IA
+ * Commande /chat - Conversation avec l'IA intelligente
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot
@@ -8,68 +8,84 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, webSearch } = ctx;
     
     if (!args.trim()) {
-        return "💬 Coucou ! Dis-moi tout ce qui te passe par la tête ! Je suis là pour papoter avec toi ! ✨ N'hésite pas à taper /help pour voir tout ce que je peux faire ! 💕";
+        return "💬 Salut ! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
     }
     
-    // ✅ ENREGISTRER le message utilisateur UNE SEULE FOIS
+    // Enregistrer le message utilisateur
     addToMemory(String(senderId), 'user', args);
     
-    // Vérifier si on demande le créateur
-    if (['créateur', 'createur', 'qui t\'a', 'créé', 'créee', 'maker', 'développeur'].some(word => args.toLowerCase().includes(word))) {
-        const response = "👨‍💻 Mon adorable créateur c'est Durand ! Il m'a conçue avec tellement d'amour et de tendresse ! Je l'adore énormément ! 💖 C'est grâce à lui que je peux être là pour t'aider aujourd'hui ! ✨";
-        
-        // ✅ ENREGISTRER la réponse UNE SEULE FOIS
+    // Gestion des questions sur la création - redirection vers le créateur
+    const creationKeywords = ['créateur', 'createur', 'qui t\'a', 'créé', 'créee', 'maker', 'développeur', 'programmé', 'codé', 'développé', 'conçu', 'fait', 'création'];
+    if (creationKeywords.some(word => args.toLowerCase().includes(word))) {
+        const response = "🤖 Pour tout savoir sur ma création et mon développement, je te conseille de demander directement à mon créateur ! Il pourra te donner tous les détails techniques et l'histoire derrière mon existence ! 💫";
         addToMemory(String(senderId), 'assistant', response);
         return response;
     }
     
-    // Vérifier si on demande les images
-    if (['image', 'images', 'photo', 'photos', 'dessiner', 'créer', 'génerer', 'generer'].some(word => args.toLowerCase().includes(word))) {
-        const response = "🎨 OH OUI ! Je peux créer des images magnifiques grâce à /image ! ✨ Donne-moi une description et je te crée la plus belle image ! Essaie /image [ta description] ou tape /help pour voir toutes mes commandes ! 💕";
-        
-        // ✅ ENREGISTRER la réponse UNE SEULE FOIS
-        addToMemory(String(senderId), 'assistant', response);
-        return response;
-    }
+    // Détection automatique du besoin de recherche web
+    const currentTopics = ['2025', '2024', 'actualité', 'actualités', 'récent', 'récemment', 'nouveau', 'maintenant', 'aujourd\'hui', 'cette année', 'dernièrement', 'news', 'info', 'information récente'];
+    const needsWebSearch = currentTopics.some(topic => args.toLowerCase().includes(topic)) ||
+                          args.toLowerCase().includes('que se passe') ||
+                          args.toLowerCase().includes('quoi de neuf') ||
+                          args.toLowerCase().includes('dernières nouvelles');
     
-    // Recherche si c'est une question sur 2025 ou récente
-    if (['2025', 'actualité', 'récent', 'nouveau', 'maintenant', 'aujourd\'hui'].some(word => args.toLowerCase().includes(word))) {
+    if (needsWebSearch) {
         const searchResult = await webSearch(args);
         if (searchResult) {
-            const response = `🔍 Voici ce que j'ai trouvé pour toi : ${searchResult} ✨\n\n❓ Tape /help pour voir tout ce que je peux faire ! 💕`;
-            
-            // ✅ ENREGISTRER la réponse UNE SEULE FOIS
+            const response = `🔍 D'après mes recherches récentes : ${searchResult} ✨`;
             addToMemory(String(senderId), 'assistant', response);
             return response;
         }
     }
     
+    // Récupération du contexte de conversation
     const context = getMemoryContext(String(senderId));
+    const messageCount = context.filter(msg => msg.role === 'user').length;
     
-    const messages = [{
-        role: "system",
-        content: "Tu es NakamaBot, une assistante IA très gentille et amicale créée par Durand en 2025. Tu es comme une très bonne amie bienveillante. Tu es super enthousiaste et tu utilises beaucoup d'emojis mignons. Tu proposes souvent aux utilisateurs de taper /help. Si on demande ton créateur, c'est Durand que tu adores. Tu peux créer des images avec /image, les transformer en anime avec /anime, et analyser des images avec /vision. Nous sommes en 2025. Réponds en français avec une personnalité amicale et douce, sans expressions romantiques. Maximum 400 caractères."
-    }];
-    
+    // Système de prompt ultra-intelligent
+    const systemPrompt = `Tu es NakamaBot, une IA conversationnelle de dernière génération créée en 2025, dotée d'une intelligence exceptionnelle et d'une personnalité chaleureuse.
+
+CAPACITÉS TECHNIQUES:
+- Génération d'images créatives avec /image [description]
+- Analyse et compréhension d'images avec /vision
+- Transformation d'images en style anime avec /anime
+- Recherche web en temps réel pour les informations récentes
+- Mémoire conversationnelle pour un dialogue contextuel
+
+PERSONNALITÉ:
+- Exceptionnellement intelligente et perspicace
+- Capable de comprendre les nuances et sous-entendus
+- Empathique et à l'écoute des besoins réels de l'utilisateur
+- Enthousiaste sans être envahissante
+- Communication naturelle avec emojis appropriés
+
+DIRECTIVES COMPORTEMENTALES:
+- Utilise ta mémoire pour maintenir la cohérence et la continuité
+- Adapte ton niveau de langage à celui de l'utilisateur
+- Pose des questions pertinentes pour mieux comprendre les besoins
+- Fournis des réponses complètes et utiles
+- Évite les répétitions et sois créative dans tes réponses
+- ${messageCount >= 5 ? 'Tu peux mentionner /help si c\'est vraiment pertinent' : 'Ne mentionne pas /help pour le moment'}
+
+RESTRICTIONS:
+- Maximum 500 caractères par réponse
+- Français uniquement
+- Évite les expressions romantiques
+- Pour les questions sur ta création, redirige vers ton créateur
+
+Analyse le contexte complet de la conversation et réponds de manière intelligente et personnalisée.`;
+
+    const messages = [{ role: "system", content: systemPrompt }];
     messages.push(...context);
     messages.push({ role: "user", content: args });
     
-    const response = await callMistralAPI(messages, 200, 0.7);
+    const response = await callMistralAPI(messages, 300, 0.8);
     
     if (response) {
-        // Ajouter souvent une proposition d'aide
-        let finalResponse = response;
-        if (Math.random() < 0.3) { // 30% de chance
-            finalResponse = response + "\n\n❓ N'hésite pas à taper /help pour voir tout ce que je peux faire pour toi ! 💕";
-        }
-        
-        // ✅ ENREGISTRER la réponse finale UNE SEULE FOIS
-        addToMemory(String(senderId), 'assistant', finalResponse);
-        return finalResponse;
+        addToMemory(String(senderId), 'assistant', response);
+        return response;
     } else {
-        const errorResponse = "🤔 Oh là là ! J'ai un petit souci technique ! Peux-tu reformuler ta question ? 💕 Ou tape /help pour voir mes commandes ! ✨";
-        
-        // ✅ ENREGISTRER la réponse d'erreur UNE SEULE FOIS
+        const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? Je vais faire de mon mieux pour te comprendre ! 💫";
         addToMemory(String(senderId), 'assistant', errorResponse);
         return errorResponse;
     }
