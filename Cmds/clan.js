@@ -170,7 +170,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const totalPower = calculatePower(clan);
             const lastBattleTime = clan.lastDefeat || clan.lastVictory;
             const cooldownInfo = lastBattleTime ? 
-                `\n⏳ Protection active: ${formatTime(60 * 60 * 1000 - (Date.now() - lastBattleTime)} restante` : '';
+                `\n⏳ Protection active: ${formatTime(60 * 60 * 1000 - (Date.now() - lastBattleTime))} restante` : '';
             
             addToMemory(userId, 'user', `/clan ${args}`);
             const infoResponse = `🏰 **${clan.name}** (ID: ${clan.id})\n⭐ **Niveau ${clan.level}** (+${clan.level * 100} pts)\n👥 **${clan.members.length}/20 membres** (+${clan.members.length * 30} pts)\n💰 **${clan.treasury} pièces d'or**\n\n✨ **Progression:** ${clan.xp} XP (${nextXP} pour niveau ${clan.level + 1})\n📊 **Puissance totale:** ${totalPower} points${cooldownInfo}\n\n⚔️ **Armée:**\n• 🗡️ ${clan.units.w} guerriers (+${clan.units.w * 10} pts)\n• 🏹 ${clan.units.a} archers (+${clan.units.a * 8} pts)  \n• 🔮 ${clan.units.m} mages (+${clan.units.m * 15} pts)\n\n${protection}💡 Tape \`/clan help\` pour les stratégies !`;
@@ -260,7 +260,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const enemyClan = findClan(enemyArg);
             if (!enemyClan) return "❌ Clan ennemi introuvable !";
             if (enemyClan.id === attackerClan.id) return "❌ Tu ne peux pas t'attaquer toi-même !";
-            if (isProtected(enemyClan)) return `🛡️ ${enemyClan.name} est protégé ! Attends ${formatTime(60 * 60 * 1000 - (Date.now() - (enemyClan.lastDefeat || enemyClan.lastVictory))}`;
+            if (isProtected(enemyClan)) return `🛡️ ${enemyClan.name} est protégé ! Attends ${formatTime(60 * 60 * 1000 - (Date.now() - (enemyClan.lastDefeat || enemyClan.lastVictory)))}`;
             
             // Vérification du cooldown entre ces deux clans spécifiques
             if (!canAttack(attackerClan, enemyClan)) {
@@ -374,7 +374,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 const protection = isProtected(clan) ? '🛡️' : '';
                 const totalPower = calculatePower(clan);
                 const lastAction = clan.lastDefeat ? 'Défaite' : clan.lastVictory ? 'Victoire' : '';
-                const timeInfo = isProtected(clan) ? ` (${formatTime(60 * 60 * 1000 - (Date.now() - (clan.lastDefeat || clan.lastVictory))})` : '';
+                const timeInfo = isProtected(clan) ? ` (${formatTime(60 * 60 * 1000 - (Date.now() - (clan.lastDefeat || clan.lastVictory)))})` : '';
                 
                 list += `${medal} **${clan.name}** (${clan.id}) ${protection}\n`;
                 list += `   📊 ${totalPower} pts • ⭐ Niv.${clan.level} • 👥 ${clan.members.length}/20\n`;
@@ -459,13 +459,3 @@ module.exports = async function cmdClan(senderId, args, ctx) {
 
         case 'help':
             return `⚔️ **GUIDE COMPLET DES CLANS**\n\n🏰 **DÉMARRAGE:**\n• \`/clan create [nom]\` - Créer ton clan (nom unique)\n• \`/clan info\` - Voir toutes tes stats détaillées\n• \`/clan list\` - Top 10 des clans les plus forts\n\n👥 **GESTION D'ÉQUIPE:**\n• \`/clan invite @user\` - Inviter un ami (chef seulement)\n• \`/clan join [id]\` - Rejoindre avec un ID court (ex: A3B7)\n• \`/clan leave\` - Quitter ou dissoudre ton clan\n• \`/clan promote @user\` - Transférer le leadership\n\n⚔️ **SYSTÈME DE COMBAT:**\n• \`/clan battle [id/nom]\` - Attaquer un rival\n• \`/clan units\` - Gérer ton armée\n\n📈 **CALCUL DE PUISSANCE:**\n• Niveau: +100 pts/niveau\n• Membres: +30 pts/personne  \n• Guerriers: +10 pts chacun (40💰)\n• Archers: +8 pts chacun (60💰)\n• Mages: +15 pts chacun (80💰) - Les plus forts !\n• XP: +5 pts par 100 XP\n\n🏆 **RÉSULTATS DE COMBAT:**\n• **Victoire** (diff >5%): +200 XP, +20% trésor ennemi (max 100💰)\n• **Match nul** (diff ≤5%): +100 XP, 0💰\n• **Défaite** (diff >5%): +50 XP, -10% trésor (max 50💰)\n\n🛡️ **PROTECTION:** 1h après combat (victoire ou défaite)\n💰 **ÉCONOMIE:** Gagne de l'or en gagnant, achète des unités\n📊 **PROGRESSION:** 1000 XP = +1 niveau\n\n💡 **STRATÉGIES GAGNANTES:**\n1️⃣ **Recrutement:** Plus de membres = +30 pts chacun\n2️⃣ **Mages:** Meilleur rapport puissance/prix (0.188 pts/💰)\n3️⃣ **Niveaux:** Monte en niveau pour +100 pts/niveau\n4️⃣ **Cibles:** Attaque les clans:\n   - Sans protection (pas de 🛡️)\n   - Avec moins de mages\n   - Avec trésor important\n5️⃣ **Défense:** Garde toujours 2-3 mages pour la défense\n6️⃣ **Timing:** Attaque quand tu viens de monter en niveau\n7️⃣ **Équilibre:** Maintiens un ratio 3:2:1 (guerriers:archers:mages)`;
-
-        default:
-            const userClan = getUserClan();
-            if (userClan) {
-                const protection = isProtected(userClan) ? '🛡️ Protégé' : '';
-                return `🏰 **${userClan.name}** (${userClan.id})\n⭐ Niv.${userClan.level} • 👥 ${userClan.members.length}/20 • 💰 ${userClan.treasury} ${protection}\n\nTape \`/clan help\` pour toutes les commandes !`;
-            } else {
-                return `⚔️ **BIENVENUE DANS LE SYSTÈME DE CLANS !**\n\nTu n'as pas encore de clan. Voici comment commencer :\n\n🏰 \`/clan create [nom]\` - Créer ton propre clan\n📜 \`/clan list\` - Voir tous les clans existants\n❓ \`/clan help\` - Guide complet des commandes\n\n💎 **Astuce:** Commence par créer ton clan, puis invite des amis pour devenir plus fort !`;
-    }
-};
