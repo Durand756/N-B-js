@@ -14,11 +14,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         battles: {}, // Historique des batailles
         invites: {}, // {userId: [clanIds]}
         deletedClans: {}, // {userId: deleteTimestamp} - cooldown 3 jours
-        counter: 0,
-        weeklyRewards: {
-            lastReward: 0, // timestamp de la dernière récompense
-            weekHistory: [] // historique des gagnants par semaine
-        }
+        counter: 0
     });
     
     if (!ctx.clanData) {
@@ -99,8 +95,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         const lastBattleKey = `${attackerClan.id}-${defenderClan.id}`;
         const lastBattleTime = data.battles[lastBattleKey];
         
-        // Temps d'attente réduit : 10 minutes au lieu d'1 heure
-        return !lastBattleTime || (Date.now() - lastBattleTime) >= (10 * 60 * 1000); // 10min cooldown
+        return !lastBattleTime || (Date.now() - lastBattleTime) >= (60 * 60 * 1000); // 1h cooldown
     };
     
     const addXP = (clan, amount) => {
@@ -111,57 +106,6 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return true;
         }
         return false;
-    };
-    
-    // Gestion des récompenses hebdomadaires
-    const checkWeeklyRewards = async () => {
-        const oneWeek = 7 * 24 * 60 * 60 * 1000;
-        const now = Date.now();
-        
-        if (!data.weeklyRewards.lastReward || (now - data.weeklyRewards.lastReward) >= oneWeek) {
-            const topClans = Object.values(data.clans)
-                .sort((a, b) => calculatePower(b) - calculatePower(a))
-                .slice(0, 3);
-            
-            if (topClans.length >= 3) {
-                // Récompenses pour le top 3
-                const rewards = [
-                    { place: 1, gold: 500, xp: 1000, emoji: '🥇' },
-                    { place: 2, gold: 300, xp: 600, emoji: '🥈' },
-                    { place: 3, gold: 200, xp: 400, emoji: '🥉' }
-                ];
-                
-                for (let i = 0; i < topClans.length && i < 3; i++) {
-                    const clan = topClans[i];
-                    const reward = rewards[i];
-                    
-                    clan.treasury += reward.gold;
-                    const levelUp = addXP(clan, reward.xp);
-                    
-                    // Notification au leader
-                    try {
-                        const msg = `🎉 RÉCOMPENSE HEBDOMADAIRE ${reward.emoji}\n\n🏰 ${clan.name} - Place ${reward.place}\n💰 +${reward.gold} pièces\n✨ +${reward.xp} XP${levelUp ? '\n🆙 NIVEAU UP !' : ''}\n\n╰─▸ Félicitations champion !`;
-                        await sendMessage(clan.leader, msg);
-                    } catch (err) {
-                        ctx.log.debug(`❌ Notification récompense non envoyée à ${clan.leader}`);
-                    }
-                }
-                
-                data.weeklyRewards.lastReward = now;
-                data.weeklyRewards.weekHistory.push({
-                    date: now,
-                    winners: topClans.slice(0, 3).map(c => ({ id: c.id, name: c.name, power: calculatePower(c) }))
-                });
-                
-                // Garder seulement les 4 dernières semaines
-                if (data.weeklyRewards.weekHistory.length > 4) {
-                    data.weeklyRewards.weekHistory = data.weeklyRewards.weekHistory.slice(-4);
-                }
-                
-                await save();
-                ctx.log.info(`🏆 Récompenses hebdomadaires distribuées aux top 3 clans`);
-            }
-        }
     };
     
     const save = async () => {
@@ -179,9 +123,6 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             ctx.log.debug(`❌ Notification non envoyée à ${defenderId}`);
         }
     };
-    
-    // Vérifier les récompenses hebdomadaires à chaque action
-    await checkWeeklyRewards();
     
     // === COMMANDES ===
     
@@ -320,7 +261,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             // Vérification du cooldown entre ces deux clans spécifiques
             if (!canAttack(attackerClan, enemyClan)) {
-                return `⏳ Déjà combattu récemment ! (10 min d'attente)`;
+                return `⏳ Déjà combattu récemment !`;
             }
             
             // Calcul déterministe des forces
@@ -400,19 +341,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             enemyClan.units.a = Math.max(0, enemyClan.units.a - defenderLosses.a);
             enemyClan.units.m = Math.max(0, enemyClan.units.m - defenderLosses.m);
             
-            // Calcul du temps de protection basé sur les dégâts subis
-            const totalLosses = attackerLosses.w + attackerLosses.a + attackerLosses.m + defenderLosses.w + defenderLosses.a + defenderLosses.m;
-            let protectionTime;
-            
-            if (totalLosses <= 5) {
-                protectionTime = 5 * 60 * 1000; // 5 minutes pour combats légers
-            } else if (totalLosses <= 15) {
-                protectionTime = 10 * 60 * 1000; // 10 minutes pour combats modérés
-            } else {
-                protectionTime = 60 * 60 * 1000; // 1 heure pour combats intenses
-            }
-            
-            // Enregistrement des protections avec temps variable
+            // Enregistrement des protections
             if (result === 'victory') {
                 attackerClan.lastVictory = Date.now();
                 enemyClan.lastDefeat = Date.now();
@@ -435,73 +364,41 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             // Construction du résultat
             let battleResult = `╔═══════════╗\n║ ⚔️ CLASH ⚔️ \n╚═══════════╝\n\n🔥 ${attackerClan.name} VS ${enemyClan.name}\n💪 ${Math.round(attackerPower)} pts | ${Math.round(defenderPower)} pts\n\n`;
             
-            const protectionTimeStr = formatTime(protectionTime);
-            
             if (result === 'victory') {
                 battleResult += `🏆 VICTOIRE !\n✨ +${xpGain} XP | 💰 +${goldChange}${attackerLevelUp ? '\n🆙 NIVEAU UP !' : ''}`;
             } else if (result === 'defeat') {
-                battleResult += `💀 DÉFAITE !\n✨ +${xpGain} XP | 💰 ${goldChange}\n🛡️ Protection ${protectionTimeStr}`;
+                battleResult += `💀 DÉFAITE !\n✨ +${xpGain} XP | 💰 ${goldChange}\n🛡️ Protection 1h`;
             } else {
-                battleResult += `🤝 MATCH NUL !\n✨ +${xpGain} XP chacun\n💰 Pas de pillage\n🛡️ Protection ${protectionTimeStr}`;
+                battleResult += `🤝 MATCH NUL !\n✨ +${xpGain} XP chacun\n💰 Pas de pillage`;
             }
             
-            battleResult += `\n\n💀 Pertes: 🗡️${attackerLosses.w + defenderLosses.w} 🏹${attackerLosses.a + defenderLosses.a} 🔮${attackerLosses.m + defenderLosses.m}`;
             battleResult += `\n\n╰─▸ Prépare la revanche !`;
             
-            ctx.log.info(`⚔️ Bataille: ${attackerClan.name} VS ${enemyClan.name} - ${result} (${totalLosses} pertes totales)`);
+            ctx.log.info(`⚔️ Bataille: ${attackerClan.name} VS ${enemyClan.name} - ${result}`);
             return battleResult;
 
         case 'list':
-            const topClans = Object.values(data.clans)
-                .sort((a, b) => calculatePower(b) - calculatePower(a))
-                .slice(0, 10);
+    const topClans = Object.values(data.clans)
+        .sort((a, b) => calculatePower(b) - calculatePower(a))
+        .slice(0, 10);
+    
+        if (topClans.length === 0) return "❌ Aucun clan ! `/clan create [nom]`";
+    
+        let list = `╔═══════════╗\n║ 🏆 TOP 🏆 \n╚═══════════╝\n\n`;
+        topClans.forEach((clan, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+            const protection = isProtected(clan) ? '🛡️' : '⚔️';
+            const totalPower = calculatePower(clan);
         
-            if (topClans.length === 0) return "❌ Aucun clan ! `/clan create [nom]`";
-        
-            let list = `╔═══════════╗\n║ 🏆 TOP 🏆 \n╚═══════════╝\n\n`;
-            topClans.forEach((clan, i) => {
-                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
-                const protection = isProtected(clan) ? '🛡️' : '⚔️';
-                const totalPower = calculatePower(clan);
-                const weeklyBadge = i < 3 ? '👑' : ''; // Badge pour le top 3 hebdomadaire
-            
-                list += `${medal} ${clan.name} ${protection}${weeklyBadge}\n`;
-                list += `┣━━ 🆔 ${clan.id} | 📊 ${totalPower} pts\n`;
-                list += `┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n`;
-                list += `┣━━ 💰 ${clan.treasury} | 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n`;
-                list += `┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-            });
-        
-            list += `Total: ${Object.keys(data.clans).length} clans\n`;
-            list += `👑 Top 3 reçoivent des récompenses chaque semaine !\n`;
-            list += `╰─▸ Attaque ceux sans le bouclier(🛡️). Cooldown réduit à 10min !`;
-            return list;
-
-        case 'rewards':
-            if (!data.weeklyRewards.weekHistory.length) {
-                return "❌ Aucun historique de récompenses !";
-            }
-            
-            let rewardsMsg = `╔═══════════╗\n║ 🏆 RÉCOMPENSES 🏆 \n╚═══════════╝\n\n`;
-            
-            const nextReward = data.weeklyRewards.lastReward + (7 * 24 * 60 * 60 * 1000);
-            const timeToNext = formatTime(nextReward - Date.now());
-            
-            rewardsMsg += `⏰ Prochaines récompenses dans: ${timeToNext}\n\n`;
-            rewardsMsg += `🎁 PRIX HEBDOMADAIRES:\n`;
-            rewardsMsg += `┣━━ 🥇 1er: 500💰 + 1000✨\n`;
-            rewardsMsg += `┣━━ 🥈 2e: 300💰 + 600✨\n`;
-            rewardsMsg += `┗━━ 🥉 3e: 200💰 + 400✨\n\n`;
-            
-            rewardsMsg += `📜 DERNIERS GAGNANTS:\n`;
-            const lastWeek = data.weeklyRewards.weekHistory[data.weeklyRewards.weekHistory.length - 1];
-            lastWeek.winners.forEach((winner, i) => {
-                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
-                rewardsMsg += `┣━━ ${medal} ${winner.name} (${winner.power} pts)\n`;
-            });
-            
-            rewardsMsg += `\n╰─▸ Sois dans le top 3 pour gagner !`;
-            return rewardsMsg;
+            list += `${medal} ${clan.name} ${protection}\n`;
+            list += `┣━━ 🆔 ${clan.id} | 📊 ${totalPower} pts\n`;
+            list += `┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n`;
+            list += `┣━━ 💰 ${clan.treasury} | 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n`;
+            list += `┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        });
+    
+        list += `Total: ${Object.keys(data.clans).length} clans\n╰─▸ Attaque ceux sans le bouclier(🛡️). Ils viennent de finir une guerre!`;
+        return list;
 
         case 'units':
             const unitsClan = getUserClan();
@@ -564,15 +461,14 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return `╔═══════════╗\n║ 👑 CHEF 👑 \n╚═══════════╝\n\n🏰 ${promoteClan.name}\n👑 ${args_parts[1]} est le nouveau chef\n\n╰─▸ Longue vie au roi !`;
 
         case 'help':
-             return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┣━━ /clan list\n┗━━ /clan rewards\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┗━━ /clan promote @user\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n═══════════\n📊 Puissance = Niv×100 + Membres×30\n💡 Mages = 15 pts (+ efficace !)\n🏆 Top 3 hebdomadaire = récompenses !\n⚡ Cooldown réduit à 10min (5min si peu de dégâts)\n\n╰─▸ Forge ton destin ! 🔥`;
-            
+             return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┗━━ /clan promote @user\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n═══════════\n📊 Puissance = Niv×100 + Membres×30\n💡 Mages = 15 pts (+ efficace !)\n\n╰─▸ Forge ton destin ! 🔥`;
         default:
             const userClan = getUserClan();
             if (userClan) {
                 const protection = isProtected(userClan) ? '🛡️' : '';
                 return `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 ${userClan.name} ${protection}\n🆔 ${userClan.id} | ⭐ Niv.${userClan.level}\n👥 ${userClan.members.length}/20 | 💰 ${userClan.treasury}\n\n╰─▸ /clan help pour commander`;
             } else {
-                return `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 /clan create [nom]\n📜 /clan list\n🏆 /clan rewards\n❓ /clan help\n\n╰─▸ Crée ton empire !`;
+                return `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 /clan create [nom]\n📜 /clan list\n❓ /clan help\n\n╰─▸ Crée ton empire !`;
             }
     }
 };
