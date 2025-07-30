@@ -8,8 +8,8 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
     const { isAdmin } = ctx;
     
     let text = `╔═══════════╗
-║ 🤖 NAKAMABOT v4.0 ║
-   HELP 🤖
+║ 🤖 NAKAMABOT v4.0║
+║ -----HELP 🤖-----║
 ╚═══════════╝
 
 ✨ COMMANDES PRINCIPALES:
