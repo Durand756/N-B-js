@@ -150,8 +150,9 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             const nextXP = (clan.level * 1000) - clan.xp;
             const protection = isProtected(clan) ? '🛡️ Protégé ' : '';
+            const totalPower = clan.level * 100 + clan.members.length * 30 + clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15 + Math.floor(clan.xp / 100) * 5;
             
-            return `🏰 **${clan.name}**\n🆔 ${clan.id} • ⭐ Niv.${clan.level}\n👥 ${clan.members.length}/20 • 💰 ${clan.treasury}\n✨ XP: ${clan.xp} (${nextXP} pour +1)\n⚔️ ${clan.units.w}g ${clan.units.a}a ${clan.units.m}m\n${protection}`;
+            return `🏰 **${clan.name}** (ID: ${clan.id})\n⭐ **Niveau ${clan.level}** (+${clan.level * 100} pts)\n👥 **${clan.members.length}/20 membres** (+${clan.members.length * 30} pts)\n💰 **${clan.treasury} pièces d'or**\n\n✨ **Progression:** ${clan.xp} XP (${nextXP} pour niveau ${clan.level + 1})\n📊 **Puissance totale:** ${totalPower} points\n\n⚔️ **Armée:**\n• 🗡️ ${clan.units.w} guerriers (+${clan.units.w * 10} pts)\n• 🏹 ${clan.units.a} archers (+${clan.units.a * 8} pts)  \n• 🔮 ${clan.units.m} mages (+${clan.units.m * 15} pts)\n\n${protection}💡 Tape \`/clan help\` pour les stratégies !`;
 
         case 'invite':
             if (!isLeader()) return "❌ Seul le chef peut inviter !";
@@ -301,14 +302,15 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             if (topClans.length === 0) return "❌ Aucun clan ! Crée le premier avec `/clan create [nom]`";
             
-            let list = "🏆 **TOP CLANS**\n\n";
+            let list = "🏆 **CLASSEMENT DES CLANS**\n\n";
             topClans.forEach((clan, i) => {
                 const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
                 const protection = isProtected(clan) ? '🛡️' : '';
-                list += `${medal} **${clan.name}** (${clan.id}) ${protection}\n   ⭐ Niv.${clan.level} • 👥 ${clan.members.length}/20 • 💰 ${clan.treasury}\n\n`;
+                const totalPower = clan.level * 100 + clan.members.length * 30 + clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15 + Math.floor(clan.xp / 100) * 5;
+                list += `${medal} **${clan.name}** (${clan.id}) ${protection}\n   📊 ${totalPower} pts • ⭐ Niv.${clan.level} • 👥 ${clan.members.length}/20\n   💰 ${clan.treasury} • ⚔️ ${clan.units.w}g/${clan.units.a}a/${clan.units.m}m\n\n`;
             });
             
-            return list + `Total: ${Object.keys(data.clans).length} clans`;
+            return list + `📈 **Analyse:** ${Object.keys(data.clans).length} clans actifs\n💡 **Astuce:** Attaque les clans sans 🛡️ pour plus de chances !`;
 
         case 'units':
             const unitsClan = getUserClan();
