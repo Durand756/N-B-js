@@ -79,7 +79,8 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     const calculatePower = (clan) => {
         const base = clan.level * 100 + clan.members.length * 30;
         const units = clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15;
-        return base + units + Math.random() * 100;
+        const xpBonus = Math.floor(clan.xp / 100) * 5; // 5 points par 100 XP
+        return base + units + xpBonus;
     };
     
     const isProtected = (clan) => {
@@ -274,14 +275,20 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             // Notifier le défenseur
             if (enemyClan.members[0] !== userId) {
-                await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, victory);
+                const resultText = result === 'victory' ? 'victoire' : result === 'defeat' ? 'défaite' : 'match nul';
+                const winnerName = result === 'victory' ? attackerClan.name : result === 'defeat' ? enemyClan.name : 'Match nul';
+                await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, result === 'victory');
             }
             
-            let battleResult = `⚔️ **${attackerClan.name} VS ${enemyClan.name}**\n\n`;
-            if (victory) {
+            let battleResult = `⚔️ **${attackerClan.name} VS ${enemyClan.name}**\n`;
+            battleResult += `💪 Puissance: ${Math.round(attackerPower)} vs ${Math.round(defenderPower)}\n\n`;
+            
+            if (result === 'victory') {
                 battleResult += `🏆 **VICTOIRE !**\n✨ +${xpGain} XP | 💰 +${goldChange}\n${levelUp ? '🆙 NIVEAU UP !\n' : ''}💀 Pertes: ${myLosses} unités`;
-            } else {
+            } else if (result === 'defeat') {
                 battleResult += `🛡️ **DÉFAITE...**\n✨ +${xpGain} XP | 💰 ${goldChange}\n💀 Pertes: ${myLosses} unités\n🛡️ Protégé 2h`;
+            } else {
+                battleResult += `🤝 **MATCH NUL !**\n✨ +${xpGain} XP pour les deux clans\n💰 Pas de transfert d'or\n💀 Pertes minimales: ${myLosses} unités`;
             }
             
             ctx.log.info(`⚔️ Bataille: ${attackerClan.name} VS ${enemyClan.name} - ${victory ? 'Victoire attaquant' : 'Victoire défenseur'}`);
