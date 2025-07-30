@@ -291,7 +291,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 battleResult += `🤝 **MATCH NUL !**\n✨ +${xpGain} XP pour les deux clans\n💰 Pas de transfert d'or\n💀 Pertes minimales: ${myLosses} unités`;
             }
             
-            ctx.log.info(`⚔️ Bataille: ${attackerClan.name} VS ${enemyClan.name} - ${victory ? 'Victoire attaquant' : 'Victoire défenseur'}`);
+            ctx.log.info(`⚔️ Bataille: ${attackerClan.name} VS ${enemyClan.name} - ${result === 'victory' ? 'Victoire attaquant' : result === 'defeat' ? 'Victoire défenseur' : 'Match nul'}`);
             return battleResult;
 
         case 'list':
@@ -318,7 +318,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const quantity = parseInt(args_parts[2]) || 1;
             
             if (!unitType) {
-                return `⚔️ **UNITÉS DE ${unitsClan.name}**\n\n🗡️ Guerriers: ${unitsClan.units.w}\n🏹 Archers: ${unitsClan.units.a}\n🔮 Mages: ${unitsClan.units.m}\n\n💰 Trésorerie: ${unitsClan.treasury}\n\nAcheter: \`/clan units [type] [nombre]\`\nPrix: Guerrier 40💰 | Archer 60💰 | Mage 80💰`;
+                return `⚔️ **UNITÉS DE ${unitsClan.name}**\n\n🗡️ **Guerriers:** ${unitsClan.units.w} (+10 puissance chacun)\n🏹 **Archers:** ${unitsClan.units.a} (+8 puissance chacun)\n🔮 **Mages:** ${unitsClan.units.m} (+15 puissance chacun) ⭐\n\n💰 **Trésorerie:** ${unitsClan.treasury} pièces\n📊 **Puissance totale unités:** ${unitsClan.units.w * 10 + unitsClan.units.a * 8 + unitsClan.units.m * 15} pts\n\n🛒 **ACHETER UNITÉS:**\n\`/clan units guerrier [nombre]\` - 40💰 (+10 pts)\n\`/clan units archer [nombre]\` - 60💰 (+8 pts)  \n\`/clan units mage [nombre]\` - 80💰 (+15 pts) 🌟\n\n💡 **Conseil:** Les mages ont le meilleur ratio puissance/prix !`;
             }
             
             if (!isLeader()) return "❌ Seul le chef peut acheter des unités !";
@@ -353,7 +353,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return `👑 ${args_parts[1]} est le nouveau chef de **${promoteClan.name}** !`;
 
         case 'help':
-            return `⚔️ **COMMANDES CLAN**\n\n🏰 **Création:**\n• \`/clan create [nom]\` - Créer ton clan avec un nom unique\n• \`/clan info\` - Voir les détails de ton clan\n• \`/clan list\` - Classement des meilleurs clans\n\n👥 **Gestion des membres:**\n• \`/clan invite @user\` - Inviter quelqu'un (chef uniquement)\n• \`/clan join [id]\` - Rejoindre un clan sur invitation\n• \`/clan leave\` - Quitter ton clan ou le dissoudre\n• \`/clan promote @user\` - Nommer un nouveau chef\n\n⚔️ **Combat et stratégie:**\n• \`/clan battle [id/nom]\` - Attaquer un autre clan\n• \`/clan units\` - Voir tes unités ou en acheter\n\n💡 **Tips:** Les IDs sont courts (ex: A3B7), tu gagnes de l'XP en combattant, et tu es protégé 2h après une défaite !`;
+            return `⚔️ **GUIDE COMPLET DES CLANS**\n\n🏰 **DÉMARRAGE:**\n• \`/clan create [nom]\` - Créer ton clan (nom unique)\n• \`/clan info\` - Voir toutes tes stats détaillées\n• \`/clan list\` - Top 10 des clans les plus forts\n\n👥 **GESTION D'ÉQUIPE:**\n• \`/clan invite @user\` - Inviter un ami (chef seulement)\n• \`/clan join [id]\` - Rejoindre avec un ID court (ex: A3B7)\n• \`/clan leave\` - Quitter ou dissoudre ton clan\n• \`/clan promote @user\` - Transférer le leadership\n\n⚔️ **SYSTÈME DE COMBAT:**\n• \`/clan battle [id/nom]\` - Attaquer un rival\n• \`/clan units\` - Gérer ton armée\n\n📈 **CALCUL DE PUISSANCE:**\n• Niveau: +100 pts/niveau\n• Membres: +30 pts/personne  \n• Guerriers: +10 pts chacun (40💰)\n• Archers: +8 pts chacun (60💰)\n• Mages: +15 pts chacun (80💰) - Les plus forts !\n• XP: +5 pts par 100 XP\n\n🏆 **RÉSULTATS DE COMBAT:**\n• **Victoire** (diff >10 pts): +200 XP, +100💰\n• **Match nul** (diff ≤10 pts): +100 XP, 0💰\n• **Défaite** (diff >10 pts): +50 XP, -50💰\n\n🛡️ **PROTECTION:** 2h après défaite\n💰 **ÉCONOMIE:** Gagne de l'or en gagnant, achète des unités\n📊 **PROGRESSION:** 1000 XP = +1 niveau\n\n💡 **STRATÉGIES GAGNANTES:**\n• Privilégie les MAGES (meilleur rapport puissance/prix)\n• Recrute des membres actifs (+30 pts chacun)\n• Monte en niveau avec les combats\n• Attaque les clans non-protégés\n• Évite les combats à puissance égale (match nul)`;
 
         default:
             const userClan = getUserClan();
