@@ -435,13 +435,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return `╔═══════════╗\n║ 👑 CHEF 👑 \n╚═══════════╝\n\n🏰 ${promoteClan.name}\n👑 ${args_parts[1]} est le nouveau chef\n\n╰─▸ Longue vie au roi !`;
 
         case 'userid':
-            const targetUserForId = args_parts[1]?.replace(/[<@!>]/g, '');
-            if (!targetUserForId) return "⚔️ `/clan userid @user`";
-            
-            return `╔═══════════╗\n║ 🔍 USER 🔍 \n╚═══════════╝\n\n👤 ${args_parts[1]}\n🆔 ID: ${targetUserForId}\n\n╰─▸ Copie cet ID pour les invitations !`;
+            return `╔═══════════╗\n║ 🔍 USER 🔍 \n╚═══════════╝\n\n👤 Ton ID utilisateur\n🆔 ${userId}\n\n╰─▸ Copie cet ID pour les invitations !`;
 
         case 'help':
-            return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┣━━ /clan promote @user\n┗━━ /clan userid @user\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n🎁 BONUS:\n┣━━ TOP 3 hebdomadaire = prix\n┗━━ Clans pauvres = aide quotidienne\n\n═══════════\n📊 Puissance = Niv×100 + Membres×30\n💡 Mages = 15 pts (+ efficace !)\n🔒 Seul le clan attaqué est protégé\n\n╰─▸ Forge ton destin ! 🔥`;
+            return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┣━━ /clan promote @user\n┗━━ /clan userid\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n🎁 BONUS:\n┣━━ TOP 3 hebdomadaire = prix\n┗━━ Clans pauvres = aide quotidienne\n\n═══════════\n📊 Puissance = Niv×100 + Membres×30\n💡 Mages = 15 pts (+ efficace !)\n🔒 Seul le clan attaqué est protégé\n\n╰─▸ Forge ton destin ! 🔥`;
 
         default:
             const userClan = getUserClan();
