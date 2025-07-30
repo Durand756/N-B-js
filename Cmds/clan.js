@@ -9,7 +9,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     
     // Initialisation des données
     const initClanData = () => ({
-        clans: {}, // {id: {id, name, leader, members: [], level, xp, treasury, units: {w, a, m}, lastDefeat, lastVictory}}
+        clans: {}, // {id: {id, name, leader, members: [], level, xp, treasury, units: {w, a, m}, lastDefeat}}
         userClans: {}, // {userId: clanId}
         battles: {}, // Historique des batailles
         invites: {}, // {userId: [clanIds]}
@@ -73,29 +73,19 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     const formatTime = (ms) => {
         const days = Math.floor(ms / (24 * 60 * 60 * 1000));
         const hours = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
-        const minutes = Math.floor((ms % (60 * 60 * 1000)) / (60 * 1000));
-        return days > 0 ? `${days}j ${hours}h` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+        return days > 0 ? `${days}j ${hours}h` : `${hours}h`;
     };
     
     const calculatePower = (clan) => {
         const base = clan.level * 100 + clan.members.length * 30;
         const units = clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15;
-        const xpBonus = Math.floor(clan.xp / 100) * 5;
+        const xpBonus = Math.floor(clan.xp / 100) * 5; // 5 points par 100 XP
         return base + units + xpBonus;
     };
     
     const isProtected = (clan) => {
-        if (clan.lastDefeat && (Date.now() - clan.lastDefeat) < (60 * 60 * 1000)) return true; // 1h après défaite
-        if (clan.lastVictory && (Date.now() - clan.lastVictory) < (60 * 60 * 1000)) return true; // 1h après victoire
-        return false;
-    };
-    
-    const canAttack = (attackerClan, defenderClan) => {
-        // Vérifie si les clans se sont déjà attaqués récemment
-        const lastBattleKey = `${attackerClan.id}-${defenderClan.id}`;
-        const lastBattleTime = data.battles[lastBattleKey];
-        
-        return !lastBattleTime || (Date.now() - lastBattleTime) >= (60 * 60 * 1000); // 1h cooldown
+        if (!clan.lastDefeat) return false;
+        return (Date.now() - clan.lastDefeat) < (2 * 60 * 60 * 1000); // 2h
     };
     
     const addXP = (clan, amount) => {
@@ -136,7 +126,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             if (getUserClan()) return "❌ Tu as déjà un clan ! Utilise `/clan leave` d'abord.";
             
             if (!canCreateClan()) {
-                const timeLeft = formatTime(3 * 24 * 60 * 60 * 1000 - (Date.now() - data.deletedClans[userId]));
+                const timeLeft = formatTime(getCooldownTime());
                 return `❌ Tu as supprimé un clan récemment !\n⏰ Attends encore ${timeLeft} pour en créer un nouveau.`;
             }
             
@@ -146,9 +136,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             data.clans[clanId] = {
                 id: clanId, name: clanName, leader: userId, members: [userId],
                 level: 1, xp: 0, treasury: 100,
-                units: { w: 10, a: 5, m: 2 }, 
-                lastDefeat: null,
-                lastVictory: null
+                units: { w: 10, a: 5, m: 2 }, lastDefeat: null
             };
             data.userClans[userId] = clanId;
             await save();
@@ -167,13 +155,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             const nextXP = (clan.level * 1000) - clan.xp;
             const protection = isProtected(clan) ? '🛡️ Protégé ' : '';
-            const totalPower = calculatePower(clan);
-            const lastBattleTime = clan.lastDefeat || clan.lastVictory;
-            const cooldownInfo = lastBattleTime ? 
-                `\n⏳ Protection active: ${formatTime(60 * 60 * 1000 - (Date.now() - lastBattleTime))} restante` : '';
+            const totalPower = clan.level * 100 + clan.members.length * 30 + clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15 + Math.floor(clan.xp / 100) * 5;
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const infoResponse = `🏰 **${clan.name}** (ID: ${clan.id})\n⭐ **Niveau ${clan.level}** (+${clan.level * 100} pts)\n👥 **${clan.members.length}/20 membres** (+${clan.members.length * 30} pts)\n💰 **${clan.treasury} pièces d'or**\n\n✨ **Progression:** ${clan.xp} XP (${nextXP} pour niveau ${clan.level + 1})\n📊 **Puissance totale:** ${totalPower} points${cooldownInfo}\n\n⚔️ **Armée:**\n• 🗡️ ${clan.units.w} guerriers (+${clan.units.w * 10} pts)\n• 🏹 ${clan.units.a} archers (+${clan.units.a * 8} pts)  \n• 🔮 ${clan.units.m} mages (+${clan.units.m * 15} pts)\n\n${protection}💡 Tape \`/clan help\` pour les stratégies !`;
+            const infoResponse = `🏰 **${clan.name}** (ID: ${clan.id})\n⭐ **Niveau ${clan.level}** (+${clan.level * 100} pts)\n👥 **${clan.members.length}/20 membres** (+${clan.members.length * 30} pts)\n💰 **${clan.treasury} pièces d'or**\n\n✨ **Progression:** ${clan.xp} XP (${nextXP} pour niveau ${clan.level + 1})\n📊 **Puissance totale:** ${totalPower} points\n\n⚔️ **Armée:**\n• 🗡️ ${clan.units.w} guerriers (+${clan.units.w * 10} pts)\n• 🏹 ${clan.units.a} archers (+${clan.units.a * 8} pts)  \n• 🔮 ${clan.units.m} mages (+${clan.units.m * 15} pts)\n\n${protection}💡 Tape \`/clan help\` pour les stratégies !`;
             addToMemory(userId, 'assistant', infoResponse);
             return infoResponse;
 
@@ -260,130 +245,80 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const enemyClan = findClan(enemyArg);
             if (!enemyClan) return "❌ Clan ennemi introuvable !";
             if (enemyClan.id === attackerClan.id) return "❌ Tu ne peux pas t'attaquer toi-même !";
-            if (isProtected(enemyClan)) return `🛡️ ${enemyClan.name} est protégé ! Attends ${formatTime(60 * 60 * 1000 - (Date.now() - (enemyClan.lastDefeat || enemyClan.lastVictory)))}`;
+            if (isProtected(enemyClan)) return `🛡️ ${enemyClan.name} est protégé !`;
             
-            // Vérification du cooldown entre ces deux clans spécifiques
-            if (!canAttack(attackerClan, enemyClan)) {
-                const battleKey = `${attackerClan.id}-${enemyClan.id}`;
-                const timeLeft = formatTime(60 * 60 * 1000 - (Date.now() - data.battles[battleKey]));
-                return `⏳ Vous avez déjà combattu récemment ! Attends encore ${timeLeft} avant de réattaquer ce clan.`;
-            }
+            // Combat
+            const attackerPower = calculatePower(attackerClan);
+            const defenderPower = calculatePower(enemyClan);
+            const victory = attackerPower > defenderPower;
             
-            // Calcul des puissances avec un peu d'aléatoire pour plus de dynamisme
-            const attackerPower = calculatePower(attackerClan) * (0.95 + Math.random() * 0.1);
-            const defenderPower = calculatePower(enemyClan) * (0.95 + Math.random() * 0.1);
-            const powerDiff = attackerPower - defenderPower;
+            // Gains/Pertes
+            const xpGain = victory ? 200 : 50;
+            const goldChange = victory ? 100 : -50;
+            const enemyXP = victory ? 50 : 150;
+            const enemyGold = victory ? -75 : 75;
             
-            // Détermination du résultat
-            let result, xpGain, goldChange, enemyXP, enemyGold;
-            
-            if (Math.abs(powerDiff) < Math.max(attackerPower, defenderPower) * 0.05) { // Match nul (5% de différence)
-                result = 'draw';
-                xpGain = 100;
-                goldChange = 0;
-                enemyXP = 100;
-                enemyGold = 0;
-            } else if (powerDiff > 0) { // Victoire attaquant
-                result = 'victory';
-                xpGain = 200;
-                goldChange = Math.min(100, enemyClan.treasury * 0.2); // 20% du trésor ennemi (max 100)
-                enemyXP = 50;
-                enemyGold = -goldChange;
-            } else { // Défaite attaquant
-                result = 'defeat';
-                xpGain = 50;
-                goldChange = -Math.min(50, attackerClan.treasury * 0.1); // 10% du trésor (max 50)
-                enemyXP = 150;
-                enemyGold = -goldChange;
-            }
-            
-            // Application des gains/pertes
-            const attackerLevelUp = addXP(attackerClan, xpGain);
-            const defenderLevelUp = addXP(enemyClan, enemyXP);
+            const levelUp = addXP(attackerClan, xpGain);
+            addXP(enemyClan, enemyXP);
             
             attackerClan.treasury = Math.max(0, attackerClan.treasury + goldChange);
             enemyClan.treasury = Math.max(0, enemyClan.treasury + enemyGold);
             
-            // Pertes d'unités proportionnelles à la difficulté
-            const attackerLossRate = result === 'victory' ? 0.1 : result === 'defeat' ? 0.3 : 0.2;
-            const defenderLossRate = result === 'victory' ? 0.3 : result === 'defeat' ? 0.1 : 0.2;
+            // Protection pour le perdant
+            if (!victory) attackerClan.lastDefeat = Date.now();
+            else enemyClan.lastDefeat = Date.now();
             
-            attackerClan.units.w = Math.max(0, attackerClan.units.w - Math.floor(attackerClan.units.w * attackerLossRate * 0.6));
-            attackerClan.units.a = Math.max(0, attackerClan.units.a - Math.floor(attackerClan.units.a * attackerLossRate * 0.3));
-            attackerClan.units.m = Math.max(0, attackerClan.units.m - Math.floor(attackerClan.units.m * attackerLossRate * 0.1));
+            // Pertes d'unités
+            const myLosses = Math.floor(Math.random() * 3) + 1;
+            const enemyLosses = victory ? Math.floor(Math.random() * 4) + 2 : Math.floor(Math.random() * 2) + 1;
             
-            enemyClan.units.w = Math.max(0, enemyClan.units.w - Math.floor(enemyClan.units.w * defenderLossRate * 0.6));
-            enemyClan.units.a = Math.max(0, enemyClan.units.a - Math.floor(enemyClan.units.a * defenderLossRate * 0.3));
-            enemyClan.units.m = Math.max(0, enemyClan.units.m - Math.floor(enemyClan.units.m * defenderLossRate * 0.1));
+            attackerClan.units.w = Math.max(0, attackerClan.units.w - Math.floor(myLosses * 0.6));
+            attackerClan.units.a = Math.max(0, attackerClan.units.a - Math.floor(myLosses * 0.3));
+            attackerClan.units.m = Math.max(0, attackerClan.units.m - Math.floor(myLosses * 0.1));
             
-            // Enregistrement des protections
-            if (result === 'victory') {
-                attackerClan.lastVictory = Date.now();
-                enemyClan.lastDefeat = Date.now();
-            } else if (result === 'defeat') {
-                attackerClan.lastDefeat = Date.now();
-                enemyClan.lastVictory = Date.now();
-            }
-            
-            // Enregistrement du combat
-            const battleKey = `${attackerClan.id}-${enemyClan.id}`;
-            data.battles[battleKey] = Date.now();
+            enemyClan.units.w = Math.max(0, enemyClan.units.w - Math.floor(enemyLosses * 0.6));
+            enemyClan.units.a = Math.max(0, enemyClan.units.a - Math.floor(enemyLosses * 0.3));
+            enemyClan.units.m = Math.max(0, enemyClan.units.m - Math.floor(enemyLosses * 0.1));
             
             await save();
             
             // Notifier le défenseur
             if (enemyClan.members[0] !== userId) {
+                const resultText = result === 'victory' ? 'victoire' : result === 'defeat' ? 'défaite' : 'match nul';
+                const winnerName = result === 'victory' ? attackerClan.name : result === 'defeat' ? enemyClan.name : 'Match nul';
                 await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, result === 'victory');
             }
             
-            // Construction du résultat
             let battleResult = `⚔️ **${attackerClan.name} VS ${enemyClan.name}**\n`;
             battleResult += `💪 Puissance: ${Math.round(attackerPower)} vs ${Math.round(defenderPower)}\n\n`;
             
             if (result === 'victory') {
-                battleResult += `🏆 **VICTOIRE !**\n✨ +${xpGain} XP | 💰 +${goldChange}\n${attackerLevelUp ? '🆙 NIVEAU UP !\n' : ''}💀 Pertes: ~${Math.round(attackerLossRate * 100)}% unités`;
+                battleResult += `🏆 **VICTOIRE !**\n✨ +${xpGain} XP | 💰 +${goldChange}\n${levelUp ? '🆙 NIVEAU UP !\n' : ''}💀 Pertes: ${myLosses} unités`;
             } else if (result === 'defeat') {
-                battleResult += `🛡️ **DÉFAITE...**\n✨ +${xpGain} XP | 💰 ${goldChange}\n💀 Pertes: ~${Math.round(attackerLossRate * 100)}% unités\n⏳ Protection active pendant 1h`;
+                battleResult += `🛡️ **DÉFAITE...**\n✨ +${xpGain} XP | 💰 ${goldChange}\n💀 Pertes: ${myLosses} unités\n🛡️ Protégé 2h`;
             } else {
-                battleResult += `🤝 **MATCH NUL !**\n✨ +${xpGain} XP pour les deux clans\n💰 Pas de transfert d'or\n💀 Pertes: ~20% unités`;
+                battleResult += `🤝 **MATCH NUL !**\n✨ +${xpGain} XP pour les deux clans\n💰 Pas de transfert d'or\n💀 Pertes minimales: ${myLosses} unités`;
             }
             
-            battleResult += `\n\n📊 **Analyse post-combat:**\n`;
-            battleResult += `• ${attackerClan.name}: ${attackerClan.units.w}🗡️ ${attackerClan.units.a}🏹 ${attackerClan.units.m}🔮\n`;
-            battleResult += `• ${enemyClan.name}: ${enemyClan.units.w}🗡️ ${enemyClan.units.a}🏹 ${enemyClan.units.m}🔮`;
-            
-            if (result !== 'draw') {
-                battleResult += `\n\n💡 **Conseil stratégique:** ${result === 'victory' ? 
-                    'Consolide ta défense avant la revanche !' : 
-                    'Améliore tes unités ou recrute plus de membres !'}`;
-            }
-            
-            ctx.log.info(`⚔️ Bataille: ${attackerClan.name} (${Math.round(attackerPower)}) VS ${enemyClan.name} (${Math.round(defenderPower)}) - ${result}`);
+            ctx.log.info(`⚔️ Bataille: ${attackerClan.name} VS ${enemyClan.name} - ${result === 'victory' ? 'Victoire attaquant' : result === 'defeat' ? 'Victoire défenseur' : 'Match nul'}`);
             return battleResult;
 
         case 'list':
             const topClans = Object.values(data.clans)
-                .sort((a, b) => calculatePower(b) - calculatePower(a))
+                .sort((a, b) => b.level - a.level || b.xp - a.xp)
                 .slice(0, 10);
             
             if (topClans.length === 0) return "❌ Aucun clan ! Crée le premier avec `/clan create [nom]`";
             
-            let list = "🏆 **CLASSEMENT DES CLANS** (par puissance)\n\n";
+            let list = "🏆 **CLASSEMENT DES CLANS**\n\n";
             topClans.forEach((clan, i) => {
                 const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
                 const protection = isProtected(clan) ? '🛡️' : '';
-                const totalPower = calculatePower(clan);
-                const lastAction = clan.lastDefeat ? 'Défaite' : clan.lastVictory ? 'Victoire' : '';
-                const timeInfo = isProtected(clan) ? ` (${formatTime(60 * 60 * 1000 - (Date.now() - (clan.lastDefeat || clan.lastVictory)))})` : '';
-                
-                list += `${medal} **${clan.name}** (${clan.id}) ${protection}\n`;
-                list += `   📊 ${totalPower} pts • ⭐ Niv.${clan.level} • 👥 ${clan.members.length}/20\n`;
-                list += `   💰 ${clan.treasury} • ⚔️ ${clan.units.w}🗡️ ${clan.units.a}🏹 ${clan.units.m}🔮\n`;
-                if (lastAction) list += `   ${lastAction}${timeInfo}\n`;
-                list += `\n`;
+                const totalPower = clan.level * 100 + clan.members.length * 30 + clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15 + Math.floor(clan.xp / 100) * 5;
+                list += `${medal} **${clan.name}** (${clan.id}) ${protection}\n   📊 ${totalPower} pts • ⭐ Niv.${clan.level} • 👥 ${clan.members.length}/20\n   💰 ${clan.treasury} • ⚔️ ${clan.units.w}g/${clan.units.a}a/${clan.units.m}m\n\n`;
             });
             
-            return list + `📈 **Analyse:** ${Object.keys(data.clans).length} clans actifs\n💡 **Stratégie:** Attaque les clans sans 🛡️ et avec moins de mages !`;
+            return list + `📈 **Analyse:** ${Object.keys(data.clans).length} clans actifs\n💡 **Astuce:** Attaque les clans sans 🛡️ pour plus de chances !`;
 
         case 'units':
             const unitsClan = getUserClan();
@@ -393,54 +328,24 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const quantity = parseInt(args_parts[2]) || 1;
             
             if (!unitType) {
-                const unitsPower = unitsClan.units.w * 10 + unitsClan.units.a * 8 + unitsClan.units.m * 15;
-                const efficiency = [
-                    {type: 'mage', value: (15/80).toFixed(3), emoji: '🔮'},
-                    {type: 'archer', value: (8/60).toFixed(3), emoji: '🏹'},
-                    {type: 'guerrier', value: (10/40).toFixed(3), emoji: '🗡️'}
-                ].sort((a,b) => b.value - a.value);
-                
-                let efficiencyInfo = `\n\n🌟 **EFFICACITÉ (puissance/💰):**\n`;
-                efficiency.forEach(unit => {
-                    efficiencyInfo += `${unit.emoji} ${unit.type}: ${unit.value} pts/💰\n`;
-                });
-                
-                return `⚔️ **UNITÉS DE ${unitsClan.name}**\n\n🗡️ **Guerriers:** ${unitsClan.units.w} (+10 puissance chacun)\n🏹 **Archers:** ${unitsClan.units.a} (+8 puissance chacun)\n🔮 **Mages:** ${unitsClan.units.m} (+15 puissance chacun) ⭐\n\n💰 **Trésorerie:** ${unitsClan.treasury} pièces\n📊 **Puissance totale unités:** ${unitsPower} pts${efficiencyInfo}\n\n🛒 **ACHETER UNITÉS:**\n\`/clan units guerrier [nombre]\` - 40💰 (+10 pts)\n\`/clan units archer [nombre]\` - 60💰 (+8 pts)  \n\`/clan units mage [nombre]\` - 80💰 (+15 pts) 🌟\n\n💡 **Stratégie:** ${efficiency[0].emoji} Les ${efficiency[0].type}s sont les plus efficaces !`;
+                return `⚔️ **UNITÉS DE ${unitsClan.name}**\n\n🗡️ **Guerriers:** ${unitsClan.units.w} (+10 puissance chacun)\n🏹 **Archers:** ${unitsClan.units.a} (+8 puissance chacun)\n🔮 **Mages:** ${unitsClan.units.m} (+15 puissance chacun) ⭐\n\n💰 **Trésorerie:** ${unitsClan.treasury} pièces\n📊 **Puissance totale unités:** ${unitsClan.units.w * 10 + unitsClan.units.a * 8 + unitsClan.units.m * 15} pts\n\n🛒 **ACHETER UNITÉS:**\n\`/clan units guerrier [nombre]\` - 40💰 (+10 pts)\n\`/clan units archer [nombre]\` - 60💰 (+8 pts)  \n\`/clan units mage [nombre]\` - 80💰 (+15 pts) 🌟\n\n💡 **Conseil:** Les mages ont le meilleur ratio puissance/prix !`;
             }
             
             if (!isLeader()) return "❌ Seul le chef peut acheter des unités !";
             
-            let cost = 0, unitKey = '', unitName = '', powerPerUnit = 0;
-            if (['guerrier', 'g', 'warrior'].includes(unitType)) { 
-                cost = 40 * quantity; 
-                unitKey = 'w'; 
-                unitName = 'guerriers'; 
-                powerPerUnit = 10; 
-            }
-            else if (['archer', 'a'].includes(unitType)) { 
-                cost = 60 * quantity; 
-                unitKey = 'a'; 
-                unitName = 'archers'; 
-                powerPerUnit = 8; 
-            }
-            else if (['mage', 'm'].includes(unitType)) { 
-                cost = 80 * quantity; 
-                unitKey = 'm'; 
-                unitName = 'mages'; 
-                powerPerUnit = 15; 
-            }
+            let cost = 0, unitKey = '';
+            if (['guerrier', 'g', 'warrior'].includes(unitType)) { cost = 40 * quantity; unitKey = 'w'; }
+            else if (['archer', 'a'].includes(unitType)) { cost = 60 * quantity; unitKey = 'a'; }
+            else if (['mage', 'm'].includes(unitType)) { cost = 80 * quantity; unitKey = 'm'; }
             else return "❌ Type invalide ! Utilise: guerrier, archer, ou mage";
             
-            if (unitsClan.treasury < cost) {
-                const missing = cost - unitsClan.treasury;
-                return `❌ Fonds insuffisants ! Coût: ${cost}💰 (manque ${missing}💰)\n💡 Conseil: Combats pour gagner de l'or ou attends la prochaine récompense quotidienne.`;
-            }
+            if (unitsClan.treasury < cost) return `❌ Fonds insuffisants ! Coût: ${cost}💰, Dispo: ${unitsClan.treasury}💰`;
             
             unitsClan.treasury -= cost;
             unitsClan.units[unitKey] += quantity;
             await save();
             
-            return `✅ ${quantity} ${unitName} acheté(s) pour ${cost}💰 !\n💰 Reste: ${unitsClan.treasury}💰\n📈 +${quantity * powerPerUnit} points de puissance\n💡 Tape \`/clan info\` pour voir ta nouvelle puissance`;
+            return `✅ ${quantity} ${unitType}(s) acheté(s) pour ${cost}💰 !\n💰 Reste: ${unitsClan.treasury}💰`;
 
         case 'promote':
             if (!isLeader()) return "❌ Seul le chef peut promouvoir !";
@@ -458,4 +363,15 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return `👑 ${args_parts[1]} est le nouveau chef de **${promoteClan.name}** !`;
 
         case 'help':
-            return `⚔️ **GUIDE COMPLET DES CLANS**\n\n🏰 **DÉMARRAGE:**\n• \`/clan create [nom]\` - Créer ton clan (nom unique)\n• \`/clan info\` - Voir toutes tes stats détaillées\n• \`/clan list\` - Top 10 des clans les plus forts\n\n👥 **GESTION D'ÉQUIPE:**\n• \`/clan invite @user\` - Inviter un ami (chef seulement)\n• \`/clan join [id]\` - Rejoindre avec un ID court (ex: A3B7)\n• \`/clan leave\` - Quitter ou dissoudre ton clan\n• \`/clan promote @user\` - Transférer le leadership\n\n⚔️ **SYSTÈME DE COMBAT:**\n• \`/clan battle [id/nom]\` - Attaquer un rival\n• \`/clan units\` - Gérer ton armée\n\n📈 **CALCUL DE PUISSANCE:**\n• Niveau: +100 pts/niveau\n• Membres: +30 pts/personne  \n• Guerriers: +10 pts chacun (40💰)\n• Archers: +8 pts chacun (60💰)\n• Mages: +15 pts chacun (80💰) - Les plus forts !\n• XP: +5 pts par 100 XP\n\n🏆 **RÉSULTATS DE COMBAT:**\n• **Victoire** (diff >5%): +200 XP, +20% trésor ennemi (max 100💰)\n• **Match nul** (diff ≤5%): +100 XP, 0💰\n• **Défaite** (diff >5%): +50 XP, -10% trésor (max 50💰)\n\n🛡️ **PROTECTION:** 1h après combat (victoire ou défaite)\n💰 **ÉCONOMIE:** Gagne de l'or en gagnant, achète des unités\n📊 **PROGRESSION:** 1000 XP = +1 niveau\n\n💡 **STRATÉGIES GAGNANTES:**\n1️⃣ **Recrutement:** Plus de membres = +30 pts chacun\n2️⃣ **Mages:** Meilleur rapport puissance/prix (0.188 pts/💰)\n3️⃣ **Niveaux:** Monte en niveau pour +100 pts/niveau\n4️⃣ **Cibles:** Attaque les clans:\n   - Sans protection (pas de 🛡️)\n   - Avec moins de mages\n   - Avec trésor important\n5️⃣ **Défense:** Garde toujours 2-3 mages pour la défense\n6️⃣ **Timing:** Attaque quand tu viens de monter en niveau\n7️⃣ **Équilibre:** Maintiens un ratio 3:2:1 (guerriers:archers:mages)`;
+            return `⚔️ **GUIDE COMPLET DES CLANS**\n\n🏰 **DÉMARRAGE:**\n• \`/clan create [nom]\` - Créer ton clan (nom unique)\n• \`/clan info\` - Voir toutes tes stats détaillées\n• \`/clan list\` - Top 10 des clans les plus forts\n\n👥 **GESTION D'ÉQUIPE:**\n• \`/clan invite @user\` - Inviter un ami (chef seulement)\n• \`/clan join [id]\` - Rejoindre avec un ID court (ex: A3B7)\n• \`/clan leave\` - Quitter ou dissoudre ton clan\n• \`/clan promote @user\` - Transférer le leadership\n\n⚔️ **SYSTÈME DE COMBAT:**\n• \`/clan battle [id/nom]\` - Attaquer un rival\n• \`/clan units\` - Gérer ton armée\n\n📈 **CALCUL DE PUISSANCE:**\n• Niveau: +100 pts/niveau\n• Membres: +30 pts/personne  \n• Guerriers: +10 pts chacun (40💰)\n• Archers: +8 pts chacun (60💰)\n• Mages: +15 pts chacun (80💰) - Les plus forts !\n• XP: +5 pts par 100 XP\n\n🏆 **RÉSULTATS DE COMBAT:**\n• **Victoire** (diff >10 pts): +200 XP, +100💰\n• **Match nul** (diff ≤10 pts): +100 XP, 0💰\n• **Défaite** (diff >10 pts): +50 XP, -50💰\n\n🛡️ **PROTECTION:** 2h après défaite\n💰 **ÉCONOMIE:** Gagne de l'or en gagnant, achète des unités\n📊 **PROGRESSION:** 1000 XP = +1 niveau\n\n💡 **STRATÉGIES GAGNANTES:**\n• Privilégie les MAGES (meilleur rapport puissance/prix)\n• Recrute des membres actifs (+30 pts chacun)\n• Monte en niveau avec les combats\n• Attaque les clans non-protégés\n• Évite les combats à puissance égale (match nul)`;
+
+        default:
+            const userClan = getUserClan();
+            if (userClan) {
+                const protection = isProtected(userClan) ? '🛡️ Protégé' : '';
+                return `🏰 **${userClan.name}** (${userClan.id})\n⭐ Niv.${userClan.level} • 👥 ${userClan.members.length}/20 • 💰 ${userClan.treasury} ${protection}\n\nTape \`/clan help\` pour toutes les commandes !`;
+            } else {
+                return `⚔️ **BIENVENUE DANS LE SYSTÈME DE CLANS !**\n\nTu n'as pas encore de clan. Voici comment commencer :\n\n🏰 \`/clan create [nom]\` - Créer ton propre clan\n📜 \`/clan list\` - Voir tous les clans existants\n❓ \`/clan help\` - Guide complet des commandes\n\n💎 **Astuce:** Commence par créer ton clan, puis invite des amis pour devenir plus fort !`;
+    }
+};
+};
