@@ -146,13 +146,21 @@ module.exports = async function cmdClan(senderId, args, ctx) {
 
         case 'info':
             const clan = getUserClan();
-            if (!clan) return "❌ Tu n'as pas de clan ! `/clan create [nom]`";
+            if (!clan) {
+                addToMemory(userId, 'user', `/clan ${args}`);
+                const response = "❌ Tu n'as pas de clan ! `/clan create [nom]`";
+                addToMemory(userId, 'assistant', response);
+                return response;
+            }
             
             const nextXP = (clan.level * 1000) - clan.xp;
             const protection = isProtected(clan) ? '🛡️ Protégé ' : '';
             const totalPower = clan.level * 100 + clan.members.length * 30 + clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15 + Math.floor(clan.xp / 100) * 5;
             
-            return `🏰 **${clan.name}** (ID: ${clan.id})\n⭐ **Niveau ${clan.level}** (+${clan.level * 100} pts)\n👥 **${clan.members.length}/20 membres** (+${clan.members.length * 30} pts)\n💰 **${clan.treasury} pièces d'or**\n\n✨ **Progression:** ${clan.xp} XP (${nextXP} pour niveau ${clan.level + 1})\n📊 **Puissance totale:** ${totalPower} points\n\n⚔️ **Armée:**\n• 🗡️ ${clan.units.w} guerriers (+${clan.units.w * 10} pts)\n• 🏹 ${clan.units.a} archers (+${clan.units.a * 8} pts)  \n• 🔮 ${clan.units.m} mages (+${clan.units.m * 15} pts)\n\n${protection}💡 Tape \`/clan help\` pour les stratégies !`;
+            addToMemory(userId, 'user', `/clan ${args}`);
+            const infoResponse = `🏰 **${clan.name}** (ID: ${clan.id})\n⭐ **Niveau ${clan.level}** (+${clan.level * 100} pts)\n👥 **${clan.members.length}/20 membres** (+${clan.members.length * 30} pts)\n💰 **${clan.treasury} pièces d'or**\n\n✨ **Progression:** ${clan.xp} XP (${nextXP} pour niveau ${clan.level + 1})\n📊 **Puissance totale:** ${totalPower} points\n\n⚔️ **Armée:**\n• 🗡️ ${clan.units.w} guerriers (+${clan.units.w * 10} pts)\n• 🏹 ${clan.units.a} archers (+${clan.units.a * 8} pts)  \n• 🔮 ${clan.units.m} mages (+${clan.units.m * 15} pts)\n\n${protection}💡 Tape \`/clan help\` pour les stratégies !`;
+            addToMemory(userId, 'assistant', infoResponse);
+            return infoResponse;
 
         case 'invite':
             if (!isLeader()) return "❌ Seul le chef peut inviter !";
