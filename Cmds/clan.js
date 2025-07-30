@@ -301,12 +301,12 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     
     switch (action) {
         case 'create':
-            const clanName = args_parts.slice(1).join(' ').trim();
-            if (!clanName) {
+            const newClanName = args_parts.slice(1).join(' ').trim();
+            if (!newClanName) {
                 return "⚔️ **CRÉER UN CLAN**\n\nUsage: `/clan create [nom]`\nExemple: `/clan create Dragons Noirs` 🐉\n\n📋 **Règles:**\n• Nom unique (2-30 caractères)\n• Pas de caractères spéciaux\n• Un seul clan par personne";
             }
             
-            if (clanName.length < 2 || clanName.length > 30) {
+            if (newClanName.length < 2 || newClanName.length > 30) {
                 return "❌ Le nom doit faire entre 2 et 30 caractères !";
             }
             
@@ -317,12 +317,12 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 return `❌ Tu as supprimé un clan récemment !\n⏰ Attends encore **${timeLeft}** pour en créer un nouveau.`;
             }
             
-            if (findClan(clanName)) return `❌ Le nom "${clanName}" existe déjà ! Choisis autre chose.`;
+            if (findClan(newClanName)) return `❌ Le nom "${newClanName}" existe déjà ! Choisis autre chose.`;
             
             const clanId = generateId('clan');
             const newClan = {
                 id: clanId,
-                name: clanName,
+                name: newClanName,
                 leader: userId,
                 members: [userId],
                 level: 1,
@@ -342,8 +342,8 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             data.userClans[userId] = clanId;
             await save();
             
-            ctx.log.info(`🏰 Nouveau clan créé: ${clanName} (${clanId}) par ${userId}`);
-            return `🎉 **CLAN CRÉÉ AVEC SUCCÈS !**\n\n🏰 **"${clanName}"** (ID: **${clanId}**)\n👑 Chef: Toi\n📊 Puissance: ${calculatePower(newClan)} pts\n\n💰 **Ressources de départ:**\n• 100 pièces d'or\n• 10 guerriers 🗡️\n• 5 archers 🏹\n• 2 mages 🔮\n\n⭐ Niveau 1 • 0/1000 XP\n\n💡 **Prochaines étapes:**\n• Invite des amis: \`/clan invite @ami\`\n• Consulte ton clan: \`/clan info\`\n• Lance des batailles: \`/clan battle [cible]\``;
+            ctx.log.info(`🏰 Nouveau clan créé: ${newClanName} (${clanId}) par ${userId}`);
+            return `🎉 **CLAN CRÉÉ AVEC SUCCÈS !**\n\n🏰 **"${newClanName}"** (ID: **${clanId}**)\n👑 Chef: Toi\n📊 Puissance: ${calculatePower(newClan)} pts\n\n💰 **Ressources de départ:**\n• 100 pièces d'or\n• 10 guerriers 🗡️\n• 5 archers 🏹\n• 2 mages 🔮\n\n⭐ Niveau 1 • 0/1000 XP\n\n💡 **Prochaines étapes:**\n• Invite des amis: \`/clan invite @ami\`\n• Consulte ton clan: \`/clan info\`\n• Lance des batailles: \`/clan battle [cible]\``;
 
         case 'info':
             const clan = getUserClan();
@@ -751,7 +751,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 return `❌ **TU ES LE CHEF !**\n\nTu ne peux pas partir tant qu'il y a d'autres membres.\n\n🔄 **Options:**\n• Promeus un nouveau chef: \`/clan promote @membre\`\n• Attendre que tous partent (dissolution auto)\n\n${memberList}\n💡 Utilise: \`/clan promote @membre\``;
             }
             
-            const clanName = leaveClan.name;
+            const leaveClanName = leaveClan.name;
             const wasLeader = isLeader();
             
             if (wasLeader) {
@@ -765,10 +765,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 
                 await save();
                 
-                ctx.log.info(`🏰 Clan dissous: ${clanName} par ${userId} (${memberCount} membres)`);
+                ctx.log.info(`🏰 Clan dissous: ${leaveClanName} par ${userId} (${memberCount} membres)`);
                 
                 const cooldownTime = formatTime(GAME_CONFIG.CREATION_COOLDOWN);
-                return `💥 **CLAN "${clanName.toUpperCase()}" DISSOUS !**\n\n⚰️ Le clan et toutes ses ressources ont été perdus\n👥 ${memberCount} membre(s) libéré(s)\n\n⏰ **Cooldown de création:** ${cooldownTime}\nTu pourras créer un nouveau clan dans 3 jours.\n\n💡 **Conseil:** La prochaine fois, transfère le leadership avant de partir !`;
+                return `💥 **CLAN "${leaveClanName.toUpperCase()}" DISSOUS !**\n\n⚰️ Le clan et toutes ses ressources ont été perdus\n👥 ${memberCount} membre(s) libéré(s)\n\n⏰ **Cooldown de création:** ${cooldownTime}\nTu pourras créer un nouveau clan dans 3 jours.\n\n💡 **Conseil:** La prochaine fois, transfère le leadership avant de partir !`;
             } else {
                 // Simple départ
                 leaveClan.members = leaveClan.members.filter(id => id !== userId);
@@ -777,10 +777,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 validateClanData(leaveClan);
                 await save();
                 
-                ctx.log.info(`👋 ${userId} a quitté le clan: ${clanName}`);
+                ctx.log.info(`👋 ${userId} a quitté le clan: ${leaveClanName}`);
                 
                 const newPower = calculatePower(leaveClan);
-                return `👋 **TU AS QUITTÉ "${clanName.toUpperCase()}"**\n\n📉 Puissance du clan: ${newPower} pts (-30)\n👥 Membres restants: ${leaveClan.members.length}/${GAME_CONFIG.MAX_MEMBERS}\n\n🏰 **Tu peux maintenant:**\n• Créer ton propre clan: \`/clan create [nom]\`\n• Rejoindre un autre clan: \`/clan list\`\n• Attendre d'autres invitations\n\nBonne chance dans tes futures aventures ! ⚔️`;
+                return `👋 **TU AS QUITTÉ "${leaveClanName.toUpperCase()}"**\n\n📉 Puissance du clan: ${newPower} pts (-30)\n👥 Membres restants: ${leaveClan.members.length}/${GAME_CONFIG.MAX_MEMBERS}\n\n🏰 **Tu peux maintenant:**\n• Créer ton propre clan: \`/clan create [nom]\`\n• Rejoindre un autre clan: \`/clan list\`\n• Attendre d'autres invitations\n\nBonne chance dans tes futures aventures ! ⚔️`;
             }
 
         case 'units':
