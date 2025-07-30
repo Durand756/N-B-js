@@ -15,26 +15,27 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 ✨ COMMANDES PRINCIPALES:
 
 🏠 BASE:
-┣━━ /start - Ma présentation mignonne
-┣━━ /help - Cette aide pleine d'amour
-┗━━ /chat [msg] - Papote avec gentillesse
+┣━━ "/start" - Ma présentation mignonne
+┣━━ "/help" - Cette aide pleine d'amour
+┗━━ "/chat" [msg] - Papote avec gentillesse
 
 🎵 MÉDIA:
-┣━━ /music - Trouve ta musique YouTube
-┣━━ /image [desc] - Crée des images IA
-┣━━ /anime - Transforme en style anime
-┗━━ /vision - Décris tes images
+┣━━ "/music" - Trouve ta musique YouTube
+┣━━ "/image" [desc] - Crée des images IA
+┣━━ "/anime" - Transforme en style anime
+┗━━ "/vision" - Décris tes images
 
 ⚔️ CLANS:
-┗━━ /clan - Univers de guerre virtuelle`;
+┗━━ "/clan help" - Univers de guerre virtuelle`;
 
     if (isAdmin(senderId)) {
         text += `
 
 🔐 ADMIN SPÉCIAL:
-┣━━ /stats - Mes statistiques
-┣━━ /admin - Panneau admin
-┣━━ /broadcast [msg] - Diffusion
+┣━━ "/stats" - Mes statistiques
+┣━━ "/admin" - Panneau admin
+┣━━ "/broadcast [msg]" - Diffusion
+┣━━ "/stop-broadcast" - Arrête la diffusion
 ┗━━ /restart - Redémarrage`;
     }
 
@@ -42,8 +43,8 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 
 ════════════════════════
 🎨 Images: Envoie ta description !
-🎭 Anime: Image + /anime !
-👁️ Vision: Image + /vision !
+🎭 Anime: Image + "/anime" !
+👁️ Vision: Image + "/vision" !
 
 ╰─▸ Créé avec 💕 par Durand
 💖 Toujours là pour t'aider ! ✨`;
