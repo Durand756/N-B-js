@@ -190,7 +190,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             data.invites[targetUser].push(inviterClan.id);
             await save();
             
-            return `📨 ${args_parts[1]} invité dans **${inviterClan.name}** !\n💡 Il peut faire: \`/clan join ${inviterClan.id}\``;
+            return `╔═══════════════════════════════════╗\n║     📨 INVITATION ENVOYÉE 📨     ║\n╚═══════════════════════════════════╝\n\n${args_parts[1]} peut maintenant rejoindre ${inviterClan.name} !\n\n🆔 Code de guerre: ${inviterClan.id}\n💡 Il peut faire: \`/clan join ${inviterClan.id}\`\n\n╰─▸ Un nouveau guerrier bientôt !`;
 
         case 'join':
             const joinArg = args_parts[1];
@@ -198,14 +198,14 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 const myInvites = data.invites[userId] || [];
                 if (myInvites.length === 0) return "❌ Aucune invitation !";
                 
-                let inviteList = "📬 **TES INVITATIONS**\n\n";
+                let inviteList = `╔═══════════════════════════════════╗\n║     📬 TES INVITATIONS 📬     ║\n╚═══════════════════════════════════╝\n\n`;
                 myInvites.forEach((clanId, i) => {
                     const c = data.clans[clanId];
                     if (c) {
-                        inviteList += `**${c.name}** (${clanId}) - Niv.${c.level}\n`;
+                        inviteList += `⚔️ ${c.name} (${clanId}) - Niveau ${c.level}\n   ╰─▸ ${c.members.length}/20 guerriers\n\n`;
                     }
                 });
-                return inviteList + "\n⚔️ `/clan join [id]`";
+                return inviteList + `═══════════════════════════════════\n╰─▸ \`/clan join [id]\` pour rejoindre !`;
             }
             
             if (getUserClan()) return "❌ Tu as déjà un clan !";
@@ -221,7 +221,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             await save();
             
             ctx.log.info(`🏰 ${userId} a rejoint le clan: ${joinClan.name} (${joinClan.id})`);
-            return `🔥 Tu rejoins **${joinClan.name}** !\n👥 ${joinClan.members.length}/20 guerriers`;
+            return `╔═══════════════════════════════════╗\n║     🔥 BIENVENUE GUERRIER ! 🔥     ║\n╚═══════════════════════════════════╝\n\nTu rejoins les rangs de ${joinClan.name} !\n\n👥 Forces actuelles: ${joinClan.members.length}/20 guerriers\n🆔 Code de guerre: ${joinClan.id}\n\n╰─▸ Prépare-toi pour la bataille !`;
 
         case 'leave':
             const leaveClan = getUserClan();
@@ -376,8 +376,15 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const unitType = args_parts[1]?.toLowerCase();
             const quantity = parseInt(args_parts[2]) || 1;
             
+        case 'units':
+            const unitsClan = getUserClan();
+            if (!unitsClan) return "❌ Pas de clan !";
+            
+            const unitType = args_parts[1]?.toLowerCase();
+            const quantity = parseInt(args_parts[2]) || 1;
+            
             if (!unitType) {
-                return `⚔️ **ARMÉE DE ${unitsClan.name}**\n\n🗡️ ${unitsClan.units.w} guerriers (+10 pts)\n🏹 ${unitsClan.units.a} archers (+8 pts)\n🔮 ${unitsClan.units.m} mages (+15 pts)\n\n💰 **${unitsClan.treasury} pièces**\n\n🛒 **ACHETER:**\n\`/clan units guerrier [nb]\` - 40💰\n\`/clan units archer [nb]\` - 60💰\n\`/clan units mage [nb]\` - 80💰`;
+                return `╔═══════════════════════════════════╗\n║     ⚔️ CASERNE MILITAIRE ⚔️     ║\n╚═══════════════════════════════════╝\n\n🏰 ARMÉE DE ${unitsClan.name}\n\n┌─────────────────────────────┐\n│     FORCES DISPONIBLES     │\n└─────────────────────────────┘\n\n🗡️ ═══ ${unitsClan.units.w} Guerriers (+${unitsClan.units.w * 10} pts)\n🏹 ═══ ${unitsClan.units.a} Archers (+${unitsClan.units.a * 8} pts)\n🔮 ═══ ${unitsClan.units.m} Mages (+${unitsClan.units.m * 15} pts)\n\n💰 ▬▬ TRÉSOR: ${unitsClan.treasury} pièces ▬▬ 💰\n\n═══════════════════════════════════\n\n🛒 RECRUTEMENT:\n┃\n┣━━ \`/clan units guerrier [nb]\` - 40💰\n┣━━ \`/clan units archer [nb]\` - 60💰  \n┣━━ \`/clan units mage [nb]\` - 80💰\n┃\n╰─▸ Les mages sont les plus efficaces !`;
             }
             
             if (!isLeader()) return "❌ Chef seulement !";
@@ -412,7 +419,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             unitsClan.units[unitKey] += quantity;
             await save();
             
-            return `⚔️ ${quantity} ${unitName} recrutés !\n💰 Reste: ${unitsClan.treasury} | +${quantity * powerPerUnit} pts`;
+            return `⚔️ ${quantity} ${unitName} recrutés pour la guerre !\n\n💰 Trésor restant: ${unitsClan.treasury} pièces\n⚡ Puissance: +${quantity * powerPerUnit} points\n\n╰─▸ Ton armée se renforce !`;
 
         case 'promote':
             if (!isLeader()) return "❌ Chef seulement !";
@@ -430,7 +437,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return `👑 ${args_parts[1]} est le nouveau chef !`;
 
         case 'help':
-            return `⚔️ **COMMANDES CLANS**\n\n🏰 **Base:**\n\`/clan create [nom]\` - Créer\n\`/clan info\` - Stats\n\`/clan list\` - Classement\n\n👥 **Équipe:**\n\`/clan invite @user\` - Inviter\n\`/clan join [id]\` - Rejoindre\n\`/clan leave\` - Quitter\n\`/clan promote @user\` - Chef\n\n⚔️ **Combat:**\n\`/clan battle [id]\` - Attaquer\n\`/clan units\` - Gérer armée\n\n📊 **Puissance = Niveau×100 + Membres×30 + Unités**\n💡 **Mages = plus fort (15 pts) !**`;
+            return `╔═══════════════════════════════════╗\n║     ⚔️ GUIDE DE GUERRE ⚔️     ║\n╚═══════════════════════════════════╝\n\n🏰 ▬▬▬ COMMANDES DE BASE ▬▬▬ 🏰\n┃\n┣━━ \`/clan create [nom]\` - Fonder ton empire\n┣━━ \`/clan info\` - Consulter tes stats\n┣━━ \`/clan list\` - Hall des légendes\n┃\n👥 ▬▬▬ GESTION D'ÉQUIPE ▬▬▬ 👥\n┃\n┣━━ \`/clan invite @user\` - Recruter un guerrier\n┣━━ \`/clan join [id]\` - Rejoindre une armée\n┣━━ \`/clan leave\` - Abandonner le combat\n┣━━ \`/clan promote @user\` - Nommer un chef\n┃\n⚔️ ▬▬▬ ART DE LA GUERRE ▬▬▬ ⚔️\n┃\n┣━━ \`/clan battle [id]\` - Lancer l'assaut\n┣━━ \`/clan units\` - Gérer ton armée\n┃\n═══════════════════════════════════\n\n📊 CALCUL DE PUISSANCE:\n╰─▸ Niveau × 100 + Membres × 30 + Unités\n\n💡 STRATÉGIE ULTIME:\n╰─▸ Les mages donnent 15 pts (les plus forts !)\n╰─▸ Attaque les clans sans 🛡️\n╰─▸ Recrute des alliés pour dominer\n\n🔥 Forge ton destin, conquérant ! 🔥`;
 
         default:
             const userClan = getUserClan();
