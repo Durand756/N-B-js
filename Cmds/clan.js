@@ -1,5 +1,5 @@
 /**
- * Commande /clan - Système de gestion de clans optimisé
+ * Commande /clan - Système de gestion de clans optimisé avec sauvegarde GitHub
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Arguments de la commande
  * @param {object} ctx - Contexte partagé du bot
@@ -17,11 +17,12 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         counter: 0
     });
     
-    // Initialisation des données
+    // ✅ CORRECTION: Utiliser le nouveau système de sauvegarde
     if (!ctx.clanData) {
         ctx.clanData = initClanData();
+        // Sauvegarder immédiatement la structure initiale
         await saveDataImmediate();
-        ctx.log.info("🏰 Structure des clans initialisée");
+        ctx.log.info("🏰 Structure des clans initialisée et sauvegardée");
     }
     let data = ctx.clanData;
     
@@ -109,9 +110,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         return false;
     };
     
+    // ✅ CORRECTION: Utiliser la nouvelle fonction de sauvegarde
     const save = async () => {
-        ctx.clanData = data;
-        await saveDataImmediate();
+        ctx.clanData = data; // S'assurer que les données sont à jour dans le contexte
+        await saveDataImmediate(); // Sauvegarde asynchrone sur GitHub
     };
     
     // Notification d'attaque
@@ -134,14 +136,14 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const clanName = args_parts.slice(1).join(' ');
             if (!clanName) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "⚔️ **Créer un clan**\n\nUsage: `/clan create [nom]`\nExemple: `/clan create Dragons` 🐉\n\n💡 *Le nom de ton clan sera visible par tous les autres joueurs*";
+                const response = "⚔️ Usage: `/clan create [nom]`\nExemple: `/clan create Dragons` 🐉";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             if (getUserClan()) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Tu as déjà un clan ! Utilise `/clan leave` pour le quitter d'abord.";
+                const response = "❌ Tu as déjà un clan ! Utilise `/clan leave` d'abord.";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -157,7 +159,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             // Vérifier nom unique
             if (findClan(clanName)) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Ce nom existe déjà ! Choisis un autre nom pour ton clan.";
+                const response = "❌ Ce nom existe déjà ! Choisis autre chose.";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -173,13 +175,13 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 treasury: 100,
                 units: { w: 10, a: 5, m: 2 }, // warriors, archers, mages
                 lastDefeat: null,
-                createdAt: new Date().toISOString()
+                createdAt: new Date().toISOString() // ✅ AJOUT: Date de création
             };
             data.userClans[userId] = clanId;
-            await save();
+            await save(); // ✅ CORRECTION: Sauvegarde asynchrone
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const createResponse = `🎉 **Clan créé avec succès !**\n\n🏰 **${clanName}**\n🆔 ID: **${clanId}**\n👑 Tu es le chef de ce clan\n💰 100 pièces d'or\n⭐ Niveau 1\n⚔️ 10 guerriers, 5 archers, 2 mages\n\n💡 *Utilise \`/clan help\` pour découvrir toutes les possibilités !*`;
+            const createResponse = `🎉 Clan "${clanName}" créé !\n🆔 ID: **${clanId}**\n👑 Tu es le chef\n💰 100 pièces • ⭐ Niveau 1\n⚔️ 10 guerriers, 5 archers, 2 mages\n💾 Sauvegardé automatiquement !`;
             addToMemory(userId, 'assistant', createResponse);
             
             ctx.log.info(`🏰 Nouveau clan créé: ${clanName} (${clanId}) par ${userId}`);
@@ -189,24 +191,23 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const clan = getUserClan();
             if (!clan) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Tu n'as pas de clan !\n\n🏰 Utilise `/clan create [nom]` pour créer ton clan\n📜 Ou `/clan list` pour voir les clans existants";
+                const response = "❌ Tu n'as pas de clan ! `/clan create [nom]`";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             const nextXP = (clan.level * 1000) - clan.xp;
-            const protection = isProtected(clan) ? '🛡️ Protégé (2h) ' : '';
-            const isChief = isLeader() ? '👑 Chef' : '👤 Membre';
+            const protection = isProtected(clan) ? '🛡️ Protégé ' : '';
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const infoResponse = `🏰 **${clan.name}**\n🆔 ${clan.id} • ${isChief}\n⭐ Niveau ${clan.level} • 👥 ${clan.members.length}/20 membres\n💰 ${clan.treasury} pièces d'or\n✨ XP: ${clan.xp} (${nextXP} pour niveau suivant)\n⚔️ Armée: ${clan.units.w} guerriers, ${clan.units.a} archers, ${clan.units.m} mages\n${protection}`;
+            const infoResponse = `🏰 **${clan.name}**\n🆔 ${clan.id} • ⭐ Niv.${clan.level}\n👥 ${clan.members.length}/20 • 💰 ${clan.treasury}\n✨ XP: ${clan.xp} (${nextXP} pour +1)\n⚔️ ${clan.units.w}g ${clan.units.a}a ${clan.units.m}m\n${protection}`;
             addToMemory(userId, 'assistant', infoResponse);
             return infoResponse;
 
         case 'invite':
             if (!isLeader()) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Seul le chef du clan peut inviter de nouveaux membres !";
+                const response = "❌ Seul le chef peut inviter !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -214,7 +215,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const targetUser = args_parts[1]?.replace(/[<@!>]/g, '');
             if (!targetUser) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "⚔️ **Inviter un membre**\n\nUsage: `/clan invite @utilisateur`\nExemple: `/clan invite @John`\n\n💡 *L'utilisateur recevra une invitation qu'il pourra accepter*";
+                const response = "⚔️ Usage: `/clan invite @utilisateur`";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -222,14 +223,14 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const inviterClan = getUserClan();
             if (inviterClan.members.length >= 20) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Ton clan est plein ! (maximum 20 membres)\n\n💡 *Tu peux exclure des membres inactifs si tu es le chef*";
+                const response = "❌ Clan plein ! (20 max)";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             if (data.userClans[targetUser]) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Cette personne fait déjà partie d'un clan !";
+                const response = "❌ Cette personne a déjà un clan !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -237,16 +238,16 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             if (!data.invites[targetUser]) data.invites[targetUser] = [];
             if (data.invites[targetUser].includes(inviterClan.id)) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Tu as déjà invité cette personne !";
+                const response = "❌ Déjà invité !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             data.invites[targetUser].push(inviterClan.id);
-            await save();
+            await save(); // ✅ CORRECTION: Sauvegarde asynchrone
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const inviteResponse = `📨 **Invitation envoyée !**\n\n${args_parts[1]} a été invité à rejoindre **${inviterClan.name}**\n\n💡 *Il peut rejoindre avec: \`/clan join ${inviterClan.id}\`*`;
+            const inviteResponse = `📨 ${args_parts[1]} invité dans **${inviterClan.name}** !\nIl peut rejoindre avec: \`/clan join ${inviterClan.id}\``;
             addToMemory(userId, 'assistant', inviteResponse);
             return inviteResponse;
 
@@ -256,7 +257,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 const myInvites = data.invites[userId] || [];
                 if (myInvites.length === 0) {
                     addToMemory(userId, 'user', `/clan ${args}`);
-                    const response = "❌ **Aucune invitation**\n\nTu n'as reçu aucune invitation de clan.\n\n💡 *Les chefs de clan peuvent t'inviter avec \`/clan invite @tonnom\`*\n📜 *Ou regarde les clans disponibles avec \`/clan list\`*";
+                    const response = "❌ Aucune invitation ! Usage: `/clan join [id]`";
                     addToMemory(userId, 'assistant', response);
                     return response;
                 }
@@ -265,10 +266,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 myInvites.forEach((clanId, i) => {
                     const c = data.clans[clanId];
                     if (c) {
-                        inviteList += `${i+1}. **${c.name}** (${clanId})\n   👥 ${c.members.length}/20 membres • ⭐ Niveau ${c.level}\n   👑 Chef: ${c.leader}\n\n`;
+                        inviteList += `${i+1}. **${c.name}** (${clanId})\n   👥 ${c.members.length}/20 • ⭐ Niv.${c.level}\n\n`;
                     }
                 });
-                inviteList += "💡 *Pour rejoindre: \`/clan join [id]\`*";
+                inviteList += "Pour rejoindre: `/clan join [id]`";
                 
                 addToMemory(userId, 'user', `/clan ${args}`);
                 addToMemory(userId, 'assistant', inviteList);
@@ -277,7 +278,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             if (getUserClan()) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Tu fais déjà partie d'un clan !\n\n💡 *Utilise \`/clan leave\` pour quitter ton clan actuel*";
+                const response = "❌ Tu as déjà un clan !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -285,21 +286,21 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const joinClan = findClan(joinArg);
             if (!joinClan) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ **Clan introuvable**\n\nAucun clan trouvé avec cet ID ou nom.\n\n💡 *Vérifie l'orthographe ou utilise \`/clan join\` pour voir tes invitations*";
+                const response = "❌ Clan introuvable !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             if (!data.invites[userId]?.includes(joinClan.id)) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = `❌ **Pas d'invitation**\n\nTu n'as pas été invité dans le clan **${joinClan.name}**.\n\n💡 *Demande au chef ${joinClan.leader} de t'inviter*`;
+                const response = "❌ Tu n'es pas invité dans ce clan !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             if (joinClan.members.length >= 20) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = `❌ **Clan plein**\n\nLe clan **${joinClan.name}** a atteint sa capacité maximale (20 membres).`;
+                const response = "❌ Clan plein !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -308,10 +309,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             joinClan.members.push(userId);
             data.userClans[userId] = joinClan.id;
             data.invites[userId] = data.invites[userId].filter(id => id !== joinClan.id);
-            await save();
+            await save(); // ✅ CORRECTION: Sauvegarde asynchrone
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const joinResponse = `🎉 **Bienvenue dans le clan !**\n\nTu as rejoint **${joinClan.name}** !\n🆔 ${joinClan.id} • 👥 ${joinClan.members.length}/20 membres\n⭐ Niveau ${joinClan.level}\n\n💡 *Utilise \`/clan info\` pour voir les détails du clan*`;
+            const joinResponse = `🎉 Tu as rejoint **${joinClan.name}** !\n🆔 ${joinClan.id} • 👥 ${joinClan.members.length}/20`;
             addToMemory(userId, 'assistant', joinResponse);
             
             ctx.log.info(`🏰 ${userId} a rejoint le clan: ${joinClan.name} (${joinClan.id})`);
@@ -321,14 +322,14 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const leaveClan = getUserClan();
             if (!leaveClan) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Tu ne fais partie d'aucun clan !";
+                const response = "❌ Tu n'as pas de clan !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             if (isLeader() && leaveClan.members.length > 1) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ **Chef responsable**\n\nTu es le chef et il y a d'autres membres !\n\n💡 *Promeus un nouveau chef avec \`/clan promote @membre\`*\n💡 *Ou utilise \`/clan dissolve\` pour dissoudre le clan*";
+                const response = "❌ Promeus un nouveau chef d'abord ! `/clan promote @membre`";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -341,10 +342,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 });
                 delete data.clans[leaveClan.id];
                 data.deletedClans[userId] = Date.now(); // Cooldown de 3 jours
-                await save();
+                await save(); // ✅ CORRECTION: Sauvegarde asynchrone
                 
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const dissolveResponse = `💥 **Clan dissous**\n\nLe clan "${clanName}" a été dissous.\n⏰ Tu pourras créer un nouveau clan dans 3 jours.\n\n💡 *Cette période d'attente évite les abus*`;
+                const dissolveResponse = `💥 Clan "${clanName}" dissous !\n⏰ Tu pourras en créer un nouveau dans 3 jours.`;
                 addToMemory(userId, 'assistant', dissolveResponse);
                 
                 ctx.log.info(`🏰 Clan dissous: ${clanName} par ${userId}`);
@@ -353,10 +354,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 // Quitter seulement
                 leaveClan.members = leaveClan.members.filter(id => id !== userId);
                 delete data.userClans[userId];
-                await save();
+                await save(); // ✅ CORRECTION: Sauvegarde asynchrone
                 
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const leaveResponse = `👋 **Clan quitté**\n\nTu as quitté le clan "${leaveClan.name}".\n\n💡 *Tu peux maintenant rejoindre un autre clan ou en créer un*`;
+                const leaveResponse = `👋 Tu as quitté "${leaveClan.name}".`;
                 addToMemory(userId, 'assistant', leaveResponse);
                 return leaveResponse;
             }
@@ -365,7 +366,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const attackerClan = getUserClan();
             if (!attackerClan) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Tu n'as pas de clan pour attaquer !\n\n🏰 Crée ou rejoins un clan d'abord";
+                const response = "❌ Tu n'as pas de clan !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -373,7 +374,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const enemyArg = args_parts[1];
             if (!enemyArg) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "⚔️ **Attaquer un clan**\n\nUsage: `/clan battle [id ou nom]`\nExemple: `/clan battle ABCD` ou `/clan battle Dragons`\n\n💡 *Tu peux voir les clans disponibles avec \`/clan list\`*\n💡 *Les clans protégés (🛡️) ne peuvent pas être attaqués*";
+                const response = "⚔️ Usage: `/clan battle [id ou nom]`";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -381,21 +382,21 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const enemyClan = findClan(enemyArg);
             if (!enemyClan) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ **Clan ennemi introuvable**\n\nAucun clan trouvé avec cet ID ou nom.\n\n💡 *Utilise \`/clan list\` pour voir tous les clans*";
+                const response = "❌ Clan ennemi introuvable !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             if (enemyClan.id === attackerClan.id) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Tu ne peux pas attaquer ton propre clan ! 😅";
+                const response = "❌ Tu ne peux pas t'attaquer toi-même !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             if (isProtected(enemyClan)) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = `🛡️ **Clan protégé**\n\n**${enemyClan.name}** est protégé après une récente défaite.\n\n💡 *Les clans sont protégés 2h après une défaite*`;
+                const response = `🛡️ ${enemyClan.name} est protégé !`;
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -437,7 +438,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             enemyClan.units.a = Math.max(0, enemyClan.units.a - Math.floor(enemyLosses * 0.3));
             enemyClan.units.m = Math.max(0, enemyClan.units.m - Math.floor(enemyLosses * 0.1));
             
-            // Historique des batailles
+            // ✅ AJOUT: Historique des batailles
             if (!data.battles) data.battles = {};
             const battleId = `B${Date.now()}`;
             data.battles[battleId] = {
@@ -460,18 +461,18 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 }
             };
             
-            await save();
+            await save(); // ✅ CORRECTION: Sauvegarde asynchrone
             
             // Notifier le défenseur
             if (enemyClan.members[0] !== userId) {
                 await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, victory);
             }
             
-            let battleResult = `⚔️ **BATAILLE : ${attackerClan.name} VS ${enemyClan.name}**\n\n`;
+            let battleResult = `⚔️ **${attackerClan.name} VS ${enemyClan.name}**\n\n`;
             if (victory) {
-                battleResult += `🏆 **VICTOIRE !**\n✨ +${xpGain} XP • 💰 +${goldChange} pièces\n${levelUp ? '🆙 **NIVEAU UP !**\n' : ''}💀 Pertes au combat: ${myLosses} unités\n\n💡 *Continue à attaquer pour progresser !*`;
+                battleResult += `🏆 **VICTOIRE !**\n✨ +${xpGain} XP | 💰 +${goldChange}\n${levelUp ? '🆙 NIVEAU UP !\n' : ''}💀 Pertes: ${myLosses} unités\n💾 Bataille sauvegardée !`;
             } else {
-                battleResult += `🛡️ **DÉFAITE...**\n✨ +${xpGain} XP • 💰 ${goldChange} pièces\n💀 Pertes au combat: ${myLosses} unités\n🛡️ Ton clan est protégé 2h\n\n💡 *Renforce ton armée avec \`/clan units\` !*`;
+                battleResult += `🛡️ **DÉFAITE...**\n✨ +${xpGain} XP | 💰 ${goldChange}\n💀 Pertes: ${myLosses} unités\n🛡️ Protégé 2h\n💾 Bataille sauvegardée !`;
             }
             
             addToMemory(userId, 'user', `/clan ${args}`);
@@ -483,23 +484,23 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         case 'list':
             const topClans = Object.values(data.clans)
                 .sort((a, b) => b.level - a.level || b.xp - a.xp)
-                .slice(0, 15);
+                .slice(0, 10);
             
             if (topClans.length === 0) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ **Aucun clan existant**\n\nSois le premier à créer un clan !\n\n🏰 `/clan create [nom]` pour commencer\n💡 *Exemple: `/clan create Guerriers`*";
+                const response = "❌ Aucun clan ! Crée le premier avec `/clan create [nom]`";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
-            let list = "🏆 **CLASSEMENT DES CLANS**\n\n";
+            let list = "🏆 **TOP CLANS**\n\n";
             topClans.forEach((clan, i) => {
                 const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
                 const protection = isProtected(clan) ? '🛡️' : '';
-                list += `${medal} **${clan.name}** (${clan.id}) ${protection}\n   ⭐ Niveau ${clan.level} • 👥 ${clan.members.length}/20 • 💰 ${clan.treasury}\n\n`;
+                list += `${medal} **${clan.name}** (${clan.id}) ${protection}\n   ⭐ Niv.${clan.level} • 👥 ${clan.members.length}/20 • 💰 ${clan.treasury}\n\n`;
             });
             
-            list += `💡 *Total: ${Object.keys(data.clans).length} clans • Utilise \`/clan battle [id]\` pour attaquer*`;
+            list += `💾 Total: ${Object.keys(data.clans).length} clans sauvegardés`;
             
             addToMemory(userId, 'user', `/clan ${args}`);
             addToMemory(userId, 'assistant', list);
@@ -509,7 +510,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const unitsClan = getUserClan();
             if (!unitsClan) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Tu n'as pas de clan !\n\n🏰 Crée ou rejoins un clan d'abord";
+                const response = "❌ Tu n'as pas de clan !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -518,63 +519,58 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const quantity = parseInt(args_parts[2]) || 1;
             
             if (!unitType) {
-                const totalPower = calculatePower(unitsClan);
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const unitsResponse = `⚔️ **ARMÉE DE ${unitsClan.name}**\n\n🗡️ **Guerriers:** ${unitsClan.units.w}\n   • Coût: 40💰 chacun\n   • Puissance de base: 10\n\n🏹 **Archers:** ${unitsClan.units.a}\n   • Coût: 60💰 chacun\n   • Puissance de base: 8\n\n🔮 **Mages:** ${unitsClan.units.m}\n   • Coût: 80💰 chacun\n   • Puissance de base: 15\n\n💰 **Trésorerie:** ${unitsClan.treasury} pièces\n⚡ **Puissance totale:** ~${Math.round(totalPower)}\n\n💡 **Acheter:** \`/clan units [type] [nombre]\`\n💡 **Exemples:** \`/clan units guerrier 5\` ou \`/clan units mage 2\``;
+                const unitsResponse = `⚔️ **UNITÉS DE ${unitsClan.name}**\n\n🗡️ Guerriers: ${unitsClan.units.w}\n🏹 Archers: ${unitsClan.units.a}\n🔮 Mages: ${unitsClan.units.m}\n\n💰 Trésorerie: ${unitsClan.treasury}\n\nAcheter: \`/clan units [type] [nombre]\`\nPrix: Guerrier 40💰 | Archer 60💰 | Mage 80💰`;
                 addToMemory(userId, 'assistant', unitsResponse);
                 return unitsResponse;
             }
             
             if (!isLeader()) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ **Réservé au chef**\n\nSeul le chef du clan peut acheter des unités.\n\n💡 *Demande à ton chef d'investir dans l'armée !*";
+                const response = "❌ Seul le chef peut acheter des unités !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             let cost = 0;
             let unitKey = '';
-            let unitName = '';
             
-            if (['guerrier', 'g', 'warrior', 'guerriers'].includes(unitType)) {
+            if (['guerrier', 'g', 'warrior'].includes(unitType)) {
                 cost = 40 * quantity;
                 unitKey = 'w';
-                unitName = 'guerrier';
-            } else if (['archer', 'a', 'archers'].includes(unitType)) {
+            } else if (['archer', 'a'].includes(unitType)) {
                 cost = 60 * quantity;
                 unitKey = 'a';
-                unitName = 'archer';
-            } else if (['mage', 'm', 'mages'].includes(unitType)) {
+            } else if (['mage', 'm'].includes(unitType)) {
                 cost = 80 * quantity;
                 unitKey = 'm';
-                unitName = 'mage';
             } else {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ **Type d'unité invalide**\n\nTypes disponibles:\n• `guerrier` ou `g`\n• `archer` ou `a`\n• `mage` ou `m`\n\n💡 *Exemple: `/clan units guerrier 5`*";
+                const response = "❌ Type invalide ! Utilise: guerrier, archer, ou mage";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             if (unitsClan.treasury < cost) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = `❌ **Fonds insuffisants**\n\nCoût: ${cost}💰\nDisponible: ${unitsClan.treasury}💰\nManque: ${cost - unitsClan.treasury}💰\n\n💡 *Gagne de l'or en remportant des batailles !*`;
+                const response = `❌ Fonds insuffisants ! Coût: ${cost}💰, Dispo: ${unitsClan.treasury}💰`;
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             unitsClan.treasury -= cost;
             unitsClan.units[unitKey] += quantity;
-            await save();
+            await save(); // ✅ CORRECTION: Sauvegarde asynchrone
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const buyResponse = `✅ **Achat réussi !**\n\n🎖️ ${quantity} ${unitName}${quantity > 1 ? 's' : ''} recruté${quantity > 1 ? 's' : ''}\n💰 Coût: ${cost} pièces\n💰 Reste: ${unitsClan.treasury} pièces\n\n⚡ *Votre armée est maintenant plus puissante !*`;
+            const buyResponse = `✅ ${quantity} ${unitType}(s) acheté(s) pour ${cost}💰 !\n💰 Reste: ${unitsClan.treasury}💰\n💾 Sauvegardé !`;
             addToMemory(userId, 'assistant', buyResponse);
             return buyResponse;
 
         case 'promote':
             if (!isLeader()) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ **Réservé au chef**\n\nSeul le chef actuel peut promouvoir un membre.\n\n💡 *Cette action transfère le leadership du clan*";
+                const response = "❌ Seul le chef peut promouvoir !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -582,7 +578,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const newLeader = args_parts[1]?.replace(/[<@!>]/g, '');
             if (!newLeader) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "⚔️ **Promouvoir un chef**\n\nUsage: `/clan promote @nouveau_chef`\nExemple: `/clan promote @John`\n\n⚠️ *Tu perdras ton statut de chef !*\n💡 *Choisis un membre actif et de confiance*";
+                const response = "⚔️ Usage: `/clan promote @nouveau_chef`";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -590,29 +586,23 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const promoteClan = getUserClan();
             if (!promoteClan.members.includes(newLeader)) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ **Membre introuvable**\n\nCette personne ne fait pas partie de ton clan.\n\n👥 *Vérifie avec `/clan info` la liste des membres*";
-                addToMemory(userId, 'assistant', response);
-                return response;
-            }
-            
-            if (newLeader === userId) {
-                addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ Tu es déjà le chef ! 😅";
+                const response = "❌ Cette personne n'est pas dans ton clan !";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
             
             promoteClan.leader = newLeader;
-            await save();
+            await save(); // ✅ CORRECTION: Sauvegarde asynchrone
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const promoteResponse = `👑 **Nouveau chef nommé !**\n\n${args_parts[1]} est maintenant le chef de **${promoteClan.name}**\n\n💡 *Tu es maintenant membre du clan*\n💡 *Le nouveau chef a tous les pouvoirs de gestion*`;
+            const promoteResponse = `👑 ${args_parts[1]} est le nouveau chef de **${promoteClan.name}** !\n💾 Sauvegardé !`;
             addToMemory(userId, 'assistant', promoteResponse);
             
             ctx.log.info(`👑 Nouveau chef: ${newLeader} pour le clan ${promoteClan.name} (${promoteClan.id})`);
             return promoteResponse;
 
         case 'stats':
+            // ✅ AJOUT: Statistiques des clans
             if (!ctx.isAdmin(userId)) {
                 addToMemory(userId, 'user', `/clan ${args}`);
                 const response = "❌ Commande réservée aux administrateurs !";
@@ -624,16 +614,15 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const totalMembers = Object.values(data.clans).reduce((sum, clan) => sum + clan.members.length, 0);
             const totalBattles = Object.keys(data.battles || {}).length;
             const averageLevel = totalClans > 0 ? (Object.values(data.clans).reduce((sum, clan) => sum + clan.level, 0) / totalClans).toFixed(1) : 0;
-            const topClans = Object.values(data.clans).sort((a, b) => b.level - a.level || b.xp - a.xp);
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const statsResponse = `📊 **STATISTIQUES ADMINISTRATEUR**\n\n🏰 **Clans totaux:** ${totalClans}\n👥 **Membres totaux:** ${totalMembers}\n⚔️ **Batailles totales:** ${totalBattles}\n📈 **Niveau moyen:** ${averageLevel}\n\n🔝 **Clan le plus fort:** ${topClans[0]?.name || 'Aucun'}\n📅 **Dernière MAJ:** ${new Date().toLocaleString()}\n\n💾 **Système opérationnel**`;
+            const statsResponse = `📊 **STATISTIQUES CLANS**\n\n🏰 Total clans: ${totalClans}\n👥 Total membres: ${totalMembers}\n⚔️ Total batailles: ${totalBattles}\n📈 Niveau moyen: ${averageLevel}\n💾 Sauvegardé sur GitHub\n\n🔝 Clan le plus fort: ${topClans[0]?.name || 'Aucun'}\n📅 Dernière mise à jour: ${new Date().toLocaleString()}`;
             addToMemory(userId, 'assistant', statsResponse);
             return statsResponse;
 
         case 'help':
             addToMemory(userId, 'user', `/clan ${args}`);
-            const helpResponse = `⚔️ **GUIDE COMPLET DES CLANS**\n\n🏰 **GESTION DE BASE**\n• \`/clan create [nom]\` - Créer un nouveau clan\n• \`/clan info\` - Voir les détails de ton clan\n• \`/clan list\` - Classement de tous les clans\n• \`/clan leave\` - Quitter ton clan\n\n👥 **GESTION DES MEMBRES**\n• \`/clan invite @user\` - Inviter quelqu'un (chef uniquement)\n• \`/clan join [id]\` - Rejoindre un clan sur invitation\n• \`/clan promote @user\` - Nommer un nouveau chef (chef uniquement)\n\n⚔️ **COMBAT ET STRATÉGIE**\n• \`/clan battle [id/nom]\` - Attaquer un autre clan\n• \`/clan units\` - Voir ton armée\n• \`/clan units [type] [nombre]\` - Acheter des unités (chef uniquement)\n\n💡 **CONSEILS POUR DÉBUTER**\n1️⃣ Crée ton clan ou rejoins-en un existant\n2️⃣ Recrute des membres pour être plus fort\n3️⃣ Achète des unités avec l'or du clan\n4️⃣ Attaque d'autres clans pour gagner XP et or\n5️⃣ Protège-toi après une défaite (2h de protection)\n\n🎯 **OBJECTIFS**\n• Montez de niveau en gagnant de l'XP\n• Accumulez de l'or pour votre armée\n• Dominez le classement des clans !\n\n🛡️ **RÈGLES IMPORTANTES**\n• Maximum 20 membres par clan\n• Protection de 2h après une défaite\n• Cooldown de 3 jours pour recréer un clan\n• Seuls les chefs peuvent inviter et acheter des unités`;
+            const helpResponse = `⚔️ **COMMANDES CLAN**\n\n🏰 **Base:**\n• \`/clan create [nom]\` - Créer\n• \`/clan info\` - Tes infos\n• \`/clan list\` - Top clans\n\n👥 **Membres:**\n• \`/clan invite @user\` - Inviter\n• \`/clan join [id]\` - Rejoindre\n• \`/clan leave\` - Quitter/dissoudre\n• \`/clan promote @user\` - Nouveau chef\n\n⚔️ **Combat:**\n• \`/clan battle [id]\` - Attaquer\n• \`/clan units\` - Voir/acheter unités\n\n💾 **Toutes tes données sont sauvegardées automatiquement sur GitHub !**\n💎 **Les IDs sont courts et faciles à retenir !**`;
             addToMemory(userId, 'assistant', helpResponse);
             return helpResponse;
 
@@ -641,14 +630,13 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const userClan = getUserClan();
             if (userClan) {
                 const protection = isProtected(userClan) ? '🛡️ Protégé' : '';
-                const isChief = isLeader() ? '👑 Chef' : '👤 Membre';
                 addToMemory(userId, 'user', `/clan ${args || 'info'}`);
-                const response = `🏰 **${userClan.name}** (${userClan.id})\n${isChief} • ⭐ Niveau ${userClan.level}\n👥 ${userClan.members.length}/20 • 💰 ${userClan.treasury} ${protection}\n\n💡 *Utilise \`/clan help\` pour voir toutes les commandes disponibles !*`;
+                const response = `🏰 **${userClan.name}** (${userClan.id})\n⭐ Niv.${userClan.level} • 👥 ${userClan.members.length}/20 • 💰 ${userClan.treasury} ${protection}\n\nTape \`/clan help\` pour toutes les options !\n💾 Données sauvegardées automatiquement`;
                 addToMemory(userId, 'assistant', response);
                 return response;
             } else {
                 addToMemory(userId, 'user', `/clan ${args || 'info'}`);
-                const response = `⚔️ **BIENVENUE DANS LE SYSTÈME DE CLANS !**\n\n🎯 **Tu n'as pas encore de clan**\n\n🚀 **POUR COMMENCER :**\n🏰 \`/clan create [nom]\` - Créer ton propre clan\n📜 \`/clan list\` - Voir les clans existants\n📨 \`/clan join\` - Voir tes invitations\n\n❓ **BESOIN D'AIDE ?**\n💡 \`/clan help\` - Guide complet et détaillé\n\n🌟 **POURQUOI REJOINDRE UN CLAN ?**\n• Combat contre d'autres clans\n• Progression en équipe\n• Gestion d'armée et de ressources\n• Classements et compétition\n\n🎮 *Commence dès maintenant ton aventure de clan !*`;
+                const response = `⚔️ **SYSTÈME DE CLANS**\n\nTu n'as pas de clan !\n\n🏰 \`/clan create [nom]\` - Créer ton clan\n📜 \`/clan list\` - Voir tous les clans\n❓ \`/clan help\` - Aide complète\n\n💾 **Toutes les données sont sauvegardées automatiquement sur GitHub !**`;
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
