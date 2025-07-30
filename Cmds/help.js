@@ -7,9 +7,9 @@
 module.exports = async function cmdHelp(senderId, args, ctx) {
     const { isAdmin } = ctx;
     
-    let text = `╔══════════════════════════╗
+    let text = `╔═══════════╗
 ║ 🤖 NAKAMABOT v4.0 HELP 🤖 ║
-╚══════════════════════════╝
+╚═══════════╝
 
 ✨ COMMANDES PRINCIPALES:
 
