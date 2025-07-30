@@ -10,6 +10,7 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
     const commands = {
         "/start": "🤖 Ma présentation toute mignonne",
         "/music": "🎵 Recherche et partage un lien YouTube vers la musique souhaitée, même si le titre est mal écrit",
+        "/clan": "🛡️ Organise, rejoins ou attaque des clans dans un univers de guerre virtuelle où stratégie et domination font la loi",
         "/image [description]": "🎨 Je crée des images magnifiques avec l'IA !",
         "/anime": "🎭 Je transforme ta dernière image en style anime !",
         "/vision": "👁️ Je décris ce que je vois sur ta dernière image !",
