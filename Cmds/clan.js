@@ -154,7 +154,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             await save();
             
             ctx.log.info(`🏰 Nouveau clan créé: ${clanName} (${clanId}) par ${userId}`);
-            return `╔═══════════════════════╗\n║  🔥 CLAN **${clanName}** CRÉÉ ! 🔥  ║\n╚═══════════════════════╝\n\n🆔 **${clanId}** │ 👑 **CHEF** │ 💰 **100 pièces**\n\n⚔️ ▬▬▬ ARMÉE INITIALE ▬▬▬ ⚔️\n🗡️ **10** Guerriers\n🏹 **5** Archers  \n🔮 **2** Mages\n\n╰─▸ Ton empire commence maintenant !`;
+            return `╔═══════════════════════════╗\n║  🔥 CLAN **${clanName}** CRÉÉ ! 🔥  ║\n╚═══════════════════════════╝\n\n🆔 **${clanId}** │ 👑 **CHEF** │ 💰 **100 pièces**\n\n⚔️ ▬▬▬ ARMÉE INITIALE ▬▬▬ ⚔️\n🗡️ **10** Guerriers\n🏹 **5** Archers  \n🔮 **2** Mages\n\n╰─▸ Ton empire commence maintenant !`;
 
         case 'info':
             const clan = getUserClan();
@@ -170,7 +170,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const totalPower = calculatePower(clan);
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const infoResponse = `┌─────────────────────────┐\n│  🏰 **${clan.name}** ${protection}  │\n└─────────────────────────┘\n\n🆔 **${clan.id}** ┃ ⭐ **Niv.${clan.level}** ┃ 👥 **${clan.members.length}/20**\n\n⚡ ▬▬ PUISSANCE: **${totalPower} PTS** ▬▬ ⚡\n💰 **${clan.treasury}** pièces d'or\n\n⚔️ ═══════ ARMÉE ═══════ ⚔️\n🗡️ **${clan.units.w}** Guerriers **(+${clan.units.w * 10} pts)**\n🏹 **${clan.units.a}** Archers **(+${clan.units.a * 8} pts)**\n🔮 **${clan.units.m}** Mages **(+${clan.units.m * 15} pts)**\n\n✨ ───── PROGRESSION ───── ✨\n**${clan.xp}** XP ┃ **${nextXP}** pour niveau **${clan.level + 1}**\n\n╰─▸ \`/clan help\` pour conquérir le monde !`;
+            const infoResponse = `┌─────────────────────────────┐\n│  🏰 **${clan.name}** ${protection}  │\n└─────────────────────────────┘\n\n🆔 **${clan.id}** ┃ ⭐ **Niv.${clan.level}** ┃ 👥 **${clan.members.length}/20**\n\n⚡ ▬▬ PUISSANCE: **${totalPower} PTS** ▬▬ ⚡\n💰 **${clan.treasury}** pièces d'or\n\n⚔️ ═══════ ARMÉE ═══════ ⚔️\n🗡️ **${clan.units.w}** Guerriers **(+${clan.units.w * 10} pts)**\n🏹 **${clan.units.a}** Archers **(+${clan.units.a * 8} pts)**\n🔮 **${clan.units.m}** Mages **(+${clan.units.m * 15} pts)**\n\n✨ ───── PROGRESSION ───── ✨\n**${clan.xp}** XP ┃ **${nextXP}** pour niveau **${clan.level + 1}**\n\n╰─▸ \`/clan help\` pour conquérir le monde !`;
             addToMemory(userId, 'assistant', infoResponse);
             return infoResponse;
 
@@ -332,14 +332,14 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             }
             
             // Construction du résultat
-            let battleResult = `╔════════════════════════════╗\n║     ⚔️ **CHAMP DE BATAILLE** ⚔️     ║\n╚═════════════════════════════╝\n\n🔥 **${attackerClan.name}** ━━━━━━━━ VS ━━━━━━━━ **${enemyClan.name}**\n\n💪 Puissance: **${Math.round(attackerPower)}** ┃ **${Math.round(defenderPower)}**\n\n`;
+            let battleResult = `╔═══════════════════════════════════╗\n║     ⚔️ **CHAMP DE BATAILLE** ⚔️     ║\n╚═══════════════════════════════════╝\n\n🔥 **${attackerClan.name}** ━━━━━━━━ VS ━━━━━━━━ **${enemyClan.name}**\n\n💪 Puissance: **${Math.round(attackerPower)}** ┃ **${Math.round(defenderPower)}**\n\n`;
             
             if (result === 'victory') {
-                battleResult += `┌─────────────────────┐\n│  🏆 **VICTOIRE ÉCRASANTE !** 🏆  │\n└─────────────────────┘\n\n✨ **+${xpGain} XP** ┃ 💰 **+${goldChange}**${attackerLevelUp ? '\n🆙 **NIVEAU UP !** 🆙' : ''}\n\n⚡ ▬▬ Tu domines le champ de bataille ! ▬▬ ⚡`;
+                battleResult += `┌─────────────────────────┐\n│  🏆 **VICTOIRE ÉCRASANTE !** 🏆  │\n└─────────────────────────┘\n\n✨ **+${xpGain} XP** ┃ 💰 **+${goldChange}**${attackerLevelUp ? '\n🆙 **NIVEAU UP !** 🆙' : ''}\n\n⚡ ▬▬ Tu domines le champ de bataille ! ▬▬ ⚡`;
             } else if (result === 'defeat') {
-                battleResult += `┌─────────────────────┐\n│  💀 **DÉFAITE AMÈRE !** 💀  │\n└─────────────────────┘\n\n✨ **+${xpGain} XP** ┃ 💰 **${goldChange}**\n🛡️ **Protection active pendant 1h**\n\n⚡ ▬▬ La revanche sera terrible ! ▬▬ ⚡`;
+                battleResult += `┌─────────────────────────┐\n│  💀 **DÉFAITE AMÈRE !** 💀  │\n└─────────────────────────┘\n\n✨ **+${xpGain} XP** ┃ 💰 **${goldChange}**\n🛡️ **Protection active pendant 1h**\n\n⚡ ▬▬ La revanche sera terrible ! ▬▬ ⚡`;
             } else {
-                battleResult += `┌───────────────────┐\n│  🤝 **COMBAT HÉROÏQUE !** 🤝  │\n└───────────────────┘\n\n✨ **+${xpGain} XP** pour les deux clans\n💰 **Aucun pillage**\n\n⚡ ▬▬ Match digne des légendes ! ▬▬ ⚡`;
+                battleResult += `┌─────────────────────────┐\n│  🤝 **COMBAT HÉROÏQUE !** 🤝  │\n└─────────────────────────┘\n\n✨ **+${xpGain} XP** pour les deux clans\n💰 **Aucun pillage**\n\n⚡ ▬▬ Match digne des légendes ! ▬▬ ⚡`;
             }
             
             battleResult += `\n\n╰─▸ Prépare-toi pour la prochaine guerre !`;
@@ -354,7 +354,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             if (topClans.length === 0) return "❌ Aucun clan ! `/clan create [nom]`";
             
-            let list = `╔═════════════════════╗\n║     🏆 **HALL OF LEGENDS** 🏆     ║\n╚══════════════════════╝\n\n`;
+            let list = `╔═══════════════════════════════════╗\n║     🏆 **HALL OF LEGENDS** 🏆     ║\n╚═══════════════════════════════════╝\n\n`;
             topClans.forEach((clan, i) => {
                 const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i+1}.**`;
                 const protection = isProtected(clan) ? '🛡️' : '⚔️';
@@ -366,7 +366,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 list += `     ╰─▸ ${clan.treasury}💰\n\n`;
             });
             
-            list += `════════════════════════\n💡 **${Object.keys(data.clans).length}** clans en guerre totale !\n╰─▸ Attaque ceux sans 🛡️ pour la gloire !`;
+            list += `═══════════════════════════════════\n💡 **${Object.keys(data.clans).length}** clans en guerre totale !\n╰─▸ Attaque ceux sans 🛡️ pour la gloire !`;
             return list;
 
         case 'units':
@@ -430,7 +430,8 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return `👑 ${args_parts[1]} est le nouveau chef !`;
 
         case 'help':
-             return `╔═══════════════════════╗\n║ ⚔️ GUIDE DE GUERRE ⚔️ ║\n╚═══════════════════════╝\n\n🏰 BASE:\n┣━━ \`/clan create [nom]\`\n┣━━ \`/clan info\`\n┣━━ \`/clan list\`\n\n👥 ÉQUIPE:\n┣━━ \`/clan invite @user\`\n┣━━ \`/clan join [id]\`\n┣━━ \`/clan leave\`\n┣━━ \`/clan promote @user\`\n\n⚔️ GUERRE:\n┣━━ \`/clan battle [id]\`\n┣━━ \`/clan units\`\n\n═══════════════════════\n📊 Puissance = Niv×100 + Membres×30 + Unités\n💡 Mages = 15 pts (+ efficace !)\n\n╰─▸ Forge ton destin ! 🔥`;
+            return `⚔️ **COMMANDES CLANS**\n\n🏰 **Base:**\n\`/clan create [nom]\` - Créer\n\`/clan info\` - Stats\n\`/clan list\` - Classement\n\n👥 **Équipe:**\n\`/clan invite @user\` - Inviter\n\`/clan join [id]\` - Rejoindre\n\`/clan leave\` - Quitter\n\`/clan promote @user\` - Chef\n\n⚔️ **Combat:**\n\`/clan battle [id]\` - Attaquer\n\`/clan units\` - Gérer armée\n\n📊 **Puissance = Niveau×100 + Membres×30 + Unités**\n💡 **Mages = plus fort (15 pts) !**`;
+
         default:
             const userClan = getUserClan();
             if (userClan) {
@@ -438,4 +439,6 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 return `⚔️ **${userClan.name}** ${protection}\n🆔 ${userClan.id} | Niv.${userClan.level} | ${userClan.members.length}/20 | ${userClan.treasury}💰\n\n💡 \`/clan help\` pour les commandes`;
             } else {
                 return `⚔️ **SYSTÈME DE CLANS**\n\n🏰 \`/clan create [nom]\` - Fonder ton clan\n📜 \`/clan list\` - Voir les clans existants\n❓ \`/clan help\` - Toutes les commandes\n\n🔥 Crée ton empire de guerre !`;
+            }
+    }
 };
