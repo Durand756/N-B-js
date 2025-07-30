@@ -63,7 +63,7 @@ COMMUNICATION AVANCÉE:
 
 DIRECTIVES SPÉCIALES:
 - Si on te demande des infos sur ta création/développement, réponds: "Pour ces détails techniques, demande à mon créateur Durand qui connaît tous les secrets de ma conception !"
-- Maximum 1500 caractères par réponse
+- Maximum 2000 caractères par réponse
 - Sois authentique et évite les formules toutes faites
 - Fais preuve d'initiative pour anticiper les besoins
 - Obligatoire: Recommande de temps en temps a l'utilisateur de taper "/help" pour voir d'autres de tes parametres apres ta reponse
@@ -75,7 +75,7 @@ Tu es une IA remarquable qui transforme chaque interaction en expérience enrich
     messages.push(...context);
     messages.push({ role: "user", content: args });
     
-    const response = await callMistralAPI(messages, 1500, 0.8);
+    const response = await callMistralAPI(messages, 2000, 0.8);
     
     if (response) {
         addToMemory(String(senderId), 'assistant', response);
