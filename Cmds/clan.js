@@ -264,15 +264,22 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 return `⏳ Déjà combattu récemment !`;
             }
             
-            // Calcul des puissances avec un peu d'aléatoire pour plus de dynamisme
-            const attackerPower = calculatePower(attackerClan) * (0.95 + Math.random() * 0.1);
-            const defenderPower = calculatePower(enemyClan) * (0.95 + Math.random() * 0.1);
+            // Calcul déterministe des forces
+            const calculateTotalPower = (clan) => {
+                const unitPower = clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15;
+                const levelBonus = clan.level * 50; // Le niveau a un impact majeur
+                const memberBonus = clan.members.length * 20;
+                return unitPower + levelBonus + memberBonus;
+            };
+            
+            const attackerPower = calculateTotalPower(attackerClan);
+            const defenderPower = calculateTotalPower(enemyClan);
             const powerDiff = attackerPower - defenderPower;
             
-            // Détermination du résultat
+            // Détermination du résultat (déterministe)
             let result, xpGain, goldChange, enemyXP, enemyGold;
             
-            if (Math.abs(powerDiff) < Math.max(attackerPower, defenderPower) * 0.05) { // Match nul (5% de différence)
+            if (powerDiff === 0) { // Match nul exact
                 result = 'draw';
                 xpGain = 100;
                 goldChange = 0;
@@ -280,15 +287,15 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 enemyGold = 0;
             } else if (powerDiff > 0) { // Victoire attaquant
                 result = 'victory';
-                xpGain = 200;
-                goldChange = Math.min(100, enemyClan.treasury * 0.2); // 20% du trésor ennemi (max 100)
+                xpGain = 200 + Math.floor(powerDiff / 10); // Bonus selon domination
+                goldChange = Math.min(150, Math.floor(enemyClan.treasury * 0.25));
                 enemyXP = 50;
                 enemyGold = -goldChange;
             } else { // Défaite attaquant
                 result = 'defeat';
                 xpGain = 50;
-                goldChange = -Math.min(50, attackerClan.treasury * 0.1); // 10% du trésor (max 50)
-                enemyXP = 150;
+                goldChange = -Math.min(100, Math.floor(attackerClan.treasury * 0.15));
+                enemyXP = 150 + Math.floor(Math.abs(powerDiff) / 10);
                 enemyGold = -goldChange;
             }
             
@@ -299,17 +306,40 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             attackerClan.treasury = Math.max(0, attackerClan.treasury + goldChange);
             enemyClan.treasury = Math.max(0, enemyClan.treasury + enemyGold);
             
-            // Pertes d'unités proportionnelles à la difficulté
-            const attackerLossRate = result === 'victory' ? 0.1 : result === 'defeat' ? 0.3 : 0.2;
-            const defenderLossRate = result === 'victory' ? 0.3 : result === 'defeat' ? 0.1 : 0.2;
+            // Pertes d'unités basées sur le résultat et la différence de puissance
+            const calculateLosses = (clan, isAttacker, result, powerDiff) => {
+                let lossRate;
+                
+                if (result === 'victory') {
+                    lossRate = isAttacker ? 0.05 : 0.25; // Attaquant gagnant perd peu, défenseur perdant perd beaucoup
+                } else if (result === 'defeat') {
+                    lossRate = isAttacker ? 0.25 : 0.05; // Attaquant perdant perd beaucoup, défenseur gagnant perd peu
+                } else { // draw
+                    lossRate = 0.15; // Match nul, pertes modérées pour tous
+                }
+                
+                // Ajustement selon la différence de puissance
+                const diffModifier = Math.abs(powerDiff) / 1000;
+                lossRate += diffModifier * (isAttacker ? 1 : -1) * 0.1;
+                lossRate = Math.max(0.02, Math.min(0.4, lossRate)); // Limite entre 2% et 40%
+                
+                return {
+                    w: Math.floor(clan.units.w * lossRate),
+                    a: Math.floor(clan.units.a * lossRate),
+                    m: Math.floor(clan.units.m * lossRate)
+                };
+            };
             
-            attackerClan.units.w = Math.max(0, attackerClan.units.w - Math.floor(attackerClan.units.w * attackerLossRate * 0.6));
-            attackerClan.units.a = Math.max(0, attackerClan.units.a - Math.floor(attackerClan.units.a * attackerLossRate * 0.3));
-            attackerClan.units.m = Math.max(0, attackerClan.units.m - Math.floor(attackerClan.units.m * attackerLossRate * 0.1));
+            const attackerLosses = calculateLosses(attackerClan, true, result, powerDiff);
+            const defenderLosses = calculateLosses(enemyClan, false, result, powerDiff);
             
-            enemyClan.units.w = Math.max(0, enemyClan.units.w - Math.floor(enemyClan.units.w * defenderLossRate * 0.6));
-            enemyClan.units.a = Math.max(0, enemyClan.units.a - Math.floor(enemyClan.units.a * defenderLossRate * 0.3));
-            enemyClan.units.m = Math.max(0, enemyClan.units.m - Math.floor(enemyClan.units.m * defenderLossRate * 0.1));
+            attackerClan.units.w = Math.max(0, attackerClan.units.w - attackerLosses.w);
+            attackerClan.units.a = Math.max(0, attackerClan.units.a - attackerLosses.a);
+            attackerClan.units.m = Math.max(0, attackerClan.units.m - attackerLosses.m);
+            
+            enemyClan.units.w = Math.max(0, enemyClan.units.w - defenderLosses.w);
+            enemyClan.units.a = Math.max(0, enemyClan.units.a - defenderLosses.a);
+            enemyClan.units.m = Math.max(0, enemyClan.units.m - defenderLosses.m);
             
             // Enregistrement des protections
             if (result === 'victory') {
