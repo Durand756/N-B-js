@@ -211,9 +211,22 @@ ${goldText}
             const nextXP = (clan.level * 1000) - clan.xp;
             const protection = isProtected(clan) ? '🛡️' : '';
             const totalPower = calculatePower(clan);
+            const isOwner = clan.leader === userId;
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const infoResponse = `╔═══════════╗\n║ 🏰 INFO 🏰 \n╚═══════════╝\n\n🏰 ${clan.name} ${protection}\n🆔 ${clan.id} | ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n⚡ Puissance: ${totalPower} pts\n💰 ${clan.treasury} pièces\n\n⚔️ ARMÉE:\n┣━━ 🗡️ ${clan.units.w} (+${clan.units.w * 10})\n┣━━ 🏹 ${clan.units.a} (+${clan.units.a * 8})\n┗━━ 🔮 ${clan.units.m} (+${clan.units.m * 15})\n\n✨ PROGRESSION:\n┣━━ ${clan.xp} XP\n┗━━ ${nextXP} pour niv.${clan.level + 1}\n\n╰─▸ /clan help pour commander`;
+            let infoResponse = `╔═══════════╗\n║ 🏰 INFO 🏰 \n╚═══════════╝\n\n🏰 ${clan.name} ${protection}\n🆔 ${clan.id} | ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n⚡ Puissance: ${totalPower} pts\n`;
+            
+            if (isOwner) {
+                infoResponse += `💰 ${clan.treasury} pièces\n`;
+            }
+            
+            infoResponse += `\n⚔️ ARMÉE:\n┣━━ 🗡️ ${clan.units.w} (+${clan.units.w * 10})\n┣━━ 🏹 ${clan.units.a} (+${clan.units.a * 8})\n┗━━ 🔮 ${clan.units.m} (+${clan.units.m * 15})\n\n`;
+            
+            if (isOwner) {
+                infoResponse += `✨ PROGRESSION:\n┣━━ ${clan.xp} XP\n┗━━ ${nextXP} pour niv.${clan.level + 1}\n\n`;
+            }
+            
+            infoResponse += `╰─▸ /clan help pour commander`;
             addToMemory(userId, 'assistant', infoResponse);
             return infoResponse;
 
@@ -370,7 +383,7 @@ ${goldText}
                 await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, attackerPower, defenderPower, result, enemyXP, enemyGold, defenderLosses);
             }
             
-            let battleResult = `╔═══════════╗\n║ ⚔️ CLASH ⚔️ \n╚═══════════╝\n\n🔥 ${attackerClan.name} VS ${enemyClan.name}\n\n📊 PUISSANCE DÉTAILLÉE:\n┣━━ 🏰 ${attackerClan.name}: ${Math.round(attackerPower)} pts\n┃   ├─ ⚔️ Unités: ${attackerClan.units.w * 10 + attackerClan.units.a * 8 + attackerClan.units.m * 15}\n┃   ├─ ⭐ Niveau: ${attackerClan.level * 100}\n┃   ├─ 👥 Membres: ${attackerClan.members.length * 50}\n┃   └─ ✨ XP: ${Math.floor(attackerClan.xp / 50) * 10}\n┗━━ 🏰 ${enemyClan.name}: ${Math.round(defenderPower)} pts\n    ├─ ⚔️ Unités: ${enemyClan.units.w * 10 + enemyClan.units.a * 8 + enemyClan.units.m * 15}\n    ├─ ⭐ Niveau: ${enemyClan.level * 100}\n    ├─ 👥 Membres: ${enemyClan.members.length * 50}\n    └─ ✨ XP: ${Math.floor(enemyClan.xp / 50) * 10}\n\n`;
+            let battleResult = `╔═══════════╗\n║ ⚔️ CLASH ⚔️ \n╚═══════════╝\n\n🔥 ${attackerClan.name} VS ${enemyClan.name}\n\n📊 PUISSANCE DÉTAILLÉE:\n┣━━ 🏰 ${attackerClan.name}: ${Math.round(attackerPower)} pts\n┃   ├─ ⚔️ Unités: ${attackerClan.units.w * 10 + attackerClan.units.a * 8 + attackerClan.units.m * 15}\n┃   ├─ ⭐ Niveau: ${attackerClan.level * 100}\n┃   ├─ 👥 Membres: ${attackerClan.members.length * 50}\n┃   └─ ✨ XP: ${Math.floor(attackerClan.xp / 50) * 10} (${attackerClan.xp} total)\n┗━━ 🏰 ${enemyClan.name}: ${Math.round(defenderPower)} pts\n    ├─ ⚔️ Unités: ${enemyClan.units.w * 10 + enemyClan.units.a * 8 + enemyClan.units.m * 15}\n    ├─ ⭐ Niveau: ${enemyClan.level * 100}\n    ├─ 👥 Membres: ${enemyClan.members.length * 50}\n    └─ ✨ XP: ${Math.floor(enemyClan.xp / 50) * 10} (${enemyClan.xp} total)\n\n`;
             
             if (result === 'victory') {
                 battleResult += `🏆 VICTOIRE ÉCRASANTE !\n✨ +${xpGain} XP | 💰 +${goldChange} or volé${attackerLevelUp ? '\n🆙 NIVEAU UP !' : ''}\n\n💀 TES PERTES:\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
@@ -404,7 +417,7 @@ ${goldText}
                 const protection = isProtected(clan) ? '🛡️' : '⚔️';
                 const totalPower = calculatePower(clan);
                 
-                list += `${medal} ${clan.name} ${protection}\n┣━━ 🆔 ${clan.id} | 📊 ${totalPower} pts\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ 💰 ${clan.treasury} | 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+                list += `${medal} ${clan.name} ${protection}\n┣━━ 🆔 ${clan.id} | 📊 ${totalPower} pts\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
             });
             
             list += `Total: ${Object.keys(data.clans).length} clans\n╰─▸ TOP 3 gagne des prix chaque semaine!`;
@@ -464,7 +477,15 @@ ${goldText}
             const userClan = getUserClan();
             if (userClan) {
                 const protection = isProtected(userClan) ? '🛡️' : '';
-                return `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 ${userClan.name} ${protection}\n🆔 ${userClan.id} | ⭐ Niv.${userClan.level}\n👥 ${userClan.members.length}/20 | 💰 ${userClan.treasury}\n\n╰─▸ /clan help pour commander`;
+                const isOwner = userClan.leader === userId;
+                let response = `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 ${userClan.name} ${protection}\n🆔 ${userClan.id} | ⭐ Niv.${userClan.level}\n👥 ${userClan.members.length}/20`;
+                
+                if (isOwner) {
+                    response += ` | 💰 ${userClan.treasury}`;
+                }
+                
+                response += `\n\n╰─▸ /clan help pour commander`;
+                return response;
             } else {
                 return `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 /clan create [nom]\n📜 /clan list\n❓ /clan help\n\n╰─▸ Crée ton empire !`;
             }
