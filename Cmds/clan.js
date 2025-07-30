@@ -437,6 +437,5 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 const protection = isProtected(userClan) ? '🛡️' : '';
                 return `⚔️ **${userClan.name}** ${protection}\n🆔 ${userClan.id} | Niv.${userClan.level} | ${userClan.members.length}/20 | ${userClan.treasury}💰\n\n💡 \`/clan help\` pour les commandes`;
             } else {
-                return `╔═══════════════════════╗\n║ ⚔️ SYSTÈME DE CLANS ⚔️ ║\n╚═══════════════════════╝\n\n🏰 \`/clan create [nom]\`\n📜 \`/clan list\`\n❓ \`/clan help\`\n\n╰─▸ Forge ton empire ! 🔥`;
-    }
+                return `⚔️ **SYSTÈME DE CLANS**\n\n🏰 \`/clan create [nom]\` - Fonder ton clan\n📜 \`/clan list\` - Voir les clans existants\n❓ \`/clan help\` - Toutes les commandes\n\n🔥 Crée ton empire de guerre !`;
 };
