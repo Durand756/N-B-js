@@ -60,9 +60,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     };
     
     const calculatePower = (clan) => {
-        const base = clan.level * 100 + clan.members.length * 30;
+        const base = clan.level * 100 + clan.members.length * 50;
         const units = clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15;
-        return base + units + Math.floor(clan.xp / 100) * 5;
+        const xpBonus = Math.floor(clan.xp / 50) * 10;
+        return base + units + xpBonus;
     };
     
     const isProtected = (clan) => {
@@ -146,10 +147,28 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         }
     };
     
-    const notifyAttack = async (defenderId, attackerName, defenderName, won) => {
-        const result = won ? 'victoire' : 'défaite';
+    const notifyAttack = async (defenderId, attackerName, defenderName, attackerPower, defenderPower, result, xpGained, goldChange, losses) => {
+        const resultText = result === 'victory' ? '🏆 VICTOIRE de l\'attaquant' : result === 'defeat' ? '💀 DÉFAITE de l\'attaquant' : '🤝 MATCH NUL';
+        const goldText = goldChange > 0 ? `💰 +${goldChange} or volé` : goldChange < 0 ? `💰 ${goldChange} or perdu` : '💰 Pas de pillage';
+        
+        const notification = `⚔️ TON CLAN ATTAQUÉ ! 
+        
+🔥 ${attackerName} VS ${defenderName}
+💪 ${Math.round(attackerPower)} pts vs ${Math.round(defenderPower)} pts
+
+${resultText}
+✨ +${xpGained} XP gagné
+${goldText}
+
+💀 PERTES SUBIES:
+┣━━ 🗡️ -${losses.w} guerriers
+┣━━ 🏹 -${losses.a} archers  
+┗━━ 🔮 -${losses.m} mages
+
+🛡️ Protection active 10min`;
+
         try {
-            await sendMessage(defenderId, `⚔️ ATTAQUE ! ${attackerName} contre ${defenderName} - ${result}`);
+            await sendMessage(defenderId, notification);
         } catch (err) {
             ctx.log.debug(`❌ Notification non envoyée à ${defenderId}`);
         }
@@ -279,9 +298,10 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             const calculateTotalPower = (clan) => {
                 const unitPower = clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15;
-                const levelBonus = clan.level * 50;
-                const memberBonus = clan.members.length * 20;
-                return unitPower + levelBonus + memberBonus;
+                const levelBonus = clan.level * 100; // Augmenté pour plus d'impact
+                const memberBonus = clan.members.length * 50; // Augmenté pour plus d'impact
+                const xpBonus = Math.floor(clan.xp / 50) * 10; // Bonus basé sur l'XP totale
+                return unitPower + levelBonus + memberBonus + xpBonus;
             };
             
             const attackerPower = calculateTotalPower(attackerClan);
@@ -347,17 +367,17 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             await save();
             
             if (enemyClan.members[0] !== userId) {
-                await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, result === 'victory');
+                await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, attackerPower, defenderPower, result, enemyXP, enemyGold, defenderLosses);
             }
             
-            let battleResult = `╔═══════════╗\n║ ⚔️ CLASH ⚔️ \n╚═══════════╝\n\n🔥 ${attackerClan.name} VS ${enemyClan.name}\n💪 ${Math.round(attackerPower)} pts | ${Math.round(defenderPower)} pts\n\n`;
+            let battleResult = `╔═══════════╗\n║ ⚔️ CLASH ⚔️ \n╚═══════════╝\n\n🔥 ${attackerClan.name} VS ${enemyClan.name}\n\n📊 PUISSANCE DÉTAILLÉE:\n┣━━ 🏰 ${attackerClan.name}: ${Math.round(attackerPower)} pts\n┃   ├─ ⚔️ Unités: ${attackerClan.units.w * 10 + attackerClan.units.a * 8 + attackerClan.units.m * 15}\n┃   ├─ ⭐ Niveau: ${attackerClan.level * 100}\n┃   ├─ 👥 Membres: ${attackerClan.members.length * 50}\n┃   └─ ✨ XP: ${Math.floor(attackerClan.xp / 50) * 10}\n┗━━ 🏰 ${enemyClan.name}: ${Math.round(defenderPower)} pts\n    ├─ ⚔️ Unités: ${enemyClan.units.w * 10 + enemyClan.units.a * 8 + enemyClan.units.m * 15}\n    ├─ ⭐ Niveau: ${enemyClan.level * 100}\n    ├─ 👥 Membres: ${enemyClan.members.length * 50}\n    └─ ✨ XP: ${Math.floor(enemyClan.xp / 50) * 10}\n\n`;
             
             if (result === 'victory') {
-                battleResult += `🏆 VICTOIRE !\n✨ +${xpGain} XP | 💰 +${goldChange}${attackerLevelUp ? '\n🆙 NIVEAU UP !' : ''}`;
+                battleResult += `🏆 VICTOIRE ÉCRASANTE !\n✨ +${xpGain} XP | 💰 +${goldChange} or volé${attackerLevelUp ? '\n🆙 NIVEAU UP !' : ''}\n\n💀 TES PERTES:\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
             } else if (result === 'defeat') {
-                battleResult += `💀 DÉFAITE !\n✨ +${xpGain} XP | 💰 ${goldChange}\n🛡️ Protection 10min`;
+                battleResult += `💀 DÉFAITE AMÈRE !\n✨ +${xpGain} XP | 💰 ${goldChange} or perdu\n\n💀 TES LOURDES PERTES:\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
             } else {
-                battleResult += `🤝 MATCH NUL !\n✨ +${xpGain} XP chacun\n💰 Pas de pillage`;
+                battleResult += `🤝 MATCH NUL ÉPIQUE !\n✨ +${xpGain} XP chacun\n💰 Pas de pillage\n\n💀 TES PERTES:\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
             }
             
             battleResult += `\n\n╰─▸ Prépare la revanche !`;
@@ -438,7 +458,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return `╔═══════════╗\n║ 🔍 USER 🔍 \n╚═══════════╝\n\n👤 Ton ID utilisateur\n🆔 ${userId}\n\n╰─▸ Copie cet ID pour les invitations !`;
 
         case 'help':
-            return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┣━━ /clan promote @user\n┗━━ /clan userid\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n🎁 BONUS:\n┣━━ TOP 3 hebdomadaire = prix\n┗━━ Clans pauvres = aide quotidienne\n\n═══════════\n📊 Puissance = Niv×100 + Membres×30\n💡 Mages = 15 pts (+ efficace !)\n🔒 Seul le clan attaqué est protégé\n\n╰─▸ Forge ton destin ! 🔥`;
+            return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┣━━ /clan promote @user\n┗━━ /clan userid\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n🎁 BONUS:\n┣━━ TOP 3 hebdomadaire = prix\n┗━━ Clans pauvres = aide quotidienne\n\n═══════════\n📊 Puissance = Niv×100 + Membres×50 + XP/50×10\n💡 Mages = 15 pts (+ efficace !)\n🔒 Seul le clan attaqué est protégé\n\n╰─▸ Forge ton destin ! 🔥`;
 
         default:
             const userClan = getUserClan();
