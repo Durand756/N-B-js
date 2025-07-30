@@ -357,3 +357,4 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 return `⚔️ **BIENVENUE DANS LE SYSTÈME DE CLANS !**\n\nTu n'as pas encore de clan. Voici comment commencer :\n\n🏰 \`/clan create [nom]\` - Créer ton propre clan\n📜 \`/clan list\` - Voir tous les clans existants\n❓ \`/clan help\` - Guide complet des commandes\n\n💎 **Astuce:** Commence par créer ton clan, puis invite des amis pour devenir plus fort !`;
     }
 };
+};
