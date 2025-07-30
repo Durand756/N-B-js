@@ -9,11 +9,12 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     
     // Initialisation des données
     const initClanData = () => ({
-        clans: {}, // {id: {id, name, leader, members: [], level, xp, treasury, units: {w, a, m}, lastDefeat, lastVictory}}
+        clans: {}, // {id: {id, name, leader, members: [], level, xp, treasury, units: {w, a, m}, lastDefeat, lastVictory, lastDailyReward}}
         userClans: {}, // {userId: clanId}
         battles: {}, // Historique des batailles
         invites: {}, // {userId: [clanIds]}
         deletedClans: {}, // {userId: deleteTimestamp} - cooldown 3 jours
+        weeklyRewards: {}, // {week: {top1: clanId, top2: clanId, top3: clanId, timestamp}}
         counter: 0
     });
     
@@ -85,8 +86,8 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     };
     
     const isProtected = (clan) => {
-        if (clan.lastDefeat && (Date.now() - clan.lastDefeat) < (60 * 60 * 1000)) return true; // 1h après défaite
-        if (clan.lastVictory && (Date.now() - clan.lastVictory) < (60 * 60 * 1000)) return true; // 1h après victoire
+        if (clan.lastDefeat && (Date.now() - clan.lastDefeat) < (10 * 60 * 1000)) return true; // 10min après défaite
+        if (clan.lastVictory && (Date.now() - clan.lastVictory) < (5 * 60 * 1000)) return true; // 5min après victoire
         return false;
     };
     
@@ -95,7 +96,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         const lastBattleKey = `${attackerClan.id}-${defenderClan.id}`;
         const lastBattleTime = data.battles[lastBattleKey];
         
-        return !lastBattleTime || (Date.now() - lastBattleTime) >= (60 * 60 * 1000); // 1h cooldown
+        return !lastBattleTime || (Date.now() - lastBattleTime) >= (10 * 60 * 1000); // 10min cooldown
     };
     
     const addXP = (clan, amount) => {
@@ -106,6 +107,72 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return true;
         }
         return false;
+    };
+    
+    // Récompense quotidienne automatique pour les clans à 0 pièces
+    const checkDailyReward = async (clan) => {
+        if (clan.treasury > 0) return false;
+        
+        const now = Date.now();
+        const oneDayMs = 24 * 60 * 60 * 1000;
+        
+        if (!clan.lastDailyReward || (now - clan.lastDailyReward) >= oneDayMs) {
+            const reward = Math.floor(Math.random() * 41) + 60; // 60-100 pièces
+            clan.treasury += reward;
+            clan.lastDailyReward = now;
+            await save();
+            
+            // Notifier le leader
+            try {
+                await sendMessage(clan.leader, `💰 AIDE D'URGENCE ! Ton clan ${clan.name} a reçu ${reward} pièces !`);
+            } catch (err) {
+                ctx.log.debug(`❌ Notification de récompense non envoyée à ${clan.leader}`);
+            }
+            
+            return reward;
+        }
+        return false;
+    };
+    
+    // Système de récompenses hebdomadaires
+    const checkWeeklyRewards = async () => {
+        const now = Date.now();
+        const currentWeek = Math.floor(now / (7 * 24 * 60 * 60 * 1000));
+        
+        if (!data.weeklyRewards[currentWeek]) {
+            // Calculer le top 3 de la semaine précédente
+            const topClans = Object.values(data.clans)
+                .sort((a, b) => calculatePower(b) - calculatePower(a))
+                .slice(0, 3);
+            
+            if (topClans.length >= 3) {
+                const rewards = [500, 300, 150]; // Récompenses pour top 1, 2, 3
+                const medals = ['🥇', '🥈', '🥉'];
+                
+                data.weeklyRewards[currentWeek] = {
+                    top1: topClans[0].id,
+                    top2: topClans[1].id,
+                    top3: topClans[2].id,
+                    timestamp: now
+                };
+                
+                // Distribuer les récompenses
+                for (let i = 0; i < 3; i++) {
+                    topClans[i].treasury += rewards[i];
+                    
+                    // Notifier le clan gagnant
+                    try {
+                        await sendMessage(topClans[i].leader, 
+                            `🏆 RÉCOMPENSE HEBDOMADAIRE ! ${medals[i]} ${topClans[i].name} reçoit ${rewards[i]} pièces pour être ${i+1}er au classement !`);
+                    } catch (err) {
+                        ctx.log.debug(`❌ Notification de récompense hebdomadaire non envoyée à ${topClans[i].leader}`);
+                    }
+                }
+                
+                await save();
+                ctx.log.info(`🏆 Récompenses hebdomadaires distribuées - Semaine ${currentWeek}`);
+            }
+        }
     };
     
     const save = async () => {
@@ -123,6 +190,9 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             ctx.log.debug(`❌ Notification non envoyée à ${defenderId}`);
         }
     };
+    
+    // Vérifier les récompenses hebdomadaires au démarrage
+    await checkWeeklyRewards();
     
     // === COMMANDES ===
     
@@ -148,7 +218,8 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 level: 1, xp: 0, treasury: 100,
                 units: { w: 10, a: 5, m: 2 }, 
                 lastDefeat: null,
-                lastVictory: null
+                lastVictory: null,
+                lastDailyReward: null
             };
             data.userClans[userId] = clanId;
             await save();
@@ -165,12 +236,21 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 return response;
             }
             
+            // Vérifier la récompense quotidienne
+            const dailyReward = await checkDailyReward(clan);
+            
             const nextXP = (clan.level * 1000) - clan.xp;
             const protection = isProtected(clan) ? '🛡️' : '';
             const totalPower = calculatePower(clan);
             
             addToMemory(userId, 'user', `/clan ${args}`);
-            const infoResponse = `╔═══════════╗\n║ 🏰 INFO 🏰 \n╚═══════════╝\n\n🏰 ${clan.name} ${protection}\n🆔 ${clan.id} | ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n⚡ Puissance: ${totalPower} pts\n💰 ${clan.treasury} pièces\n\n⚔️ ARMÉE:\n┣━━ 🗡️ ${clan.units.w} (+${clan.units.w * 10})\n┣━━ 🏹 ${clan.units.a} (+${clan.units.a * 8})\n┗━━ 🔮 ${clan.units.m} (+${clan.units.m * 15})\n\n✨ PROGRESSION:\n┣━━ ${clan.xp} XP\n┗━━ ${nextXP} pour niv.${clan.level + 1}\n\n╰─▸ /clan help pour commander`;
+            let infoResponse = `╔═══════════╗\n║ 🏰 INFO 🏰 \n╚═══════════╝\n\n🏰 ${clan.name} ${protection}\n🆔 ${clan.id} | ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n⚡ Puissance: ${totalPower} pts\n💰 ${clan.treasury} pièces\n\n⚔️ ARMÉE:\n┣━━ 🗡️ ${clan.units.w} (+${clan.units.w * 10})\n┣━━ 🏹 ${clan.units.a} (+${clan.units.a * 8})\n┗━━ 🔮 ${clan.units.m} (+${clan.units.m * 15})\n\n✨ PROGRESSION:\n┣━━ ${clan.xp} XP\n┗━━ ${nextXP} pour niv.${clan.level + 1}`;
+            
+            if (dailyReward) {
+                infoResponse += `\n\n💰 BONUS QUOTIDIEN: +${dailyReward} pièces !`;
+            }
+            
+            infoResponse += `\n\n╰─▸ /clan help pour commander`;
             addToMemory(userId, 'assistant', infoResponse);
             return infoResponse;
 
@@ -277,7 +357,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const powerDiff = attackerPower - defenderPower;
             
             // Détermination du résultat (déterministe)
-            let result, xpGain, goldChange, enemyXP, enemyGold;
+            let result, xpGain, goldChange, enemyXP, enemyGold, protectionTime;
             
             if (powerDiff === 0) { // Match nul exact
                 result = 'draw';
@@ -285,18 +365,21 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 goldChange = 0;
                 enemyXP = 100;
                 enemyGold = 0;
+                protectionTime = 8; // 8 minutes pour match nul
             } else if (powerDiff > 0) { // Victoire attaquant
                 result = 'victory';
                 xpGain = 200 + Math.floor(powerDiff / 10); // Bonus selon domination
                 goldChange = Math.min(150, Math.floor(enemyClan.treasury * 0.25));
                 enemyXP = 50;
                 enemyGold = -goldChange;
+                protectionTime = Math.abs(powerDiff) > 200 ? 10 : 5; // Plus de dégâts = plus de protection
             } else { // Défaite attaquant
                 result = 'defeat';
                 xpGain = 50;
                 goldChange = -Math.min(100, Math.floor(attackerClan.treasury * 0.15));
                 enemyXP = 150 + Math.floor(Math.abs(powerDiff) / 10);
                 enemyGold = -goldChange;
+                protectionTime = Math.abs(powerDiff) > 200 ? 10 : 5;
             }
             
             // Application des gains/pertes
@@ -341,7 +424,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             enemyClan.units.a = Math.max(0, enemyClan.units.a - defenderLosses.a);
             enemyClan.units.m = Math.max(0, enemyClan.units.m - defenderLosses.m);
             
-            // Enregistrement des protections
+            // Enregistrement des protections avec temps adaptatif
             if (result === 'victory') {
                 attackerClan.lastVictory = Date.now();
                 enemyClan.lastDefeat = Date.now();
@@ -367,9 +450,9 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             if (result === 'victory') {
                 battleResult += `🏆 VICTOIRE !\n✨ +${xpGain} XP | 💰 +${goldChange}${attackerLevelUp ? '\n🆙 NIVEAU UP !' : ''}`;
             } else if (result === 'defeat') {
-                battleResult += `💀 DÉFAITE !\n✨ +${xpGain} XP | 💰 ${goldChange}\n🛡️ Protection 1h`;
+                battleResult += `💀 DÉFAITE !\n✨ +${xpGain} XP | 💰 ${goldChange}\n🛡️ Protection ${protectionTime}min`;
             } else {
-                battleResult += `🤝 MATCH NUL !\n✨ +${xpGain} XP chacun\n💰 Pas de pillage`;
+                battleResult += `🤝 MATCH NUL !\n✨ +${xpGain} XP chacun\n💰 Pas de pillage\n🛡️ Protection ${protectionTime}min`;
             }
             
             battleResult += `\n\n╰─▸ Prépare la revanche !`;
@@ -378,37 +461,41 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return battleResult;
 
         case 'list':
-    const topClans = Object.values(data.clans)
-        .sort((a, b) => calculatePower(b) - calculatePower(a))
-        .slice(0, 10);
-    
-        if (topClans.length === 0) return "❌ Aucun clan ! `/clan create [nom]`";
-    
-        let list = `╔═══════════╗\n║ 🏆 TOP 🏆 \n╚═══════════╝\n\n`;
-        topClans.forEach((clan, i) => {
-            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
-            const protection = isProtected(clan) ? '🛡️' : '⚔️';
-            const totalPower = calculatePower(clan);
+            const topClans = Object.values(data.clans)
+                .sort((a, b) => calculatePower(b) - calculatePower(a))
+                .slice(0, 10);
         
-            list += `${medal} ${clan.name} ${protection}\n`;
-            list += `┣━━ 🆔 ${clan.id} | 📊 ${totalPower} pts\n`;
-            list += `┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n`;
-            list += `┣━━ 💰 ${clan.treasury} | 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n`;
-            list += `┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-        });
-    
-        list += `Total: ${Object.keys(data.clans).length} clans\n╰─▸ Attaque ceux sans le bouclier(🛡️). Ils viennent de finir une guerre!`;
-        return list;
+            if (topClans.length === 0) return "❌ Aucun clan ! `/clan create [nom]`";
+        
+            let list = `╔═══════════╗\n║ 🏆 TOP 🏆 \n╚═══════════╝\n\n`;
+            topClans.forEach((clan, i) => {
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+                const protection = isProtected(clan) ? '🛡️' : '⚔️';
+                const totalPower = calculatePower(clan);
+                const weeklyReward = i < 3 ? ' 💎' : ''; // Indicateur de récompense hebdomadaire
+            
+                list += `${medal} ${clan.name} ${protection}${weeklyReward}\n`;
+                list += `┣━━ 🆔 ${clan.id} | 📊 ${totalPower} pts\n`;
+                list += `┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n`;
+                list += `┣━━ 💰 ${clan.treasury} | 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n`;
+                list += `┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+            });
+        
+            list += `Total: ${Object.keys(data.clans).length} clans\n💎 Top 3 reçoivent des récompenses hebdomadaires !\n╰─▸ Attaque ceux sans bouclier 🛡️`;
+            return list;
 
         case 'units':
             const unitsClan = getUserClan();
             if (!unitsClan) return "❌ Pas de clan !";
             
+            // Vérifier la récompense quotidienne
+            await checkDailyReward(unitsClan);
+            
             const unitType = args_parts[1]?.toLowerCase();
             const quantity = parseInt(args_parts[2]) || 1;
             
             if (!unitType) {
-                return `╔═══════════╗\n║ ⚔️ ARMÉE ⚔️ \n╚═══════════╝\n\n🏰 ${unitsClan.name}\n💰 ${unitsClan.treasury} pièces\n\n📊 UNITÉS:\n┣━━ 🗡️ ${unitsClan.units.w} guerriers (+${unitsClan.units.w * 10})\n┣━━ 🏹 ${unitsClan.units.a} archers (+${unitsClan.units.a * 8})\n┗━━ 🔮 ${unitsClan.units.m} mages (+${unitsClan.units.m * 15})\n\n🛒 PRIX:\n┣━━ guerrier: 40💰\n┣━━ archer: 60💰\n┗━━ mage: 80💰\n\n╰─▸ /clan units [type] [nb]`;
+                return `╔═══════════╗\n║ ⚔️ ARMÉE ⚔️ \n╚═══════════╝\n\n🏰 ${unitsClan.name}\n💰 ${unitsClan.treasury} pièces\n\n📊 UNITÉS:\n┣━━ 🗡️ ${unitsClan.units.w} guerriers (+${unitsClan.units.w * 10})\n┣━━ 🏹 ${unitsClan.units.a} archers (+${unitsClan.units.a * 8})\n┗━━ 🔮 ${unitsClan.units.m} mages (+${unitsClan.units.m * 15})\n\n🛒 PRIX:\n┣━━ guerrier: 40💰\n┣━━ archer: 60💰\n┗━━ mage: 80💰\n\n💡 Clan à 0💰 = aide quotidienne !\n╰─▸ /clan units [type] [nb]`;
             }
             
             if (!isLeader()) return "❌ Chef seulement !";
@@ -460,15 +547,46 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             ctx.log.info(`👑 Nouveau chef: ${newLeader} pour le clan ${promoteClan.name} (${promoteClan.id})`);
             return `╔═══════════╗\n║ 👑 CHEF 👑 \n╚═══════════╝\n\n🏰 ${promoteClan.name}\n👑 ${args_parts[1]} est le nouveau chef\n\n╰─▸ Longue vie au roi !`;
 
+        case 'rewards':
+            // Afficher l'historique des récompenses hebdomadaires
+            const currentWeek = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
+            const recentWeeks = Object.keys(data.weeklyRewards)
+                .map(w => parseInt(w))
+                .filter(w => w >= currentWeek - 4)
+                .sort((a, b) => b - a)
+                .slice(0, 3);
+            
+            if (recentWeeks.length === 0) {
+                return `╔═══════════╗\n║ 🏆 PRIX 🏆 \n╚═══════════╝\n\n💎 RÉCOMPENSES HEBDOMADAIRES:\n┣━━ 🥇 1er: 500💰\n┣━━ 🥈 2ème: 300💰\n┗━━ 🥉 3ème: 150💰\n\n⏰ Aucun historique disponible\n╰─▸ Soyez dans le top 3 !`;
+            }
+            
+            let rewardsList = `╔═══════════╗\n║ 🏆 PRIX 🏆 \n╚═══════════╝\n\n💎 RÉCOMPENSES HEBDOMADAIRES:\n┣━━ 🥇 1er: 500💰\n┣━━ 🥈 2ème: 300💰\n┗━━ 🥉 3ème: 150💰\n\n📜 HISTORIQUE:\n`;
+            
+            recentWeeks.forEach((week, i) => {
+                const reward = data.weeklyRewards[week];
+                const weekDate = new Date(week * 7 * 24 * 60 * 60 * 1000).toLocaleDateString();
+                
+                rewardsList += `\n🗓️ Semaine ${week}\n`;
+                if (data.clans[reward.top1]) rewardsList += `┣━━ 🥇 ${data.clans[reward.top1].name}\n`;
+                if (data.clans[reward.top2]) rewardsList += `┣━━ 🥈 ${data.clans[reward.top2].name}\n`;
+                if (data.clans[reward.top3]) rewardsList += `┗━━ 🥉 ${data.clans[reward.top3].name}\n`;
+            });
+            
+            rewardsList += `\n╰─▸ Dominez le classement !`;
+            return rewardsList;
+
         case 'help':
-             return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┗━━ /clan promote @user\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n═══════════\n📊 Puissance = Niv×100 + Membres×30\n💡 Mages = 15 pts (+ efficace !)\n\n╰─▸ Forge ton destin ! 🔥`;
+             return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┣━━ /clan list\n┗━━ /clan rewards\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┗━━ /clan promote @user\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n═══════════\n📊 Puissance = Niv×100 + Membres×30\n💡 Mages = 15 pts (+ efficace !)\n⏰ Protection: 5-10min selon dégâts\n💰 Aide quotidienne si 0 pièce\n🏆 Top 3 hebdomadaire = récompenses\n\n╰─▸ Forge ton destin ! 🔥`;
         default:
             const userClan = getUserClan();
             if (userClan) {
+                // Vérifier la récompense quotidienne
+                await checkDailyReward(userClan);
+                
                 const protection = isProtected(userClan) ? '🛡️' : '';
                 return `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 ${userClan.name} ${protection}\n🆔 ${userClan.id} | ⭐ Niv.${userClan.level}\n👥 ${userClan.members.length}/20 | 💰 ${userClan.treasury}\n\n╰─▸ /clan help pour commander`;
             } else {
-                return `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 /clan create [nom]\n📜 /clan list\n❓ /clan help\n\n╰─▸ Crée ton empire !`;
+                return `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 /clan create [nom]\n📜 /clan list\n🏆 /clan rewards\n❓ /clan help\n\n╰─▸ Crée ton empire !`;
             }
     }
 };
