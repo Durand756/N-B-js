@@ -479,6 +479,13 @@ ${goldText}
             return `╔═══════════╗\n║ 🔍 USER 🔍 \n╚═══════════╝\n\n👤 Ton ID utilisateur\n🆔 ${userId}\n\n╰─▸ Copie cet ID pour les invitations !`;
 
         case 'help':
+            // Envoyer l'image d'abord
+            try {
+                await sendMessage(userId, { image: 'imgs/clan.png' });
+            } catch (err) {
+                ctx.log.debug(`❌ Image clan.png non envoyée à ${userId}`);
+            }
+            
             return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┣━━ /clan promote @user\n┗━━ /clan userid\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n🎁 BONUS:\n┣━━ TOP 3 hebdomadaire = prix\n┗━━ Clans pauvres = aide quotidienne\n\n═══════════\n📊 Puissance = Niv×100 + Membres×50 + XP/50×10\n💡 Mages = 15 pts (+ efficace !)\n🔒 Seul le clan attaqué est protégé\n\n╰─▸ Forge ton destin ! 🔥`;
 
         default:
