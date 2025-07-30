@@ -9,7 +9,7 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
     
     let text = `╔═══════════╗
 ║ 🤖 NAKAMABOT v4.0║
-║ -----------HELP 🤖-----------║
+║ ----------HELP 🤖----------║
 ╚═══════════╝
 
 ✨ COMMANDES PRINCIPALES:
