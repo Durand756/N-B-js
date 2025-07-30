@@ -67,7 +67,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     };
     
     const isProtected = (clan) => {
-        const tenMin = 10 * 60 * 1000;
+        const tenMin = 10 * 60 * 1000; // 10 minutes
         return (clan.lastDefeat && (Date.now() - clan.lastDefeat) < tenMin) || 
                (clan.lastVictory && (Date.now() - clan.lastVictory) < tenMin);
     };
@@ -75,7 +75,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     const canAttack = (attackerClan, defenderClan) => {
         const lastBattleKey = `${attackerClan.id}-${defenderClan.id}`;
         const lastBattleTime = data.battles[lastBattleKey];
-        return !lastBattleTime || (Date.now() - lastBattleTime) >= (10 * 60 * 1000);
+        return !lastBattleTime || (Date.now() - lastBattleTime) >= (10 * 60 * 1000); // 10min cooldown
     };
     
     const addXP = (clan, amount) => {
@@ -102,7 +102,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             let rewardedClans = 0;
             for (const clan of Object.values(data.clans)) {
                 if (clan.treasury === 0) {
-                    const bonus = Math.floor(Math.random() * 41) + 60;
+                    const bonus = Math.floor(Math.random() * 41) + 60; // 60-100
                     clan.treasury = bonus;
                     rewardedClans++;
                 }
@@ -125,6 +125,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 .slice(0, 3);
             
             if (topClans.length >= 3) {
+                // Récompenses: 1er=500💰+200XP, 2e=300💰+150XP, 3e=200💰+100XP
                 const rewards = [
                     {gold: 500, xp: 200, medal: '🥇'},
                     {gold: 300, xp: 150, medal: '🥈'},
@@ -146,29 +147,34 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         }
     };
     
-    const notifyAttack = async (defenderId, attackerName, defenderName, result, xpGained, goldChange, losses) => {
+    const notifyAttack = async (defenderId, attackerName, defenderName, attackerPower, defenderPower, result, xpGained, goldChange, losses, isDefenderLeader) => {
         const resultText = result === 'victory' ? '🏆 VICTOIRE de l\'attaquant' : result === 'defeat' ? '💀 DÉFAITE de l\'attaquant' : '🤝 MATCH NUL';
         const goldText = goldChange > 0 ? `💰 +${goldChange} or volé` : goldChange < 0 ? `💰 ${goldChange} or perdu` : '💰 Pas de pillage';
         
-        let notification = `⚔️ TON CLAN ATTAQUÉ !\n\n🔥 ${attackerName} VS ${defenderName}\n\n${resultText}\n✨ +${xpGained} XP gagné\n${goldText}\n\n💀 PERTES SUBIES:\n┣━━ 🗡️ -${losses.w} guerriers\n┣━━ 🏹 -${losses.a} archers\n┗━━ 🔮 -${losses.m} mages\n\n🛡️ Protection active 10min`;
+        let notification = `⚔️ TON CLAN ATTAQUÉ ! 
+        
+🔥 ${attackerName} VS ${defenderName}`;
+
+        if (isDefenderLeader) {
+            notification += `\n💪 ${Math.round(attackerPower)} pts vs ${Math.round(defenderPower)} pts`;
+        }
+
+        notification += `\n\n${resultText}
+✨ +${xpGained} XP gagné
+${goldText}
+
+💀 PERTES SUBIES:
+┣━━ 🗡️ -${losses.w} guerriers
+┣━━ 🏹 -${losses.a} archers  
+┗━━ 🔮 -${losses.m} mages
+
+🛡️ Protection active 10min`;
 
         try {
             await sendMessage(defenderId, notification);
         } catch (err) {
             ctx.log.debug(`❌ Notification non envoyée à ${defenderId}`);
         }
-    };
-    
-    const getImagePath = () => {
-        try {
-            const fs = require('fs');
-            if (fs.existsSync('imgs/clan.png')) {
-                return 'imgs/clan.png';
-            }
-        } catch (err) {
-            ctx.log.debug('Image clan.png non trouvée');
-        }
-        return null;
     };
     
     // === COMMANDES ===
@@ -179,35 +185,28 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     
     switch (action) {
         case 'create':
-            // Créer un nouveau clan - Seuls les joueurs sans clan peuvent créer
             const clanName = args_parts.slice(1).join(' ');
-            if (!clanName) return "⚔️ **CRÉER UN CLAN**\n\n📝 `/clan create [nom]`\n💡 Crée ton propre clan et deviens chef !\n\n🏰 Exemple: `/clan create Les Dragons`";
-            if (getUserClan()) return "❌ Tu as déjà un clan ! Quitte-le d'abord avec `/clan leave`";
+            if (!clanName) return "⚔️ `/clan create [nom]`";
+            if (getUserClan()) return "❌ Tu as déjà un clan !";
             if (!canCreateClan()) {
                 const timeLeft = formatTime(3 * 24 * 60 * 60 * 1000 - (Date.now() - data.deletedClans[userId]));
-                return `❌ Tu dois attendre encore ${timeLeft} avant de recréer un clan`;
+                return `❌ Attends encore ${timeLeft}`;
             }
-            if (findClan(clanName)) return "❌ Ce nom est déjà pris ! Choisis-en un autre";
+            if (findClan(clanName)) return "❌ Nom déjà pris !";
             
             const clanId = generateId('clan');
-            data.clans[clanId] = { 
-                id: clanId, name: clanName, leader: userId, members: [userId], 
-                level: 1, xp: 0, treasury: 100, 
-                units: { w: 10, a: 5, m: 2 }, 
-                lastDefeat: null, lastVictory: null 
-            };
+            data.clans[clanId] = { id: clanId, name: clanName, leader: userId, members: [userId], level: 1, xp: 0, treasury: 100, units: { w: 10, a: 5, m: 2 }, lastDefeat: null, lastVictory: null };
             data.userClans[userId] = clanId;
             await save();
             
             ctx.log.info(`🏰 Nouveau clan créé: ${clanName} (${clanId}) par ${userId}`);
-            return `╔═══════════╗\n║ 🔥 CRÉÉ 🔥 \n╚═══════════╝\n\n🏰 ${clanName}\n🆔 ${clanId} | 👑 Chef | 💰 100\n\n⚔️ ARMÉE DE DÉPART:\n┣━━ 🗡️ 10 guerriers (+100 pts)\n┣━━ 🏹 5 archers (+40 pts)\n┗━━ 🔮 2 mages (+30 pts)\n\n╰─▸ Ton empire commence ! Recrute avec /clan invite`;
+            return `╔═══════════╗\n║ 🔥 CRÉÉ 🔥 \n╚═══════════╝\n\n🏰 ${clanName}\n🆔 ${clanId} | 👑 Chef | 💰 100\n\n⚔️ ARMÉE:\n┣━━ 🗡️ 10 guerriers\n┣━━ 🏹 5 archers\n┗━━ 🔮 2 mages\n\n╰─▸ Ton empire commence !`;
 
         case 'info':
-            // Afficher les informations détaillées de ton clan
             const clan = getUserClan();
             if (!clan) {
                 addToMemory(userId, 'user', `/clan ${args}`);
-                const response = "❌ **PAS DE CLAN**\n\n📝 Tu n'as pas de clan !\n🏰 Crée-en un: `/clan create [nom]`\n📜 Ou rejoins-en un: `/clan list` puis `/clan join [id]`";
+                const response = "❌ Pas de clan ! `/clan create [nom]`";
                 addToMemory(userId, 'assistant', response);
                 return response;
             }
@@ -224,53 +223,51 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 infoResponse += `⚡ Puissance: ${totalPower} pts\n💰 ${clan.treasury} pièces\n`;
             }
             
-            infoResponse += `\n⚔️ ARMÉE:\n┣━━ 🗡️ ${clan.units.w} guerriers (+${clan.units.w * 10} pts)\n┣━━ 🏹 ${clan.units.a} archers (+${clan.units.a * 8} pts)\n┗━━ 🔮 ${clan.units.m} mages (+${clan.units.m * 15} pts)\n\n`;
+            infoResponse += `\n⚔️ ARMÉE:\n┣━━ 🗡️ ${clan.units.w} (+${clan.units.w * 10})\n┣━━ 🏹 ${clan.units.a} (+${clan.units.a * 8})\n┗━━ 🔮 ${clan.units.m} (+${clan.units.m * 15})\n\n`;
             
             if (isOwner) {
-                infoResponse += `✨ PROGRESSION:\n┣━━ ${clan.xp} XP total\n┗━━ ${nextXP} XP pour niv.${clan.level + 1}\n\n`;
+                infoResponse += `✨ PROGRESSION:\n┣━━ ${clan.xp} XP\n┗━━ ${nextXP} pour niv.${clan.level + 1}\n\n`;
             }
             
-            infoResponse += `💡 **CONSEILS:**\n┣━━ Recrute des mages (+ puissants !)\n┣━━ Monte de niveau pour + de puissance\n┗━━ Invite des membres pour grossir\n\n╰─▸ /clan help pour toutes les commandes`;
+            infoResponse += `╰─▸ /clan help pour commander`;
             addToMemory(userId, 'assistant', infoResponse);
             return infoResponse;
 
         case 'invite':
-            // Inviter un joueur dans ton clan - Chef seulement
-            if (!isLeader()) return "❌ **CHEF UNIQUEMENT**\n\n👑 Seul le chef peut inviter !\n💡 Demande au chef de t'inviter ou quitte pour créer ton clan";
+            if (!isLeader()) return "❌ Chef seulement !";
             const targetUser = args_parts[1]?.replace(/[<@!>]/g, '');
-            if (!targetUser) return "⚔️ **INVITER UN JOUEUR**\n\n📝 `/clan invite @utilisateur`\n💡 Invite quelqu'un dans ton clan\n\n👥 Exemple: `/clan invite @ami123`\n📋 Ou: `/clan invite 1234567890` (ID utilisateur)";
+            if (!targetUser) return "⚔️ `/clan invite @user`";
             
             const inviterClan = getUserClan();
-            if (inviterClan.members.length >= 20) return "❌ Clan plein ! Maximum 20 membres";
-            if (data.userClans[targetUser]) return "❌ Cette personne a déjà un clan !";
+            if (inviterClan.members.length >= 20) return "❌ Clan plein !";
+            if (data.userClans[targetUser]) return "❌ Il a déjà un clan !";
             
             if (!data.invites[targetUser]) data.invites[targetUser] = [];
-            if (data.invites[targetUser].includes(inviterClan.id)) return "❌ Cette personne est déjà invitée !";
+            if (data.invites[targetUser].includes(inviterClan.id)) return "❌ Déjà invité !";
             
             data.invites[targetUser].push(inviterClan.id);
             await save();
-            return `╔═══════════╗\n║ 📨 INVITÉ 📨 \n╚═══════════╝\n\n🏰 Invitation envoyée !\n👤 ${args_parts[1]} peut maintenant rejoindre ${inviterClan.name}\n🆔 Code clan: ${inviterClan.id}\n\n💡 **Il peut utiliser:**\n┣━━ `/clan join ${inviterClan.id}`\n┗━━ `/clan join` (voir ses invitations)\n\n╰─▸ Attends qu'il accepte !`;
+            return `╔═══════════╗\n║ 📨 INVIT 📨 \n╚═══════════╝\n\n🏰 ${args_parts[1]} invité dans ${inviterClan.name}\n🆔 Code: ${inviterClan.id}\n\n╰─▸ Il peut faire /clan join ${inviterClan.id}`;
 
         case 'join':
-            // Rejoindre un clan via invitation ou liste
             const joinArg = args_parts[1];
             if (!joinArg) {
                 const myInvites = data.invites[userId] || [];
-                if (myInvites.length === 0) return "❌ **AUCUNE INVITATION**\n\n📭 Tu n'as pas d'invitations en attente\n📜 Regarde la liste: `/clan list`\n💬 Demande une invitation à un chef de clan";
+                if (myInvites.length === 0) return "❌ Aucune invitation !";
                 
-                let inviteList = "╔═══════════╗\n║ 📬 INVITATIONS 📬 \n╚═══════════╝\n\n";
+                let inviteList = "╔═══════════╗\n║ 📬 INVIT 📬 \n╚═══════════╝\n\n";
                 myInvites.forEach((clanId) => {
                     const c = data.clans[clanId];
-                    if (c) inviteList += `┣━━ 🏰 ${c.name}\n┃   🆔 ${clanId} | ⭐ Niv.${c.level}\n┃   👥 ${c.members.length}/20 membres\n┃   ⚡ ${calculatePower(c)} pts puissance\n┃\n`;
+                    if (c) inviteList += `┣━━ ${c.name} (${clanId})\n┃   ⭐ Niv.${c.level}\n`;
                 });
-                return inviteList + "\n💡 **REJOINDRE:**\n┗━━ `/clan join [id du clan]`";
+                return inviteList + "\n╰─▸ /clan join [id]";
             }
             
-            if (getUserClan()) return "❌ Tu as déjà un clan ! Quitte-le d'abord avec `/clan leave`";
+            if (getUserClan()) return "❌ Tu as déjà un clan !";
             const joinClan = findClan(joinArg);
-            if (!joinClan) return "❌ **CLAN INTROUVABLE**\n\n🔍 Ce clan n'existe pas ou plus\n📜 Vois la liste: `/clan list`\n🆔 Vérife l'ID ou le nom exact";
-            if (!data.invites[userId]?.includes(joinClan.id)) return "❌ **PAS INVITÉ**\n\n📭 Tu n'es pas invité dans ce clan\n💬 Demande une invitation au chef\n📜 Ou regardes d'autres clans: `/clan list`";
-            if (joinClan.members.length >= 20) return "❌ Ce clan est plein ! (20/20 membres)";
+            if (!joinClan) return "❌ Clan introuvable !";
+            if (!data.invites[userId]?.includes(joinClan.id)) return "❌ Pas invité !";
+            if (joinClan.members.length >= 20) return "❌ Clan plein !";
             
             joinClan.members.push(userId);
             data.userClans[userId] = joinClan.id;
@@ -278,17 +275,15 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             await save();
             
             ctx.log.info(`🏰 ${userId} a rejoint le clan: ${joinClan.name} (${joinClan.id})`);
-            return `╔═══════════╗\n║ 🔥 REJOINT 🔥 \n╚═══════════╝\n\n🏰 Bienvenue dans ${joinClan.name} !\n👥 ${joinClan.members.length}/20 guerriers\n⭐ Niveau ${joinClan.level} | ⚡ ${calculatePower(joinClan)} pts\n\n💡 **TES NOUVELLES COMMANDES:**\n┣━━ `/clan info` - Voir les détails\n┣━━ `/clan battle [id]` - Attaquer\n┗━━ `/clan leave` - Quitter si besoin\n\n╰─▸ Prêt pour la guerre !`;
+            return `╔═══════════╗\n║ 🔥 JOINT 🔥 \n╚═══════════╝\n\n🏰 ${joinClan.name}\n👥 ${joinClan.members.length}/20 guerriers\n\n╰─▸ Bienvenue dans la guerre !`;
 
         case 'leave':
-            // Quitter ton clan actuel
             const leaveClan = getUserClan();
-            if (!leaveClan) return "❌ **PAS DE CLAN**\n\n🏠 Tu n'as pas de clan à quitter\n🏰 Crée-en un: `/clan create [nom]`";
+            if (!leaveClan) return "❌ Pas de clan !";
             
-            if (isLeader() && leaveClan.members.length > 1) return "❌ **CHEF AVEC MEMBRES**\n\n👑 Tu es chef et tu as des membres !\n🔄 Nomme un successeur: `/clan promote @membre`\n💡 Ou attends que tous partent d'eux-mêmes";
+            if (isLeader() && leaveClan.members.length > 1) return "❌ Nomme un successeur ! `/clan promote @membre`";
             
             if (isLeader()) {
-                // Dissolution complète du clan
                 const clanName = leaveClan.name;
                 leaveClan.members.forEach(memberId => delete data.userClans[memberId]);
                 delete data.clans[leaveClan.id];
@@ -296,35 +291,32 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 await save();
                 
                 ctx.log.info(`🏰 Clan dissous: ${clanName} par ${userId}`);
-                return `╔═══════════╗\n║ 💥 DISSOUS 💥 \n╚═══════════╝\n\n🏰 ${clanName} n'existe plus\n⏰ Cooldown: 3 jours avant recréation\n\n💡 **MAINTENANT TU PEUX:**\n┣━━ `/clan list` - Voir d'autres clans\n┗━━ Attendre 3 jours pour recréer\n\n╰─▸ L'empire est tombé...`;
+                return `╔═══════════╗\n║ 💥 FINI 💥 \n╚═══════════╝\n\n🏰 ${clanName} n'existe plus\n⏰ Cooldown: 3 jours\n\n╰─▸ L'empire est tombé...`;
             } else {
-                // Départ simple
                 leaveClan.members = leaveClan.members.filter(id => id !== userId);
                 delete data.userClans[userId];
                 await save();
-                return `╔═══════════╗\n║ 👋 PARTI 👋 \n╚═══════════╝\n\n🏰 Tu quittes ${leaveClan.name}\n\n💡 **MAINTENANT TU PEUX:**\n┣━━ `/clan create [nom]` - Créer ton clan\n┣━━ `/clan list` - Voir d'autres clans\n┗━━ Demander des invitations\n\n╰─▸ Bonne chance guerrier !`;
+                return `╔═══════════╗\n║ 👋 PARTI 👋 \n╚═══════════╝\n\n🏰 Tu quittes ${leaveClan.name}\n\n╰─▸ Bonne chance guerrier !`;
             }
 
         case 'battle':
-            // Attaquer un autre clan pour gagner XP et or
             const attackerClan = getUserClan();
-            if (!attackerClan) return "❌ **PAS DE CLAN**\n\n⚔️ Tu dois avoir un clan pour combattre !\n🏰 Crée-en un: `/clan create [nom]`";
+            if (!attackerClan) return "❌ Pas de clan !";
             
             const enemyArg = args_parts[1];
-            if (!enemyArg) return "⚔️ **ATTAQUER UN CLAN**\n\n📝 `/clan battle [id ou nom]`\n💡 Attaque un clan pour gagner XP et or\n\n🎯 Exemple: `/clan battle ABC123`\n📜 Vois les cibles: `/clan list`\n\n💡 **ASTUCES:**\n┣━━ Plus tu es puissant, plus tu gagnes\n┣━━ Les mages donnent + de puissance\n┗━━ 10min de cooldown entre attaques";
+            if (!enemyArg) return "⚔️ `/clan battle [id]`";
             
             const enemyClan = findClan(enemyArg);
-            if (!enemyClan) return "❌ **ENNEMI INTROUVABLE**\n\n🔍 Ce clan n'existe pas\n📜 Vois la liste: `/clan list`\n🆔 Vérife l'ID ou le nom exact";
-            if (enemyClan.id === attackerClan.id) return "❌ Tu ne peux pas t'attaquer toi-même !";
-            if (isProtected(enemyClan)) return `🛡️ **CLAN PROTÉGÉ**\n\n⏰ ${enemyClan.name} est protégé suite à un combat récent\n🕙 Protection: 10 minutes après chaque bataille\n⏳ Réessaie plus tard`;
-            if (!canAttack(attackerClan, enemyClan)) return `⏳ **COOLDOWN ACTIF**\n\n🕙 Tu as déjà combattu ce clan récemment\n⏰ Attends 10 minutes entre chaque attaque\n🎯 Ou attaque un autre clan: \`/clan list\``;
+            if (!enemyClan) return "❌ Ennemi introuvable !";
+            if (enemyClan.id === attackerClan.id) return "❌ Pas d'auto-attaque !";
+            if (isProtected(enemyClan)) return `🛡️ ${enemyClan.name} protégé !`;
+            if (!canAttack(attackerClan, enemyClan)) return `⏳ Déjà combattu récemment !`;
             
-            // Calcul de puissance détaillé
             const calculateTotalPower = (clan) => {
                 const unitPower = clan.units.w * 10 + clan.units.a * 8 + clan.units.m * 15;
-                const levelBonus = clan.level * 100;
-                const memberBonus = clan.members.length * 50;
-                const xpBonus = Math.floor(clan.xp / 50) * 10;
+                const levelBonus = clan.level * 100; // Augmenté pour plus d'impact
+                const memberBonus = clan.members.length * 50; // Augmenté pour plus d'impact
+                const xpBonus = Math.floor(clan.xp / 50) * 10; // Bonus basé sur l'XP totale
                 return unitPower + levelBonus + memberBonus + xpBonus;
             };
             
@@ -354,7 +346,6 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             attackerClan.treasury = Math.max(0, attackerClan.treasury + goldChange);
             enemyClan.treasury = Math.max(0, enemyClan.treasury + enemyGold);
             
-            // Calcul des pertes d'unités
             const calculateLosses = (clan, isAttacker, result, powerDiff) => {
                 let lossRate = result === 'victory' ? (isAttacker ? 0.05 : 0.25) : 
                               result === 'defeat' ? (isAttacker ? 0.25 : 0.05) : 0.15;
@@ -381,7 +372,6 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             enemyClan.units.a = Math.max(0, enemyClan.units.a - defenderLosses.a);
             enemyClan.units.m = Math.max(0, enemyClan.units.m - defenderLosses.m);
             
-            // Gestion des protections
             if (result === 'victory') {
                 enemyClan.lastDefeat = Date.now();
             } else if (result === 'defeat') {
@@ -392,41 +382,39 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             data.battles[battleKey] = Date.now();
             await save();
             
-            // Notification au défenseur
             if (enemyClan.members[0] !== userId) {
-                await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, result, enemyXP, enemyGold, defenderLosses);
+                const isDefenderLeader = enemyClan.leader === enemyClan.members[0];
+                await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, attackerPower, defenderPower, result, enemyXP, enemyGold, defenderLosses, isDefenderLeader);
             }
             
-            // Résultat de bataille détaillé
             const isAttackerLeader = attackerClan.leader === userId;
-            let battleResult = `╔═══════════╗\n║ ⚔️ BATAILLE ⚔️ \n╚═══════════╝\n\n🔥 ${attackerClan.name} VS ${enemyClan.name}\n\n`;
+            let battleResult = `╔═══════════╗\n║ ⚔️ CLASH ⚔️ \n╚═══════════╝\n\n🔥 ${attackerClan.name} VS ${enemyClan.name}\n\n`;
             
             if (isAttackerLeader) {
-                battleResult += `📊 **PUISSANCES:**\n┣━━ 🏰 Toi: ${Math.round(attackerPower)} pts\n┗━━ 🏰 Ennemi: ${Math.round(defenderPower)} pts\n\n`;
+                battleResult += `📊 PUISSANCE DÉTAILLÉE:\n┣━━ 🏰 ${attackerClan.name}: ${Math.round(attackerPower)} pts\n┃   ├─ ⚔️ Unités: ${attackerClan.units.w * 10 + attackerClan.units.a * 8 + attackerClan.units.m * 15}\n┃   ├─ ⭐ Niveau: ${attackerClan.level * 100}\n┃   ├─ 👥 Membres: ${attackerClan.members.length * 50}\n┃   └─ ✨ XP: ${Math.floor(attackerClan.xp / 50) * 10} (${attackerClan.xp} total)\n┗━━ 🏰 ${enemyClan.name}: ${Math.round(defenderPower)} pts\n    ├─ ⚔️ Unités: ${enemyClan.units.w * 10 + enemyClan.units.a * 8 + enemyClan.units.m * 15}\n    ├─ ⭐ Niveau: ${enemyClan.level * 100}\n    ├─ 👥 Membres: ${enemyClan.members.length * 50}\n    └─ ✨ XP: ${Math.floor(enemyClan.xp / 50) * 10} (${enemyClan.xp} total)\n\n`;
             }
             
             if (result === 'victory') {
-                battleResult += `🏆 **VICTOIRE ÉCRASANTE !**\n✨ +${xpGain} XP gagné\n💰 +${goldChange} or pillé${attackerLevelUp ? '\n🆙 NIVEAU UP !' : ''}\n\n💀 **TES PERTES:**\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
+                battleResult += `🏆 VICTOIRE ÉCRASANTE !\n✨ +${xpGain} XP | 💰 +${goldChange} or volé${attackerLevelUp ? '\n🆙 NIVEAU UP !' : ''}\n\n💀 TES PERTES:\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
             } else if (result === 'defeat') {
-                battleResult += `💀 **DÉFAITE AMÈRE !**\n✨ +${xpGain} XP d'expérience\n💰 ${goldChange} or perdu\n\n💀 **TES LOURDES PERTES:**\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
+                battleResult += `💀 DÉFAITE AMÈRE !\n✨ +${xpGain} XP | 💰 ${goldChange} or perdu\n\n💀 TES LOURDES PERTES:\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
             } else {
-                battleResult += `🤝 **MATCH NUL ÉPIQUE !**\n✨ +${xpGain} XP pour tous\n💰 Pas de pillage\n\n💀 **TES PERTES:**\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
+                battleResult += `🤝 MATCH NUL ÉPIQUE !\n✨ +${xpGain} XP chacun\n💰 Pas de pillage\n\n💀 TES PERTES:\n┣━━ 🗡️ -${attackerLosses.w} guerriers\n┣━━ 🏹 -${attackerLosses.a} archers\n┗━━ 🔮 -${attackerLosses.m} mages`;
             }
             
-            battleResult += `\n\n💡 **CONSEILS:**\n┣━━ Recrute des unités: \`/clan units\`\n┣━━ Les mages sont + puissants\n┗━━ Monte de niveau pour + de force\n\n╰─▸ Prépare la revanche !`;
+            battleResult += `\n\n╰─▸ Prépare la revanche !`;
             ctx.log.info(`⚔️ Bataille: ${attackerClan.name} VS ${enemyClan.name} - ${result}`);
             return battleResult;
 
         case 'list':
-            // Voir le classement des clans les plus puissants
             const topClans = Object.values(data.clans).sort((a, b) => calculatePower(b) - calculatePower(a)).slice(0, 10);
-            if (topClans.length === 0) return "❌ **AUCUN CLAN**\n\n🏜️ Aucun clan n'existe encore !\n🏰 Sois le premier: `/clan create [nom]`\n👑 Deviens légendaire !";
+            if (topClans.length === 0) return "❌ Aucun clan ! Crée le tien ou rejoins un autre: `/clan create [nom]`";
             
-            let list = `╔═══════════╗\n║ 🏆 TOP CLANS 🏆 \n╚═══════════╝\n\n`;
+            let list = `╔═══════════╗\n║ 🏆 TOP 🏆 \n╚═══════════╝\n\n`;
             
             // Affichage des derniers gagnants hebdomadaires
             if (data.weeklyTop3 && data.weeklyTop3.length > 0) {
-                list += `🎉 **DERNIERS GAGNANTS HEBDO:**\n`;
+                list += `🎉 DERNIERS GAGNANTS:\n`;
                 data.weeklyTop3.forEach(winner => {
                     list += `${winner.medal} ${winner.name}\n`;
                 });
@@ -436,112 +424,85 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             topClans.forEach((clan, i) => {
                 const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
                 const protection = isProtected(clan) ? '🛡️' : '⚔️';
-                const power = calculatePower(clan);
                 
-                list += `${medal} **${clan.name}** ${protection}\n┣━━ 🆔 ${clan.id}\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ ⚡ ${power} pts | 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+                list += `${medal} ${clan.name} ${protection}\n┣━━ 🆔 ${clan.id}\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
             });
             
-            list += `**TOTAL:** ${Object.keys(data.clans).length} clans actifs\n\n💡 **COMMANDES:**\n┣━━ \`/clan battle [id]\` - Attaquer\n┣━━ \`/clan info\` - Voir ton clan\n┗━━ \`/clan create [nom]\` - Créer le tien\n\n🏆 **TOP 3 chaque semaine = PRIX !**`;
+            list += `Total: ${Object.keys(data.clans).length} clans\n╰─▸ TOP 3 gagne des prix chaque semaine!`;
             return list;
 
         case 'units':
-            // Gérer ton armée - Voir et acheter des unités
             const unitsClan = getUserClan();
-            if (!unitsClan) return "❌ **PAS DE CLAN**\n\n⚔️ Tu dois avoir un clan pour gérer une armée !\n🏰 Crée-en un: `/clan create [nom]`";
+            if (!unitsClan) return "❌ Pas de clan !";
             
             const unitType = args_parts[1]?.toLowerCase();
             const quantity = parseInt(args_parts[2]) || 1;
             
             if (!unitType) {
-                return `╔═══════════╗\n║ ⚔️ ARMÉE ⚔️ \n╚═══════════╝\n\n🏰 ${unitsClan.name}\n💰 ${unitsClan.treasury} pièces\n\n📊 **TON ARMÉE:**\n┣━━ 🗡️ ${unitsClan.units.w} guerriers (+${unitsClan.units.w * 10} pts)\n┣━━ 🏹 ${unitsClan.units.a} archers (+${unitsClan.units.a * 8} pts)\n┗━━ 🔮 ${unitsClan.units.m} mages (+${unitsClan.units.m * 15} pts)\n\n🛒 **PRIX D'ACHAT:**\n┣━━ 🗡️ Guerrier: 40💰 (+10 pts)\n┣━━ 🏹 Archer: 60💰 (+8 pts)\n┗━━ 🔮 Mage: 80💰 (+15 pts) ⭐ MEILLEUR\n\n💡 **ACHETER:**\n┣━━ \`/clan units guerrier [nombre]\`\n┣━━ \`/clan units archer [nombre]\`\n┗━━ \`/clan units mage [nombre]\`\n\n🎯 **CONSEIL:** Les mages donnent le plus de puissance !`;
+                return `╔═══════════╗\n║ ⚔️ ARMÉE ⚔️ \n╚═══════════╝\n\n🏰 ${unitsClan.name}\n💰 ${unitsClan.treasury} pièces\n\n📊 UNITÉS:\n┣━━ 🗡️ ${unitsClan.units.w} guerriers (+${unitsClan.units.w * 10})\n┣━━ 🏹 ${unitsClan.units.a} archers (+${unitsClan.units.a * 8})\n┗━━ 🔮 ${unitsClan.units.m} mages (+${unitsClan.units.m * 15})\n\n🛒 PRIX:\n┣━━ guerrier: 40💰\n┣━━ archer: 60💰\n┗━━ mage: 80💰\n\n╰─▸ /clan units [type(guerrier, archer, mage)] [nombres a achter]`;
             }
             
-            if (!isLeader()) return "❌ **CHEF UNIQUEMENT**\n\n👑 Seul le chef peut acheter des unités !\n💬 Demande au chef de renforcer l'armée\n💡 Ou deviens chef toi-même !";
+            if (!isLeader()) return "❌ Chef seulement !";
             
             let cost = 0, unitKey = '', unitName = '', powerPerUnit = 0;
-            if (['guerrier', 'g', 'warrior', 'w'].includes(unitType)) { 
-                cost = 40 * quantity; unitKey = 'w'; unitName = 'guerriers'; powerPerUnit = 10; 
-            }
-            else if (['archer', 'a'].includes(unitType)) { 
-                cost = 60 * quantity; unitKey = 'a'; unitName = 'archers'; powerPerUnit = 8; 
-            }
-            else if (['mage', 'm'].includes(unitType)) { 
-                cost = 80 * quantity; unitKey = 'm'; unitName = 'mages'; powerPerUnit = 15; 
-            }
-            else return "❌ **TYPE INVALIDE**\n\n📝 Types disponibles:\n┣━━ `guerrier` ou `g`\n┣━━ `archer` ou `a`\n┗━━ `mage` ou `m`\n\n💡 Exemple: `/clan units mage 5`";
-            
-            if (quantity < 1 || quantity > 100) return "❌ **QUANTITÉ INVALIDE**\n\n📊 Entre 1 et 100 unités maximum\n💡 Exemple: `/clan units mage 10`";
+            if (['guerrier', 'g', 'warrior'].includes(unitType)) { cost = 40 * quantity; unitKey = 'w'; unitName = 'guerriers'; powerPerUnit = 10; }
+            else if (['archer', 'a'].includes(unitType)) { cost = 60 * quantity; unitKey = 'a'; unitName = 'archers'; powerPerUnit = 8; }
+            else if (['mage', 'm'].includes(unitType)) { cost = 80 * quantity; unitKey = 'm'; unitName = 'mages'; powerPerUnit = 15; }
+            else return "❌ Type invalide ! (guerrier, archer, mage)";
             
             if (unitsClan.treasury < cost) {
                 const missing = cost - unitsClan.treasury;
-                return `❌ **PAS ASSEZ D'OR**\n\n💰 Coût: ${cost} pièces\n💰 Tu as: ${unitsClan.treasury} pièces\n💰 Manque: ${missing} pièces\n\n💡 **GAGNER DE L'OR:**\n┣━━ Attaque d'autres clans\n┣━━ Monte de niveau\n┗━━ Attends l'aide quotidienne si tu es pauvre`;
+                return `❌ Pas assez ! Coût: ${cost}💰 (manque ${missing}💰)`;
             }
             
             unitsClan.treasury -= cost;
             unitsClan.units[unitKey] += quantity;
             await save();
             
-            return `╔═══════════╗\n║ 🛒 ACHAT 🛒 \n╚═══════════╝\n\n⚔️ **${quantity} ${unitName} recrutés !**\n💰 Reste: ${unitsClan.treasury} pièces\n⚡ +${quantity * powerPerUnit} pts de puissance\n📊 Total ${unitName}: ${unitsClan.units[unitKey]}\n\n💡 **MAINTENANT TU PEUX:**\n┣━━ `/clan battle [id]` - Attaquer avec ta nouvelle force\n┣━━ `/clan info` - Voir ta puissance totale\n┗━━ `/clan units` - Acheter encore plus d'unités\n\n╰─▸ Armée renforcée !`;
+            return `╔═══════════╗\n║ 🛒 ACHAT 🛒 \n╚═══════════╝\n\n⚔️ ${quantity} ${unitName} recrutés\n💰 Reste: ${unitsClan.treasury}\n⚡ +${quantity * powerPerUnit} pts\n\n╰─▸ Armée renforcée !`;
 
         case 'promote':
-            // Nommer un nouveau chef - Chef actuel seulement
-            if (!isLeader()) return "❌ **CHEF UNIQUEMENT**\n\n👑 Seul le chef peut nommer un successeur !\n💡 Cette commande sert à passer le leadership";
+            if (!isLeader()) return "❌ Chef seulement !";
             const newLeader = args_parts[1]?.replace(/[<@!>]/g, '');
-            if (!newLeader) return "⚔️ **NOMMER UN NOUVEAU CHEF**\n\n📝 `/clan promote @utilisateur`\n💡 Transfère le leadership à un membre\n\n👑 Exemple: `/clan promote @membre123`\n📋 Ou: `/clan promote 1234567890` (ID utilisateur)\n\n⚠️ **ATTENTION:** Tu ne seras plus chef après !";
+            if (!newLeader) return "⚔️ `/clan promote @user`";
             
             const promoteClan = getUserClan();
-            if (!promoteClan.members.includes(newLeader)) return "❌ **PAS DANS LE CLAN**\n\n👥 Cette personne n'est pas membre de ton clan\n📋 Vois les membres avec `/clan info`\n💡 Invite-la d'abord avec `/clan invite`";
+            if (!promoteClan.members.includes(newLeader)) return "❌ Pas dans le clan !";
             
             promoteClan.leader = newLeader;
             await save();
             
             ctx.log.info(`👑 Nouveau chef: ${newLeader} pour le clan ${promoteClan.name} (${promoteClan.id})`);
-            return `╔═══════════╗\n║ 👑 NOUVEAU CHEF 👑 \n╚═══════════╝\n\n🏰 ${promoteClan.name}\n👑 ${args_parts[1]} est maintenant le chef !\n🔄 Tu n'es plus chef\n\n💡 **IL PEUT MAINTENANT:**\n┣━━ Inviter des membres\n┣━━ Acheter des unités\n┣━━ Gérer le clan\n┗━━ Te re-promouvoir si il veut\n\n╰─▸ Longue vie au nouveau roi !`;
+            return `╔═══════════╗\n║ 👑 CHEF 👑 \n╚═══════════╝\n\n🏰 ${promoteClan.name}\n👑 ${args_parts[1]} est le nouveau chef\n\n╰─▸ Longue vie au roi !`;
 
         case 'userid':
-            // Voir ton ID utilisateur pour les invitations
-            return `╔═══════════╗\n║ 🔍 TON ID 🔍 \n╚═══════════╝\n\n👤 **Ton ID utilisateur:**\n🆔 \`${userId}\`\n\n💡 **UTILITÉ:**\n┣━━ Pour recevoir des invitations\n┣━━ Les chefs peuvent t'inviter avec cet ID\n┣━━ Plus facile que de t'identifier\n┗━━ Copie-colle cet ID pour les invitations\n\n📋 **EXEMPLE D'USAGE:**\n┗━━ Chef fait: \`/clan invite ${userId}\`\n\n╰─▸ Partage cet ID pour rejoindre des clans !`;
+            return `╔═══════════╗\n║ 🔍 USER 🔍 \n╚═══════════╝\n\n👤 Ton ID utilisateur\n🆔 ${userId}\n\n╰─▸ Copie cet ID pour les invitations !`;
 
         case 'help':
-            // Envoyer l'image d'abord si disponible
-            const imagePath = getImagePath();
-            if (imagePath) {
-                try {
-                    await sendMessage(userId, { image: imagePath });
-                } catch (err) {
-                    ctx.log.debug(`❌ Image ${imagePath} non envoyée à ${userId}`);
-                }
+            // Envoyer l'image d'abord
+            try {
+                await sendMessage(userId, { image: 'imgs/clan.png' });
+            } catch (err) {
+                ctx.log.debug(`❌ Image clan.png non envoyée à ${userId}`);
             }
             
-            return `╔═══════════╗\n║ ⚔️ GUIDE COMPLET ⚔️ \n╚═══════════╝\n\n🏰 **GESTION DE BASE:**\n┣━━ \`/clan create [nom]\` - Crée ton clan et deviens chef\n┣━━ \`/clan info\` - Vois les détails de ton clan\n┣━━ \`/clan list\` - Classement des clans les plus puissants\n┗━━ \`/clan userid\` - Ton ID pour les invitations\n\n👥 **GESTION D'ÉQUIPE:**\n┣━━ \`/clan invite @user\` - Invite un joueur (chef seulement)\n┣━━ \`/clan join [id]\` - Rejoins un clan via invitation\n┣━━ \`/clan leave\` - Quitte ton clan actuel\n┗━━ \`/clan promote @user\` - Nomme un nouveau chef\n\n⚔️ **GUERRE & ARMÉE:**\n┣━━ \`/clan battle [id]\` - Attaque un clan pour XP/OR\n┗━━ \`/clan units [type] [nb]\` - Achète des unités (chef seulement)\n\n📊 **SYSTÈME DE PUISSANCE:**\n┣━━ Niveau × 100 + Membres × 50 + XP÷50 × 10\n┣━━ 🗡️ Guerrier: 40💰 = +10 pts\n┣━━ 🏹 Archer: 60💰 = +8 pts\n┗━━ 🔮 Mage: 80💰 = +15 pts (MEILLEUR !)\n\n🎁 **BONUS AUTOMATIQUES:**\n┣━━ TOP 3 hebdomadaire = gros prix\n┣━━ Clans pauvres = aide quotidienne\n┣━━ Victoires = XP + OR volé\n┗━━ Protection 10min après bataille\n\n💡 **STRATÉGIES:**\n┣━━ Recrute des mages (+ efficaces)\n┣━━ Invite des membres (+ de puissance)\n┣━━ Attaque les clans + faibles d'abord\n┗━━ Monte de niveau pour dominer\n\n╰─▸ Forge ton empire et deviens légendaire ! 🔥`;
+            return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┣━━ /clan promote @user\n┗━━ /clan userid\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n🎁 BONUS:\n┣━━ TOP 3 hebdomadaire = prix\n┗━━ Clans pauvres = aide quotidienne\n\n═══════════\n📊 Puissance = Niv×100 + Membres×50 + XP/50×10\n💡 Mages = 15 pts (+ efficace !)\n🔒 Seul le clan attaqué est protégé\n\n╰─▸ Forge ton destin ! 🔥`;
 
         default:
-            // Affichage par défaut selon le statut du joueur
             const userClan = getUserClan();
             if (userClan) {
                 const protection = isProtected(userClan) ? '🛡️' : '';
                 const isOwner = userClan.leader === userId;
-                const totalPower = calculatePower(userClan);
-                let response = `╔═══════════╗\n║ ⚔️ TON CLAN ⚔️ \n╚═══════════╝\n\n🏰 ${userClan.name} ${protection}\n🆔 ${userClan.id} | ⭐ Niv.${userClan.level}\n👥 ${userClan.members.length}/20 membres`;
+                let response = `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 ${userClan.name} ${protection}\n🆔 ${userClan.id} | ⭐ Niv.${userClan.level}\n👥 ${userClan.members.length}/20`;
                 
                 if (isOwner) {
-                    response += `\n⚡ ${totalPower} pts | 💰 ${userClan.treasury} pièces`;
-                } else {
-                    response += `\n⚡ ${totalPower} pts de puissance`;
+                    response += ` | 💰 ${userClan.treasury}`;
                 }
                 
-                response += `\n\n💡 **COMMANDES UTILES:**\n┣━━ \`/clan info\` - Détails complets\n┣━━ \`/clan battle [id]\` - Attaquer\n┣━━ \`/clan list\` - Voir les cibles`;
-                
-                if (isOwner) {
-                    response += `\n┣━━ \`/clan units\` - Gérer l'armée\n┗━━ \`/clan invite @user\` - Recruter`;
-                } else {
-                    response += `\n┗━━ \`/clan help\` - Guide complet`;
-                }
-                
-                response += `\n\n╰─▸ Prêt pour la domination !`;
+                response += `\n\n╰─▸ /clan help pour commander`;
                 return response;
             } else {
-                return `╔═══════════╗\n║ ⚔️ SYSTÈME CLAN ⚔️ \n╚═══════════╝\n\n🚫 **TU N'AS PAS DE CLAN**\n\n🏰 **CRÉER LE TIEN:**\n┗━━ \`/clan create [nom]\` - Deviens chef !\n\n📜 **REJOINDRE UN EXISTANT:**\n┣━━ \`/clan list\` - Voir tous les clans\n┗━━ Demande une invitation à un chef\n\n❓ **AIDE COMPLÈTE:**\n┗━━ \`/clan help\` - Guide détaillé\n\n💡 **POURQUOI REJOINDRE ?**\n┣━━ Batailles épiques contre d'autres clans\n┣━━ Système de niveaux et progression\n┣━━ Récompenses hebdomadaires TOP 3\n┗━━ Construis ton empire avec des alliés\n\n╰─▸ Ton destin t'attend, guerrier !`;
+                return `╔═══════════╗\n║ ⚔️ CLAN ⚔️ \n╚═══════════╝\n\n🏰 /clan create [nom]\n📜 /clan list\n❓ /clan help\n\n╰─▸ Crée ton empire !`;
             }
     }
 };
