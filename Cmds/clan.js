@@ -10,7 +10,8 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     // Initialisation des données
     if (!ctx.clanData) {
         ctx.clanData = {
-            clans: {}, userClans: {}, battles: {}, invites: {}, deletedClans: {}, counter: 0
+            clans: {}, userClans: {}, battles: {}, invites: {}, deletedClans: {}, counter: 0,
+            lastWeeklyReward: 0, lastDailyCheck: 0, weeklyTop3: []
         };
         await saveDataImmediate();
         ctx.log.info("🏰 Structure des clans initialisée");
@@ -91,6 +92,60 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         await saveDataImmediate();
     };
     
+    // Système de récompenses automatiques
+    const checkDailyRewards = async () => {
+        const now = Date.now();
+        const oneDay = 24 * 60 * 60 * 1000;
+        
+        if (!data.lastDailyCheck || (now - data.lastDailyCheck) >= oneDay) {
+            let rewardedClans = 0;
+            for (const clan of Object.values(data.clans)) {
+                if (clan.treasury === 0) {
+                    const bonus = Math.floor(Math.random() * 41) + 60; // 60-100
+                    clan.treasury = bonus;
+                    rewardedClans++;
+                }
+            }
+            data.lastDailyCheck = now;
+            if (rewardedClans > 0) {
+                ctx.log.info(`💰 ${rewardedClans} clans pauvres ont reçu leur aide quotidienne`);
+                await save();
+            }
+        }
+    };
+    
+    const checkWeeklyRewards = async () => {
+        const now = Date.now();
+        const oneWeek = 7 * 24 * 60 * 60 * 1000;
+        
+        if (!data.lastWeeklyReward || (now - data.lastWeeklyReward) >= oneWeek) {
+            const topClans = Object.values(data.clans)
+                .sort((a, b) => calculatePower(b) - calculatePower(a))
+                .slice(0, 3);
+            
+            if (topClans.length >= 3) {
+                // Récompenses: 1er=500💰+200XP, 2e=300💰+150XP, 3e=200💰+100XP
+                const rewards = [
+                    {gold: 500, xp: 200, medal: '🥇'},
+                    {gold: 300, xp: 150, medal: '🥈'},
+                    {gold: 200, xp: 100, medal: '🥉'}
+                ];
+                
+                data.weeklyTop3 = [];
+                for (let i = 0; i < 3; i++) {
+                    const clan = topClans[i];
+                    clan.treasury += rewards[i].gold;
+                    addXP(clan, rewards[i].xp);
+                    data.weeklyTop3.push({name: clan.name, medal: rewards[i].medal});
+                }
+                
+                data.lastWeeklyReward = now;
+                ctx.log.info(`🏆 Récompenses hebdomadaires distribuées au TOP 3`);
+                await save();
+            }
+        }
+    };
+    
     const notifyAttack = async (defenderId, attackerName, defenderName, won) => {
         const result = won ? 'victoire' : 'défaite';
         try {
@@ -101,6 +156,11 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     };
     
     // === COMMANDES ===
+    
+    // Vérifications automatiques
+    await checkDailyRewards();
+    await checkWeeklyRewards();
+    
     switch (action) {
         case 'create':
             const clanName = args_parts.slice(1).join(' ');
@@ -311,6 +371,16 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             if (topClans.length === 0) return "❌ Aucun clan ! `/clan create [nom]`";
             
             let list = `╔═══════════╗\n║ 🏆 TOP 🏆 \n╚═══════════╝\n\n`;
+            
+            // Affichage des derniers gagnants hebdomadaires
+            if (data.weeklyTop3 && data.weeklyTop3.length > 0) {
+                list += `🎉 DERNIERS GAGNANTS:\n`;
+                data.weeklyTop3.forEach(winner => {
+                    list += `${winner.medal} ${winner.name}\n`;
+                });
+                list += `\n`;
+            }
+            
             topClans.forEach((clan, i) => {
                 const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
                 const protection = isProtected(clan) ? '🛡️' : '⚔️';
@@ -319,7 +389,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 list += `${medal} ${clan.name} ${protection}\n┣━━ 🆔 ${clan.id} | 📊 ${totalPower} pts\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ 💰 ${clan.treasury} | 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
             });
             
-            list += `Total: ${Object.keys(data.clans).length} clans\n╰─▸ Attaque ceux sans le bouclier(🛡️). Ils viennent de finir une guerre!`;
+            list += `Total: ${Object.keys(data.clans).length} clans\n╰─▸ TOP 3 gagne des prix chaque semaine!`;
             return list;
 
         case 'units':
@@ -367,7 +437,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return `╔═══════════╗\n║ 👑 CHEF 👑 \n╚═══════════╝\n\n🏰 ${promoteClan.name}\n👑 ${args_parts[1]} est le nouveau chef\n\n╰─▸ Longue vie au roi !`;
 
         case 'help':
-            return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┗━━ /clan promote @user\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n═══════════\n📊 Puissance = Niv×100 + Membres×30\n💡 Mages = 15 pts (+ efficace !)\n\n╰─▸ Forge ton destin ! 🔥`;
+            return `╔═══════════╗\n║ ⚔️ AIDE ⚔️ \n╚═══════════╝\n\n🏰 BASE:\n┣━━ /clan create [nom]\n┣━━ /clan info\n┗━━ /clan list\n\n👥 ÉQUIPE:\n┣━━ /clan invite @user\n┣━━ /clan join [id]\n┣━━ /clan leave\n┗━━ /clan promote @user\n\n⚔️ GUERRE:\n┣━━ /clan battle [id]\n┗━━ /clan units\n\n🎁 BONUS:\n┣━━ TOP 3 hebdomadaire = prix\n┗━━ Clans pauvres = aide quotidienne\n\n═══════════\n📊 Puissance = Niv×100 + Membres×30\n💡 Mages = 15 pts (+ efficace !)\n\n╰─▸ Forge ton destin ! 🔥`;
 
         default:
             const userClan = getUserClan();
