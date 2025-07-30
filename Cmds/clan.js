@@ -417,7 +417,7 @@ ${goldText}
                 const protection = isProtected(clan) ? '🛡️' : '⚔️';
                 const totalPower = calculatePower(clan);
                 
-                list += `${medal} ${clan.name} ${protection}\n┣━━ 🆔 ${clan.id} | 📊 ${totalPower} pts\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+                list += `${medal} ${clan.name} ${protection}\n┣━━ 🆔 ${clan.id}\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
             });
             
             list += `Total: ${Object.keys(data.clans).length} clans\n╰─▸ TOP 3 gagne des prix chaque semaine!`;
