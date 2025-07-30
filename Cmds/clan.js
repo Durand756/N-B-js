@@ -70,6 +70,13 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         return (Date.now() - deleteTime) > threeDays;
     };
     
+    const getCooldownTime = () => {
+        const deleteTime = data.deletedClans[userId];
+        if (!deleteTime) return 0;
+        const threeDays = 3 * 24 * 60 * 60 * 1000;
+        return threeDays - (Date.now() - deleteTime);
+    };
+    
     const formatTime = (ms) => {
         const days = Math.floor(ms / (24 * 60 * 60 * 1000));
         const hours = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
@@ -245,18 +252,42 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const enemyClan = findClan(enemyArg);
             if (!enemyClan) return "❌ Clan ennemi introuvable !";
             if (enemyClan.id === attackerClan.id) return "❌ Tu ne peux pas t'attaquer toi-même !";
-            if (isProtected(enemyClan)) return `🛡️ ${enemyClan.name} est protégé !`;
+            if (isProtected(enemyClan)) return `🛡️ ${enemyClan.name} est protégé contre les attaques !`;
             
             // Combat
             const attackerPower = calculatePower(attackerClan);
             const defenderPower = calculatePower(enemyClan);
-            const victory = attackerPower > defenderPower;
+            const powerDiff = attackerPower - defenderPower;
             
-            // Gains/Pertes
-            const xpGain = victory ? 200 : 50;
-            const goldChange = victory ? 100 : -50;
-            const enemyXP = victory ? 50 : 150;
-            const enemyGold = victory ? -75 : 75;
+            // Déterminer le résultat (victory, defeat, draw)
+            let result;
+            if (powerDiff > 10) {
+                result = 'victory';
+            } else if (powerDiff < -10) {
+                result = 'defeat';
+            } else {
+                result = 'draw';
+            }
+            
+            // Gains/Pertes selon le résultat
+            let xpGain, goldChange, enemyXP, enemyGold;
+            
+            if (result === 'victory') {
+                xpGain = 200;
+                goldChange = 100;
+                enemyXP = 50;
+                enemyGold = -75;
+            } else if (result === 'defeat') {
+                xpGain = 50;
+                goldChange = -50;
+                enemyXP = 150;
+                enemyGold = 75;
+            } else { // draw
+                xpGain = 100;
+                goldChange = 0;
+                enemyXP = 100;
+                enemyGold = 0;
+            }
             
             const levelUp = addXP(attackerClan, xpGain);
             addXP(enemyClan, enemyXP);
@@ -265,12 +296,17 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             enemyClan.treasury = Math.max(0, enemyClan.treasury + enemyGold);
             
             // Protection pour le perdant
-            if (!victory) attackerClan.lastDefeat = Date.now();
-            else enemyClan.lastDefeat = Date.now();
+            if (result === 'defeat') {
+                attackerClan.lastDefeat = Date.now();
+            } else if (result === 'victory') {
+                enemyClan.lastDefeat = Date.now();
+            }
             
             // Pertes d'unités
             const myLosses = Math.floor(Math.random() * 3) + 1;
-            const enemyLosses = victory ? Math.floor(Math.random() * 4) + 2 : Math.floor(Math.random() * 2) + 1;
+            const enemyLosses = result === 'victory' 
+                ? Math.floor(Math.random() * 4) + 2 
+                : Math.floor(Math.random() * 2) + 1;
             
             attackerClan.units.w = Math.max(0, attackerClan.units.w - Math.floor(myLosses * 0.6));
             attackerClan.units.a = Math.max(0, attackerClan.units.a - Math.floor(myLosses * 0.3));
@@ -284,11 +320,11 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             // Notifier le défenseur
             if (enemyClan.members[0] !== userId) {
-                const resultText = result === 'victory' ? 'victoire' : result === 'defeat' ? 'défaite' : 'match nul';
-                const winnerName = result === 'victory' ? attackerClan.name : result === 'defeat' ? enemyClan.name : 'Match nul';
-                await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, result === 'victory');
+                const won = (result === 'victory');
+                await notifyAttack(enemyClan.members[0], attackerClan.name, enemyClan.name, won);
             }
             
+            // Message de résultat
             let battleResult = `⚔️ **${attackerClan.name} VS ${enemyClan.name}**\n`;
             battleResult += `💪 Puissance: ${Math.round(attackerPower)} vs ${Math.round(defenderPower)}\n\n`;
             
@@ -373,5 +409,4 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             } else {
                 return `⚔️ **BIENVENUE DANS LE SYSTÈME DE CLANS !**\n\nTu n'as pas encore de clan. Voici comment commencer :\n\n🏰 \`/clan create [nom]\` - Créer ton propre clan\n📜 \`/clan list\` - Voir tous les clans existants\n❓ \`/clan help\` - Guide complet des commandes\n\n💎 **Astuce:** Commence par créer ton clan, puis invite des amis pour devenir plus fort !`;
     }
-};
 };
