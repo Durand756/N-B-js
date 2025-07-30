@@ -378,26 +378,27 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             return battleResult;
 
         case 'list':
-            const topClans = Object.values(data.clans)
-                .sort((a, b) => calculatePower(b) - calculatePower(a))
-                .slice(0, 10);
-            
-            if (topClans.length === 0) return "❌ Aucun clan ! `/clan create [nom]`";
-            
-            let list = `╔═══════════╗\n║ 🏆 TOP 🏆 \n╚═══════════╝\n\n`;
-            topClans.forEach((clan, i) => {
-                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
-                const protection = isProtected(clan) ? '🛡️' : '⚔️';
-                const totalPower = calculatePower(clan);
-                
-                list += `${medal} ${clan.name} ${protection}\n`;
-                list += `┣━━ 📊 ${totalPower} pts | ⭐ Niv.${clan.level}\n`;
-                list += `┣━━ 👥 ${clan.members.length}/20 | 💰 ${clan.treasury}\n`;
-                list += `┗━━ 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n\n`;
-            });
-            
-            list += `Total: ${Object.keys(data.clans).length} clans\n╰─▸ Attaque ceux sans 🛡️ !`;
-            return list;
+    const topClans = Object.values(data.clans)
+        .sort((a, b) => calculatePower(b) - calculatePower(a))
+        .slice(0, 10);
+    
+        if (topClans.length === 0) return "❌ Aucun clan ! `/clan create [nom]`";
+    
+        let list = `╔═══════════╗\n║ 🏆 TOP 🏆 \n╚═══════════╝\n\n`;
+        topClans.forEach((clan, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+            const protection = isProtected(clan) ? '🛡️' : '⚔️';
+            const totalPower = calculatePower(clan);
+        
+            list += `${medal} ${clan.name} ${protection}\n`;
+            list += `┣━━ 🆔 ${clan.id} | 📊 ${totalPower} pts\n`;
+            list += `┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n`;
+            list += `┣━━ 💰 ${clan.treasury} | 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n`;
+            list += `┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        });
+    
+        list += `Total: ${Object.keys(data.clans).length} clans\n╰─▸ Attaque ceux sans le bouclier(🛡️). Ils viennent de finir une guerre!`;
+        return list;
 
         case 'units':
             const unitsClan = getUserClan();
