@@ -8,14 +8,21 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     const { addToMemory, saveDataImmediate, sendMessage } = ctx;
     
     // Initialisation des données
-    if (!ctx.clanData) {
-        ctx.clanData = {
-            clans: {}, userClans: {}, battles: {}, invites: {}, deletedClans: {}, counter: 0,
-            lastWeeklyReward: 0, lastDailyCheck: 0, weeklyTop3: []
-        };
-        await saveDataImmediate();
-        ctx.log.info("🏰 Structure des clans initialisée");
-    }
+   if (!ctx.clanData) {
+    ctx.clanData = {
+        clans: {}, 
+        userClans: {}, 
+        battles: {}, 
+        invites: {}, 
+        deletedClans: {}, 
+        counter: 0,
+        lastWeeklyReward: 0, 
+        lastFinancialAid: 0, // Renommé de lastDailyCheck
+        weeklyTop3: []
+    };
+    await saveDataImmediate();
+    ctx.log.info("🏰 Structure des clans initialisée");
+}
     let data = ctx.clanData;
     
     const userId = String(senderId);
@@ -93,26 +100,25 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         await saveDataImmediate();
     };
     
-    const checkDailyRewards = async () => {
-        const now = Date.now();
-        const oneDay = 24 * 60 * 60 * 1000;
-        
-        if (!data.lastDailyCheck || (now - data.lastDailyCheck) >= oneDay) {
-            let rewardedClans = 0;
-            for (const clan of Object.values(data.clans)) {
-                if (clan.treasury === 0) {
-                    const bonus = Math.floor(Math.random() * 41) + 60;
-                    clan.treasury = bonus;
-                    rewardedClans++;
-                }
-            }
-            data.lastDailyCheck = now;
-            if (rewardedClans > 0) {
-                ctx.log.info(`💰 ${rewardedClans} clans pauvres ont reçu leur aide quotidienne`);
-                await save();
+    const checkFinancialAid = async () => {
+    const now = Date.now();
+    const fiveHours = 5 * 60 * 60 * 1000; // 5 heures en millisecondes
+    
+    if (!data.lastFinancialAid || (now - data.lastFinancialAid) >= fiveHours) {
+        let aidedClans = 0;
+        for (const clan of Object.values(data.clans)) {
+            if (clan.treasury < 40) { // Changé de 0 à moins de 40
+                clan.treasury += 100; // Donne 100 pièces au lieu d'un bonus aléatoire
+                aidedClans++;
             }
         }
-    };
+        data.lastFinancialAid = now; // Renommé de lastDailyCheck
+        if (aidedClans > 0) {
+            ctx.log.info(`💰 ${aidedClans} clans pauvres (<40💰) ont reçu leur aide de 100 pièces`);
+            await save();
+        }
+    }
+};
     
     const checkWeeklyRewards = async () => {
         const now = Date.now();
@@ -171,7 +177,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     };
     
     // Vérifications automatiques
-    await checkDailyRewards();
+    await checkFinancialAid();
     await checkWeeklyRewards();
     
     switch (action) {
