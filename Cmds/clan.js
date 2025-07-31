@@ -420,7 +420,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 const protection = isProtected(clan) ? '🛡️' : '⚔️';
                 const power = calculatePower(clan);
                 
-                list += `${medal} **${clan.name}** ${protection}\n┣━━ 🆔 ${clan.id}\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ ⚡ ${power} pts | 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+                list += `${medal} **${clan.name}** ${protection}\n┣━━ 🆔 ${clan.id}\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
             });
             
             list += `**TOTAL:** ${Object.keys(data.clans).length} clans actifs\n\n💡 **COMMANDES:**\n┣━━ \`/clan battle [id]\` - Attaquer\n┣━━ \`/clan info\` - Voir ton clan\n┗━━ \`/clan create [nom]\` - Créer le tien\n\n🏆 **TOP 3 chaque semaine = PRIX !**`;
