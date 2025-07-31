@@ -6,6 +6,13 @@
  */
 module.exports = async function cmdHelp(senderId, args, ctx) {
     const { isAdmin } = ctx;
+
+try {
+                    const imageUrl = 'https://raw.githubusercontent.com/Durand756/N-B-js/refs/heads/main/Cmds/imgs/HELP-NAKAMA.png';
+                    await ctx.sendImageMessage(senderId, imageUrl);
+                } catch (err) {
+                    ctx.log.error(`❌ Erreur image: ${err.message}`);
+                }    
     
     let text = `╔═══════════╗
 ║ 🤖 NAKAMABOT v4.0║
