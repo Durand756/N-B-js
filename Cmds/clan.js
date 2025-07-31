@@ -308,7 +308,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const topClans = Object.values(data.clans).sort((a, b) => calculatePower(b) - calculatePower(a)).slice(0, 10);
             if (topClans.length === 0) return "❌ AUCUN CLAN EXISTANT\n\n🏜️ Aucun clan n'a encore été créé !\n🏰 Sois le premier à fonder un empire avec /clan create [nom]\n👑 Deviens une légende et domine le classement !";
             
-            let list = `╔═══════════╗\n║ 🏆 CLASSEMENT CLANS 🏆 \n╚═══════════╝\n\n`;
+            let list = `╔═══════════╗\n║ 🏆 CLASSEMENT 🏆 \n╚═══════════╝\n\n`;
             
             if (data.weeklyTop3 && data.weeklyTop3.length > 0) {
                 list += `🎉 DERNIERS GAGNANTS HEBDOMADAIRES:\n`;
