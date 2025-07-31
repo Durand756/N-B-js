@@ -382,7 +382,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             // Envoi d'image comme dans le fichier original
                 try {
                     const fs = require('fs');
-                    const imagePath = 'imgs/clan.png';
+                    const imagePath = 'imgs/clan.jpg';
         
                     // ✅ Vérifier si le fichier existe
                     if (fs.existsSync(imagePath)) {
