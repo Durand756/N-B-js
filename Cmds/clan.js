@@ -381,7 +381,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         case 'help':
             // Envoi d'image comme dans le fichier original
                try {
-                    const imageUrl = 'https://res.cloudinary.com/dgagzrztm/image/upload/v1753961323/clan_odwqkm.jpg';
+                    const imageUrl = 'https://raw.githubusercontent.com/Durand756/N-B-js/refs/heads/main/Cmds/imgs/clan.jpg';
                     await ctx.sendImageMessage(senderId, imageUrl);
                 } catch (err) {
                     ctx.log.error(`❌ Erreur image: ${err.message}`);
