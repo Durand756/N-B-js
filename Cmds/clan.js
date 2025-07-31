@@ -2,7 +2,7 @@
  * Commande /clan - Système de gestion de clans optimisé et compact
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Arguments de la commande  
- * @param {object} ctx - Contexte partagé du bot
+ * @param {object} ctx - Contexte partagé du bot 
  */
 module.exports = async function cmdClan(senderId, args, ctx) {
     const { addToMemory, saveDataImmediate, sendMessage } = ctx;
