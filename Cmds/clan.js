@@ -107,7 +107,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
     if (!data.lastFinancialAid || (now - data.lastFinancialAid) >= fiveHours) {
         let aidedClans = 0;
         for (const clan of Object.values(data.clans)) {
-            if (clan.treasury < 40) { // Changé de 0 à moins de 40
+            if (clan.treasury < 300) { // Changé de 0 à moins de 40
                 clan.treasury += 100; // Donne 100 pièces au lieu d'un bonus aléatoire
                 aidedClans++;
             }
