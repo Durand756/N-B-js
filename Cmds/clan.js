@@ -321,7 +321,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
                 const protection = isProtected(clan) ? '🛡️' : '⚔️';
                 const power = calculatePower(clan);
                 
-                list += `${medal} ${clan.name} ${protection}\n┣━━ 🆔 ${clan.id}\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20 | ⚡ ${power}pts\n┣━━ 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+                list += `${medal} ${clan.name} ${protection}\n┣━━ 🆔 ${clan.id}\n┣━━ ⭐ Niv.${clan.level} | 👥 ${clan.members.length}/20\n┣━━ 🗡️${clan.units.w} 🏹${clan.units.a} 🔮${clan.units.m}\n┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
             });
             
             list += `📊 TOTAL: ${Object.keys(data.clans).length} clans actifs\n\n💡 COMMANDES UTILES:\n┣━━ /clan battle [id] - Attaquer un clan\n┣━━ /clan info - Voir ton clan\n┣━━ /clan create [nom] - Créer le tien\n┗━━ /clan join [id] - Rejoindre un clan\n\n🏆 TOP 3 chaque semaine reçoivent des récompenses !`;
