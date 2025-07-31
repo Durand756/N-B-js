@@ -381,21 +381,21 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         case 'help':
             // Envoi d'image comme dans le fichier original
                     try {
-                        const path = require('path');
-                        // Remonter au dossier parent puis aller dans Cmds/imgs
-                        const imagePath = path.join(process.cwd(), 'Cmds', 'imgs', 'clan.jpg');
+        const fs = require('fs');
+        const path = require('path');
+        const imagePath = path.join(__dirname, 'imgs', 'clan.jpg');
         
-                        ctx.log.info(`🔍 Chemin recherché: ${imagePath}`);
-        
-                        if (require('fs').existsSync(imagePath)) {
-                            ctx.log.info('✅ Image trouvée !');
-                            await ctx.sendImageMessage(senderId, imagePath);
-                        } else {
-                            ctx.log.error('❌ Image introuvable');
-                        }
-                    } catch (err) {
-                        ctx.log.error(`❌ Erreur: ${err.message}`);
-                    }
+        if (fs.existsSync(imagePath)) {
+            // Lire l'image et la convertir en base64
+            const imageBuffer = fs.readFileSync(imagePath);
+            const base64Image = imageBuffer.toString('base64');
+            const dataUrl = `data:image/png;base64,${base64Image}`;
+            
+            await ctx.sendImageMessage(senderId, dataUrl);
+        }
+    } catch (err) {
+        ctx.log.error(`❌ Erreur image: ${err.message}`);
+    }
             
             return `╔═══════════╗\n║ ⚔️ GUIDE COMPLET ⚔️ \n╚═══════════╝\n\n🏰 GESTION DE BASE:\n┣━━ /clan create [nom] - Fonder ton empire\n┣━━ /clan info - Statistiques détaillées de ton clan\n┣━━ /clan list - Classement et cibles disponibles\n┗━━ /clan userid - Ton ID pour les invitations\n\n👥 GESTION D'ÉQUIPE:\n┣━━ /clan invite @user - Recruter un membre (chef)\n┣━━ /clan join [id] - Rejoindre un clan invité\n┣━━ /clan leave - Quitter ton clan actuel\n┗━━ /clan promote @user - Nommer un successeur (chef)\n\n⚔️ GUERRE ET STRATÉGIE:\n┣━━ /clan battle [id] - Attaquer pour XP/or\n┗━━ /clan units [type] [nb] - Recruter des soldats (chef)\n\n📊 SYSTÈME DE PUISSANCE:\n┣━━ Niveau × 100 + Membres × 50 + Unités + Bonus XP\n┣━━ 🗡️ Guerrier: 40💰 = +10 pts\n┣━━ 🏹 Archer: 60💰 = +8 pts  \n┗━━ 🔮 Mage: 80💰 = +15 pts (OPTIMAL)\n\n🎁 RÉCOMPENSES AUTOMATIQUES:\n┣━━ TOP 3 hebdomadaire = or/XP massifs\n┣━━ Aide quotidienne pour clans à 0💰\n┣━━ XP à chaque bataille (même en défaite)\n┗━━ Protection 10min après combat\n\n💡 STRATÉGIES GAGNANTES:\n┣━━ Recrute des mages (meilleur rapport)\n┣━━ Plus de membres = plus de puissance\n┣━━ Attaque des clans légèrement plus faibles\n┗━━ Monte de niveau pour débloquer la puissance\n\n🚀 COMMENT BIEN COMMENCER:\n┣━━ 1. Crée ton clan avec un nom épique\n┣━━ 2. Invite des amis pour grossir rapidement\n┣━━ 3. Achète des mages avec ton or de départ\n┣━━ 4. Attaque des clans plus faibles pour l'XP\n┗━━ 5. Vise le TOP 3 pour les récompenses\n\n╰─▸ Forge ton empire et deviens une légende ! 🔥`;
 
