@@ -132,7 +132,12 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             const protection = isProtected(clan) ? '🛡️ PROTÉGÉ' : '';
             const totalPower = calculatePower(clan);
             const isOwner = clan.leader === userId;
-            
+            try {
+                    const imageUrl = 'https://raw.githubusercontent.com/Durand756/N-B-js/refs/heads/main/Cmds/imgs/CLAN-INFOS-NAKAMA.png';
+                    await ctx.sendImageMessage(senderId, imageUrl);
+                } catch (err) {
+                    ctx.log.error(`❌ Erreur image: ${err.message}`);
+                }
             let response = `╔═══════════╗\n║ 🏰 INFO CLAN 🏰 \n╚═══════════╝\n\n🏰 ${clan.name} ${protection}\n🆔 ${clan.id} | ⭐ Niveau ${clan.level} | 👥 ${clan.members.length}/20 membres\n⚡ Puissance totale: ${totalPower} points`;
             
             if (isOwner) response += `\n💰 Trésor: ${clan.treasury} pièces d'or`;
@@ -307,7 +312,12 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         case 'list':
             const topClans = Object.values(data.clans).sort((a, b) => calculatePower(b) - calculatePower(a)).slice(0, 10);
             if (topClans.length === 0) return "❌ AUCUN CLAN EXISTANT\n\n🏜️ Aucun clan n'a encore été créé !\n🏰 Sois le premier à fonder un empire avec /clan create [nom]\n👑 Deviens une légende et domine le classement !";
-            
+            try {
+                    const imageUrl = 'https://raw.githubusercontent.com/Durand756/N-B-js/refs/heads/main/Cmds/imgs/CLAN-TOP-NAKAMA.png';
+                    await ctx.sendImageMessage(senderId, imageUrl);
+                } catch (err) {
+                    ctx.log.error(`❌ Erreur image: ${err.message}`);
+                }
             let list = `╔═══════════╗\n║ 🏆 CLASSEMENT 🏆 \n╚═══════════╝\n\n`;
             
             if (data.weeklyTop3 && data.weeklyTop3.length > 0) {
@@ -333,7 +343,12 @@ module.exports = async function cmdClan(senderId, args, ctx) {
             
             const unitType = args_parts[1]?.toLowerCase();
             const quantity = parseInt(args_parts[2]) || 1;
-            
+            try {
+                    const imageUrl = 'https://raw.githubusercontent.com/Durand756/N-B-js/refs/heads/main/Cmds/imgs/CLAN-UNITS-NAKAMA.png';
+                    await ctx.sendImageMessage(senderId, imageUrl);
+                } catch (err) {
+                    ctx.log.error(`❌ Erreur image: ${err.message}`);
+                }
             if (!unitType) {
                 return `╔═══════════╗\n║ ⚔️ GESTION ARMÉE ⚔️ \n╚═══════════╝\n\n🏰 ${unitsClan.name}\n💰 Trésor: ${unitsClan.treasury} pièces d'or\n\n📊 COMPOSITION ACTUELLE:\n┣━━ 🗡️ ${unitsClan.units.w} guerriers (${unitsClan.units.w * 10} pts)\n┣━━ 🏹 ${unitsClan.units.a} archers (${unitsClan.units.a * 8} pts)\n┗━━ 🔮 ${unitsClan.units.m} mages (${unitsClan.units.m * 15} pts)\n\n🛒 COÛTS ET EFFICACITÉ:\n┣━━ 🗡️ Guerrier: 40💰 = +10 pts (rapport 1:4)\n┣━━ 🏹 Archer: 60💰 = +8 pts (rapport 1:7.5)\n┗━━ 🔮 Mage: 80💰 = +15 pts (rapport 1:5.3) ⭐ OPTIMAL\n\n💡 COMMANDES D'ACHAT:\n┣━━ /clan units guerrier [nombre]\n┣━━ /clan units archer [nombre]\n┗━━ /clan units mage [nombre]\n\n🎯 STRATÉGIE RECOMMANDÉE:\n┣━━ Privilégie les mages (meilleur rapport qualité/prix)\n┣━━ Équilibre ton armée selon tes moyens\n┗━━ Après chaque bataille, reconstitue tes forces\n\n📈 Exemple: /clan units mage 5 (coût: 400💰, gain: +75 pts)`;
             }
@@ -381,7 +396,7 @@ module.exports = async function cmdClan(senderId, args, ctx) {
         case 'help':
             // Envoi d'image comme dans le fichier original
                try {
-                    const imageUrl = 'https://raw.githubusercontent.com/Durand756/N-B-js/refs/heads/main/Cmds/imgs/clan.jpg';
+                    const imageUrl = 'https://raw.githubusercontent.com/Durand756/N-B-js/refs/heads/main/Cmds/imgs/CLAN-HELP-NAKAMA.png';
                     await ctx.sendImageMessage(senderId, imageUrl);
                 } catch (err) {
                     ctx.log.error(`❌ Erreur image: ${err.message}`);
