@@ -37,7 +37,8 @@
   "fs": "^0.0.1-security",
   "path": "^0.12.7",
   "sanitize-filename": "^1.6.3",
-  "youtube-search-api": "^1.1.6"
+  "youtube-search-api": "^1.1.6",
+  "@distube/ytdl-core": "^4.13.5"
 },
   "devDependencies": {
     "nodemon": "^3.0.2"
