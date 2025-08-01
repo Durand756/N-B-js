@@ -6,7 +6,7 @@
  */
 
 const axios = require('axios');
-const { createCanvas, loadImage, registerFont } = require('canvas');
+const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 
@@ -33,7 +33,6 @@ async function getUserAvatar(userId, ctx) {
         });
         return response.data.picture?.data?.url || null;
     } catch (error) {
-        // Suppression du console.error pour éviter les messages indésirables
         return null;
     }
 }
@@ -53,155 +52,189 @@ async function getUserName(userId, ctx) {
         });
         return response.data.name || `Utilisateur ${userId.substring(0, 8)}`;
     } catch (error) {
-        // Suppression du console.error pour éviter les messages indésirables
         return `Utilisateur ${userId.substring(0, 8)}`;
     }
 }
 
-// Fonction pour créer un avatar par défaut
-function createDefaultAvatar() {
-    const canvas = createCanvas(100, 100);
-    const ctx = canvas.getContext('2d');
-    
-    // Fond dégradé
-    const gradient = ctx.createLinearGradient(0, 0, 100, 100);
-    gradient.addColorStop(0, '#667eea');
-    gradient.addColorStop(1, '#764ba2');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 100, 100);
-    
-    // Icône utilisateur
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 50px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('👤', 50, 65);
-    
-    return canvas;
-}
-
-// Fonction pour dessiner un avatar circulaire
-async function drawCircularAvatar(ctx, avatarUrl, x, y, size) {
+// Fonction pour télécharger et traiter l'avatar
+async function processAvatar(avatarUrl) {
     try {
-        let avatarCanvas;
-        
-        if (avatarUrl) {
-            const avatar = await loadImage(avatarUrl);
-            avatarCanvas = createCanvas(size, size);
-            const avatarCtx = avatarCanvas.getContext('2d');
-            avatarCtx.drawImage(avatar, 0, 0, size, size);
-        } else {
-            avatarCanvas = createDefaultAvatar();
+        if (!avatarUrl) {
+            // Créer un avatar par défaut avec Sharp
+            const defaultAvatar = Buffer.from(`
+                <svg width="120" height="120" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="defaultGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+                            <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+                        </linearGradient>
+                    </defs>
+                    <circle cx="60" cy="60" r="60" fill="url(#defaultGrad)"/>
+                    <text x="60" y="80" text-anchor="middle" fill="white" font-size="50" font-family="Arial">👤</text>
+                </svg>
+            `);
+            
+            return await sharp(defaultAvatar)
+                .png()
+                .resize(120, 120)
+                .toBuffer();
         }
-        
-        // Créer le masque circulaire
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
-        ctx.clip();
-        ctx.drawImage(avatarCanvas, x, y, size, size);
-        ctx.restore();
-        
-        // Bordure
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
-        ctx.stroke();
-        
+
+        // Télécharger et traiter l'avatar
+        const response = await axios.get(avatarUrl, {
+            responseType: 'arraybuffer',
+            timeout: 10000
+        });
+
+        return await sharp(response.data)
+            .resize(120, 120)
+            .png()
+            .toBuffer();
+
     } catch (error) {
-        // Dessiner avatar par défaut en cas d'erreur (silencieux)
-        const defaultAvatar = createDefaultAvatar();
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
-        ctx.clip();
-        ctx.drawImage(defaultAvatar, x, y, size, size);
-        ctx.restore();
+        // Retourner avatar par défaut en cas d'erreur
+        const defaultAvatar = Buffer.from(`
+            <svg width="120" height="120" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <linearGradient id="defaultGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+                        <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+                    </linearGradient>
+                </defs>
+                <circle cx="60" cy="60" r="60" fill="url(#defaultGrad)"/>
+                <text x="60" y="80" text-anchor="middle" fill="white" font-size="50" font-family="Arial">👤</text>
+            </svg>
+        `);
+        
+        return await sharp(defaultAvatar)
+            .png()
+            .resize(120, 120)
+            .toBuffer();
     }
 }
 
-// Génération de la carte de rang avec Canvas
-async function generateRankCard(data) {
-    const { name, level, exp, expNextLevel, currentExp, rank, totalUsers, avatar } = data;
+// Fonction pour créer le SVG de la carte de rang
+function createRankCardSVG(data) {
+    const { name, level, exp, expNextLevel, currentExp, rank, totalUsers } = data;
     
-    // Dimensions de la carte
-    const width = 800;
-    const height = 300;
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext('2d');
-    
-    // Fond dégradé
-    const gradient = ctx.createLinearGradient(0, 0, width, height);
-    gradient.addColorStop(0, '#667eea');
-    gradient.addColorStop(0.5, '#764ba2');
-    gradient.addColorStop(1, '#f093fb');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, width, height);
-    
-    // Overlay semi-transparent
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-    ctx.fillRect(0, 0, width, height);
-    
-    // Avatar
-    await drawCircularAvatar(ctx, avatar, 30, 30, 120);
-    
-    // Nom d'utilisateur
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 36px Arial';
-    ctx.fillText(name, 180, 70);
-    
-    // Niveau
-    ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 48px Arial';
-    ctx.fillText(`Niveau ${level}`, 180, 120);
-    
-    // Rang
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '24px Arial';
-    ctx.fillText(`Rang #${rank} sur ${totalUsers}`, 180, 150);
-    
-    // Barre de progression - Fond
-    const barX = 180;
-    const barY = 180;
-    const barWidth = 400;
-    const barHeight = 30;
-    
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.roundRect(barX, barY, barWidth, barHeight, 15);
-    ctx.fill();
-    
-    // Barre de progression - Remplissage
+    // Calculer la progression
     const progress = currentExp / expNextLevel;
-    const progressWidth = barWidth * progress;
+    const progressPercent = Math.round(progress * 100);
+    const progressWidth = 400 * progress;
     
-    const progressGradient = ctx.createLinearGradient(barX, barY, barX + progressWidth, barY);
-    progressGradient.addColorStop(0, '#00ff88');
-    progressGradient.addColorStop(1, '#00d4ff');
-    
-    ctx.fillStyle = progressGradient;
-    ctx.roundRect(barX, barY, progressWidth, barHeight, 15);
-    ctx.fill();
-    
-    // Texte de progression
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '18px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(`${currentExp}/${expNextLevel} XP (${Math.round(progress * 100)}%)`, 
-                 barX + barWidth/2, barY + barHeight/2 + 6);
-    
-    // XP Total
-    ctx.textAlign = 'left';
-    ctx.font = '20px Arial';
-    ctx.fillText(`XP Total: ${exp}`, 180, 250);
-    
-    // Décorations
-    ctx.fillStyle = '#FFD700';
-    ctx.font = '30px Arial';
-    ctx.fillText('🏆', width - 80, 50);
-    ctx.fillText('⭐', width - 80, 100);
-    ctx.fillText('🎯', width - 80, 150);
-    
-    return canvas.toBuffer('image/png');
+    // Échapper les caractères spéciaux XML
+    const escapedName = name.replace(/[<>&'"]/g, (char) => {
+        const entities = { '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&#39;', '"': '&quot;' };
+        return entities[char];
+    });
+
+    return `
+    <svg width="800" height="300" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <!-- Dégradé principal -->
+            <linearGradient id="mainGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#764ba2;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#f093fb;stop-opacity:1" />
+            </linearGradient>
+            
+            <!-- Dégradé pour la barre de progression -->
+            <linearGradient id="progressGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color:#00ff88;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#00d4ff;stop-opacity:1" />
+            </linearGradient>
+            
+            <!-- Masque circulaire pour l'avatar -->
+            <clipPath id="avatarClip">
+                <circle cx="90" cy="90" r="60"/>
+            </clipPath>
+            
+            <!-- Filtre d'ombre -->
+            <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="2" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.3)"/>
+            </filter>
+        </defs>
+        
+        <!-- Fond principal -->
+        <rect width="800" height="300" fill="url(#mainGrad)"/>
+        
+        <!-- Overlay semi-transparent -->
+        <rect width="800" height="300" fill="rgba(0, 0, 0, 0.3)"/>
+        
+        <!-- Espace réservé pour l'avatar (sera remplacé par l'image) -->
+        <rect id="avatar-placeholder" x="30" y="30" width="120" height="120" fill="transparent"/>
+        
+        <!-- Bordure de l'avatar -->
+        <circle cx="90" cy="90" r="62" fill="none" stroke="#ffffff" stroke-width="4" filter="url(#shadow)"/>
+        
+        <!-- Nom d'utilisateur -->
+        <text x="180" y="70" fill="#ffffff" font-family="Arial, sans-serif" font-size="36" font-weight="bold" filter="url(#shadow)">${escapedName}</text>
+        
+        <!-- Niveau -->
+        <text x="180" y="120" fill="#FFD700" font-family="Arial, sans-serif" font-size="48" font-weight="bold" filter="url(#shadow)">Niveau ${level}</text>
+        
+        <!-- Rang -->
+        <text x="180" y="150" fill="#ffffff" font-family="Arial, sans-serif" font-size="24" filter="url(#shadow)">Rang #${rank} sur ${totalUsers}</text>
+        
+        <!-- Barre de progression - Fond -->
+        <rect x="180" y="180" width="400" height="30" rx="15" ry="15" fill="rgba(255, 255, 255, 0.2)"/>
+        
+        <!-- Barre de progression - Remplissage -->
+        <rect x="180" y="180" width="${progressWidth}" height="30" rx="15" ry="15" fill="url(#progressGrad)"/>
+        
+        <!-- Texte de progression -->
+        <text x="380" y="202" fill="#ffffff" font-family="Arial, sans-serif" font-size="18" text-anchor="middle" font-weight="bold">
+            ${currentExp}/${expNextLevel} XP (${progressPercent}%)
+        </text>
+        
+        <!-- XP Total -->
+        <text x="180" y="250" fill="#ffffff" font-family="Arial, sans-serif" font-size="20">XP Total: ${exp}</text>
+        
+        <!-- Décorations -->
+        <text x="720" y="50" fill="#FFD700" font-family="Arial, sans-serif" font-size="30">🏆</text>
+        <text x="720" y="100" fill="#FFD700" font-family="Arial, sans-serif" font-size="30">⭐</text>
+        <text x="720" y="150" fill="#FFD700" font-family="Arial, sans-serif" font-size="30">🎯</text>
+    </svg>`;
+}
+
+// Génération de la carte de rang avec Sharp + SVG
+async function generateRankCard(data) {
+    try {
+        // Créer le SVG de base
+        const svgContent = createRankCardSVG(data);
+        
+        // Traiter l'avatar
+        const avatarBuffer = await processAvatar(data.avatar);
+        
+        // Créer l'avatar circulaire
+        const circularAvatar = await sharp(avatarBuffer)
+            .resize(120, 120)
+            .composite([{
+                input: Buffer.from(`
+                    <svg width="120" height="120">
+                        <circle cx="60" cy="60" r="60" fill="white"/>
+                    </svg>
+                `),
+                blend: 'dest-in'
+            }])
+            .png()
+            .toBuffer();
+        
+        // Créer l'image finale en composant le SVG avec l'avatar
+        const finalImage = await sharp(Buffer.from(svgContent))
+            .composite([{
+                input: circularAvatar,
+                left: 30,
+                top: 30
+            }])
+            .png()
+            .toBuffer();
+        
+        return finalImage;
+        
+    } catch (error) {
+        throw new Error(`Erreur génération carte: ${error.message}`);
+    }
 }
 
 // Génération d'une carte de rang textuelle (fallback)
@@ -260,7 +293,7 @@ async function createAccessibleImageUrl(imageBuffer, userId, ctx) {
 
 // Fonction pour nettoyer les fichiers temporaires
 function cleanupTempFile(filePath) {
-    if (!filePath) return; // Pas de fichier à nettoyer (cas Base64)
+    if (!filePath) return;
     
     setTimeout(() => {
         try {
@@ -268,9 +301,9 @@ function cleanupTempFile(filePath) {
                 fs.unlinkSync(filePath);
             }
         } catch (error) {
-            // Nettoyage silencieux - pas de log d'erreur
+            // Nettoyage silencieux
         }
-    }, 10000); // Nettoyer après 10 secondes
+    }, 10000);
 }
 
 module.exports = async function cmdRank(senderId, args, ctx) {
@@ -296,7 +329,7 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         const expNextLevel = expForNextLevel - expForCurrentLevel;
         const currentExp = exp - expForCurrentLevel;
         
-        // Calculer le rang (tous les utilisateurs avec de l'XP)
+        // Calculer le rang
         const allUsersWithExp = Array.from(userExp.entries())
             .filter(([id, exp]) => exp > 0)
             .map(([id, exp]) => ({ id, exp }))
@@ -323,7 +356,7 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         };
         
         try {
-            // Essayer de générer l'image
+            // Essayer de générer l'image avec Sharp + SVG
             const imageBuffer = await generateRankCard(rankData);
             const imageResult = await createAccessibleImageUrl(imageBuffer, senderIdStr, ctx);
             
@@ -331,14 +364,13 @@ module.exports = async function cmdRank(senderId, args, ctx) {
                 throw new Error("Impossible de créer l'URL de l'image");
             }
             
-            log.info(`🏆 Carte de rang générée (${imageResult.isFile ? 'fichier' : 'base64'}) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
+            log.info(`🏆 Carte de rang générée avec Sharp+SVG (${imageResult.isFile ? 'fichier' : 'base64'}) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
             
             // Programmer le nettoyage du fichier temporaire si nécessaire
             if (imageResult.isFile) {
                 cleanupTempFile(imageResult.filePath);
             }
             
-            // ✅ NOUVELLE LOGIQUE: Retourner l'objet image selon le format du fichier mère
             return {
                 type: 'image',
                 url: imageResult.url,
@@ -346,10 +378,10 @@ module.exports = async function cmdRank(senderId, args, ctx) {
             };
             
         } catch (imageError) {
-            log.warning(`⚠️ Erreur génération image pour ${userName}: ${imageError.message}`);
+            log.warning(`⚠️ Erreur génération image avec Sharp pour ${userName}: ${imageError.message}`);
             // Fallback vers carte textuelle
             const rankCard = generateTextRankCard(rankData);
-            log.info(`🏆 Carte de rang générée (texte) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
+            log.info(`🏆 Carte de rang générée (texte fallback) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
             addToMemory(senderIdStr, 'assistant', rankCard);
             return rankCard;
         }
