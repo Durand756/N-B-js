@@ -75,7 +75,7 @@ Tu es une IA remarquable qui transforme chaque interaction en expérience enrich
     messages.push(...context);
     messages.push({ role: "user", content: args });
     
-    const response = await callMistralAPI(messages, 2000, 0.8);
+    const response = await callMistralAPI(messages, 2000, 0.6);
     
     if (response) {
         addToMemory(String(senderId), 'assistant', response);
