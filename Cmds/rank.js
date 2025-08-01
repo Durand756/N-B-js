@@ -171,7 +171,120 @@ const drawAvatar = async (ctx, avatarUrl, x, y, size) => {
     }
 };
 
-// Fonction pour obtenir l'avatar utilisateur via l'API Facebook
+// Fonction pour héberger l'image sur un service temporaire
+async function uploadImageToHost(imageBuffer, ctx) {
+    const { log } = ctx;
+    
+    try {
+        // Option 1: Utiliser imgbb (service gratuit)
+        const imgbbApiKey = process.env.IMGBB_API_KEY;
+        if (imgbbApiKey) {
+            const base64Image = imageBuffer.toString('base64');
+            const formData = new FormData();
+            formData.append('image', base64Image);
+            
+            const response = await axios.post(`https://api.imgbb.com/1/upload?key=${imgbbApiKey}`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 15000
+            });
+            
+            if (response.data.success) {
+                return response.data.data.url;
+            }
+        }
+        
+        // Option 2: Utiliser Cloudinary (si configuré)
+        const cloudinaryUrl = process.env.CLOUDINARY_URL;
+        if (cloudinaryUrl) {
+            const base64Image = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+            const uploadResponse = await axios.post(
+                'https://api.cloudinary.com/v1_1/YOUR_CLOUD_NAME/image/upload',
+                {
+                    file: base64Image,
+                    upload_preset: 'YOUR_UPLOAD_PRESET'
+                },
+                { timeout: 15000 }
+            );
+            
+            if (uploadResponse.data.secure_url) {
+                return uploadResponse.data.secure_url;
+            }
+        }
+        
+        // Option 3: Utiliser Imgur (service public, sans clé requise)
+        try {
+            const base64Image = imageBuffer.toString('base64');
+            const imgurResponse = await axios.post('https://api.imgur.com/3/image', {
+                image: base64Image,
+                type: 'base64'
+            }, {
+                headers: {
+                    'Authorization': 'Client-ID 546c25a59c58ad7', // Client ID public
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15000
+            });
+            
+            if (imgurResponse.data.success) {
+                return imgurResponse.data.data.link;
+            }
+        } catch (imgurError) {
+            log.debug(`🔄 Imgur failed: ${imgurError.message}`);
+        }
+        
+        // Option 4: Utiliser Postimages (backup)
+        try {
+            const FormData = require('form-data');
+            const form = new FormData();
+            form.append('upload', imageBuffer, {
+                filename: 'rank-card.png',
+                contentType: 'image/png'
+            });
+            
+            const postimagesResponse = await axios.post('https://postimages.org/json', form, {
+                headers: form.getHeaders(),
+                timeout: 15000
+            });
+            
+            if (postimagesResponse.data.status === 'OK') {
+                return postimagesResponse.data.url;
+            }
+        } catch (postError) {
+            log.debug(`🔄 Postimages failed: ${postError.message}`);
+        }
+        
+        log.warning('⚠️ Tous les services d\'hébergement ont échoué');
+        return null;
+        
+    } catch (error) {
+        log.error(`❌ Erreur hébergement image: ${error.message}`);
+        return null;
+    }
+}
+
+// Fonction de fallback en cas d'échec d'hébergement
+function generateTextFallback(data) {
+    const { name, level, exp, expNextLevel, currentExp, rank, totalUsers } = data;
+    
+    // Barre de progression simple
+    const progressWidth = 20;
+    const progress = Math.floor((currentExp / expNextLevel) * progressWidth);
+    const progressBar = '█'.repeat(progress) + '░'.repeat(progressWidth - progress);
+    
+    const theme = getLevelTheme(level);
+    
+    return `${theme.title}
+
+👤 **${name}**
+📊 **Niveau:** ${level}
+🎯 **Rang:** #${rank}/${totalUsers}
+
+📈 **Expérience:**
+${progressBar} ${Math.round((currentExp / expNextLevel) * 100)}%
+${currentExp}/${expNextLevel} XP
+
+✨ Continue à chatter pour gagner de l'XP ! 💖`;
+}
 async function getUserAvatar(userId, ctx) {
     const { PAGE_ACCESS_TOKEN } = ctx;
     if (!PAGE_ACCESS_TOKEN) return null;
@@ -387,11 +500,15 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         // Générer l'image de la carte
         const imageBuffer = await generateRankCard(rankData);
         
-        // Convertir en base64 pour l'envoi
-        const base64Image = imageBuffer.toString('base64');
-        const imageUrl = `data:image/png;base64,${base64Image}`;
+        // Héberger l'image sur un service temporaire
+        const imageUrl = await uploadImageToHost(imageBuffer, ctx);
         
-        log.info(`🏆 Carte de rang générée pour ${senderId} - Niveau ${level}, Rang #${userRank}`);
+        if (!imageUrl) {
+            log.warning(`⚠️ Impossible d'héberger l'image pour ${senderId}, fallback texte`);
+            return generateTextFallback(rankData);
+        }
+        
+        log.info(`🏆 Carte de rang générée et hébergée pour ${senderId} - Niveau ${level}, Rang #${userRank}`);
         
         // Enregistrer en mémoire
         addToMemory(senderIdStr, 'assistant', `[Carte de rang générée - Niveau ${level}]`);
