@@ -225,27 +225,43 @@ ${currentExp}/${expNextLevel} XP (Total: ${exp} XP)
 ✨ Continue à discuter pour gagner plus d'XP !`;
 }
 
-// Fonction pour créer un fichier image temporaire avec URL accessible
-async function createTempImageFile(imageBuffer, userId) {
-    const tempDir = path.join(__dirname, 'temp');
-    
-    // Créer le dossier temp s'il n'existe pas
-    if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
+// Fonction pour créer une URL accessible pour l'image
+async function createAccessibleImageUrl(imageBuffer, userId, ctx) {
+    try {
+        // Option 1: Essayer d'utiliser l'URL du serveur si définie
+        if (process.env.SERVER_URL) {
+            const tempDir = path.join(__dirname, '..', 'temp');
+            
+            if (!fs.existsSync(tempDir)) {
+                fs.mkdirSync(tempDir, { recursive: true });
+            }
+            
+            const fileName = `rank_${userId}_${Date.now()}.png`;
+            const filePath = path.join(tempDir, fileName);
+            
+            fs.writeFileSync(filePath, imageBuffer);
+            
+            const publicUrl = `${process.env.SERVER_URL}/temp/${fileName}`;
+            
+            return { filePath, url: publicUrl, isFile: true };
+        }
+        
+        // Option 2: Fallback vers Data URL (Base64)
+        const base64 = imageBuffer.toString('base64');
+        const dataUrl = `data:image/png;base64,${base64}`;
+        
+        return { filePath: null, url: dataUrl, isFile: false };
+        
+    } catch (error) {
+        ctx.log.warning(`⚠️ Erreur création URL image: ${error.message}`);
+        return null;
     }
-    
-    const fileName = `rank_${userId}_${Date.now()}.png`;
-    const filePath = path.join(tempDir, fileName);
-    
-    // Écrire le fichier
-    fs.writeFileSync(filePath, imageBuffer);
-    
-    // Retourner le chemin du fichier
-    return filePath;
 }
 
 // Fonction pour nettoyer les fichiers temporaires
 function cleanupTempFile(filePath) {
+    if (!filePath) return; // Pas de fichier à nettoyer (cas Base64)
+    
     setTimeout(() => {
         try {
             if (fs.existsSync(filePath)) {
@@ -309,17 +325,23 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         try {
             // Essayer de générer l'image
             const imageBuffer = await generateRankCard(rankData);
-            const imagePath = await createTempImageFile(imageBuffer, senderIdStr);
+            const imageResult = await createAccessibleImageUrl(imageBuffer, senderIdStr, ctx);
             
-            log.info(`🏆 Carte de rang générée (image) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
+            if (!imageResult) {
+                throw new Error("Impossible de créer l'URL de l'image");
+            }
             
-            // Programmer le nettoyage du fichier temporaire
-            cleanupTempFile(imagePath);
+            log.info(`🏆 Carte de rang générée (${imageResult.isFile ? 'fichier' : 'base64'}) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
+            
+            // Programmer le nettoyage du fichier temporaire si nécessaire
+            if (imageResult.isFile) {
+                cleanupTempFile(imageResult.filePath);
+            }
             
             // ✅ NOUVELLE LOGIQUE: Retourner l'objet image selon le format du fichier mère
             return {
                 type: 'image',
-                url: imagePath,
+                url: imageResult.url,
                 caption: `🏆 Voici ta carte de rang, ${userName} ! ✨\n\n📊 Niveau ${level} • Rang #${userRank}/${totalUsers}\n💫 Continue à discuter pour gagner plus d'XP !`
             };
             
