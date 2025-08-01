@@ -1,18 +1,21 @@
 /**
- * Commande /rank - Affiche le niveau et l'expérience utilisateur
+ * Commande /rank - Génère et affiche une carte de rang avec image
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Arguments (non utilisés)
  * @param {object} ctx - Contexte partagé du bot 
  */
 
 const axios = require('axios');
+const { createCanvas, loadImage, registerFont } = require('canvas');
+const fs = require('fs');
+const path = require('path');
 
 // Configuration du système de niveaux
 const DELTA_NEXT = 5;
 const expToLevel = (exp) => Math.floor((1 + Math.sqrt(1 + 8 * exp / DELTA_NEXT)) / 2);
 const levelToExp = (level) => Math.floor(((Math.pow(level, 2) - level) * DELTA_NEXT) / 2);
 
-// Stockage temporaire des données utilisateur (sera sauvegardé sur GitHub)
+// Stockage temporaire des données utilisateur
 const userExp = new Map();
 
 // Fonction pour obtenir l'avatar utilisateur via l'API Facebook
@@ -30,6 +33,7 @@ async function getUserAvatar(userId, ctx) {
         });
         return response.data.picture?.data?.url || null;
     } catch (error) {
+        console.error('Erreur récupération avatar:', error.message);
         return null;
     }
 }
@@ -49,15 +53,162 @@ async function getUserName(userId, ctx) {
         });
         return response.data.name || `Utilisateur ${userId.substring(0, 8)}`;
     } catch (error) {
+        console.error('Erreur récupération nom:', error.message);
         return `Utilisateur ${userId.substring(0, 8)}`;
     }
 }
 
-// Génération d'une carte de rang textuelle
+// Fonction pour créer un avatar par défaut
+function createDefaultAvatar() {
+    const canvas = createCanvas(100, 100);
+    const ctx = canvas.getContext('2d');
+    
+    // Fond dégradé
+    const gradient = ctx.createLinearGradient(0, 0, 100, 100);
+    gradient.addColorStop(0, '#667eea');
+    gradient.addColorStop(1, '#764ba2');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 100, 100);
+    
+    // Icône utilisateur
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 50px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('👤', 50, 65);
+    
+    return canvas;
+}
+
+// Fonction pour dessiner un avatar circulaire
+async function drawCircularAvatar(ctx, avatarUrl, x, y, size) {
+    try {
+        let avatarCanvas;
+        
+        if (avatarUrl) {
+            const avatar = await loadImage(avatarUrl);
+            avatarCanvas = createCanvas(size, size);
+            const avatarCtx = avatarCanvas.getContext('2d');
+            avatarCtx.drawImage(avatar, 0, 0, size, size);
+        } else {
+            avatarCanvas = createDefaultAvatar();
+        }
+        
+        // Créer le masque circulaire
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(avatarCanvas, x, y, size, size);
+        ctx.restore();
+        
+        // Bordure
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
+        ctx.stroke();
+        
+    } catch (error) {
+        console.error('Erreur dessin avatar:', error.message);
+        // Dessiner avatar par défaut en cas d'erreur
+        const defaultAvatar = createDefaultAvatar();
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(defaultAvatar, x, y, size, size);
+        ctx.restore();
+    }
+}
+
+// Génération de la carte de rang avec Canvas
+async function generateRankCard(data) {
+    const { name, level, exp, expNextLevel, currentExp, rank, totalUsers, avatar } = data;
+    
+    // Dimensions de la carte
+    const width = 800;
+    const height = 300;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    
+    // Fond dégradé
+    const gradient = ctx.createLinearGradient(0, 0, width, height);
+    gradient.addColorStop(0, '#667eea');
+    gradient.addColorStop(0.5, '#764ba2');
+    gradient.addColorStop(1, '#f093fb');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+    
+    // Overlay semi-transparent
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.fillRect(0, 0, width, height);
+    
+    // Avatar
+    await drawCircularAvatar(ctx, avatar, 30, 30, 120);
+    
+    // Nom d'utilisateur
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 36px Arial';
+    ctx.fillText(name, 180, 70);
+    
+    // Niveau
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 48px Arial';
+    ctx.fillText(`Niveau ${level}`, 180, 120);
+    
+    // Rang
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '24px Arial';
+    ctx.fillText(`Rang #${rank} sur ${totalUsers}`, 180, 150);
+    
+    // Barre de progression - Fond
+    const barX = 180;
+    const barY = 180;
+    const barWidth = 400;
+    const barHeight = 30;
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.roundRect(barX, barY, barWidth, barHeight, 15);
+    ctx.fill();
+    
+    // Barre de progression - Remplissage
+    const progress = currentExp / expNextLevel;
+    const progressWidth = barWidth * progress;
+    
+    const progressGradient = ctx.createLinearGradient(barX, barY, barX + progressWidth, barY);
+    progressGradient.addColorStop(0, '#00ff88');
+    progressGradient.addColorStop(1, '#00d4ff');
+    
+    ctx.fillStyle = progressGradient;
+    ctx.roundRect(barX, barY, progressWidth, barHeight, 15);
+    ctx.fill();
+    
+    // Texte de progression
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '18px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${currentExp}/${expNextLevel} XP (${Math.round(progress * 100)}%)`, 
+                 barX + barWidth/2, barY + barHeight/2 + 6);
+    
+    // XP Total
+    ctx.textAlign = 'left';
+    ctx.font = '20px Arial';
+    ctx.fillText(`XP Total: ${exp}`, 180, 250);
+    
+    // Décorations
+    ctx.fillStyle = '#FFD700';
+    ctx.font = '30px Arial';
+    ctx.fillText('🏆', width - 80, 50);
+    ctx.fillText('⭐', width - 80, 100);
+    ctx.fillText('🎯', width - 80, 150);
+    
+    return canvas.toBuffer('image/png');
+}
+
+// Génération d'une carte de rang textuelle (fallback)
 function generateTextRankCard(data) {
     const { name, level, exp, expNextLevel, currentExp, rank, totalUsers } = data;
     
-    // Barre de progression simple
     const progressWidth = 20;
     const progress = Math.floor((currentExp / expNextLevel) * progressWidth);
     const progressBar = '█'.repeat(progress) + '░'.repeat(progressWidth - progress);
@@ -70,13 +221,13 @@ function generateTextRankCard(data) {
 
 📈 **Expérience:**
 ${progressBar} ${Math.round((currentExp / expNextLevel) * 100)}%
-${currentExp}/${expNextLevel} XP
+${currentExp}/${expNextLevel} XP (Total: ${exp} XP)
 
-✨ Tape /help pour découvrir d'autres commandes !`;
+✨ Continue à discuter pour gagner plus d'XP !`;
 }
 
 module.exports = async function cmdRank(senderId, args, ctx) {
-    const { log, userList, addToMemory, saveDataImmediate } = ctx;
+    const { log, userList, addToMemory, saveDataImmediate, sendMessage } = ctx;
     const senderIdStr = String(senderId);
     
     try {
@@ -93,16 +244,19 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         
         const exp = userExp.get(senderIdStr);
         const level = expToLevel(exp);
-        const expNextLevel = levelToExp(level + 1) - levelToExp(level);
-        const currentExp = expNextLevel - (levelToExp(level + 1) - exp);
+        const expForCurrentLevel = levelToExp(level);
+        const expForNextLevel = levelToExp(level + 1);
+        const expNextLevel = expForNextLevel - expForCurrentLevel;
+        const currentExp = exp - expForCurrentLevel;
         
-        // Calculer le rang
-        const allUsers = Array.from(userExp.entries())
+        // Calculer le rang (tous les utilisateurs avec de l'XP)
+        const allUsersWithExp = Array.from(userExp.entries())
+            .filter(([id, exp]) => exp > 0)
             .map(([id, exp]) => ({ id, exp }))
             .sort((a, b) => b.exp - a.exp);
         
-        const userRank = allUsers.findIndex(user => user.id === senderIdStr) + 1;
-        const totalUsers = allUsers.length;
+        const userRank = allUsersWithExp.findIndex(user => user.id === senderIdStr) + 1;
+        const totalUsers = allUsersWithExp.length;
         
         // Obtenir les informations utilisateur
         const [userName, userAvatar] = await Promise.all([
@@ -116,27 +270,72 @@ module.exports = async function cmdRank(senderId, args, ctx) {
             exp: exp,
             expNextLevel: expNextLevel,
             currentExp: currentExp,
-            rank: userRank,
-            totalUsers: totalUsers,
+            rank: userRank || 1,
+            totalUsers: Math.max(totalUsers, 1),
             avatar: userAvatar
         };
         
-        const rankCard = generateTextRankCard(rankData);
-        
-        log.info(`🏆 Carte de rang générée pour ${senderId} - Niveau ${level}, Rang #${userRank}`);
-        
-        // Enregistrer en mémoire
-        addToMemory(senderIdStr, 'assistant', rankCard);
-        
-        return rankCard;
+        try {
+            // Essayer de générer l'image
+            const imageBuffer = await generateRankCard(rankData);
+            const imagePath = path.join(__dirname, 'temp', `rank_${senderIdStr}_${Date.now()}.png`);
+            
+            // Créer le dossier temp s'il n'existe pas
+            const tempDir = path.dirname(imagePath);
+            if (!fs.existsSync(tempDir)) {
+                fs.mkdirSync(tempDir, { recursive: true });
+            }
+            
+            // Sauvegarder l'image
+            fs.writeFileSync(imagePath, imageBuffer);
+            
+            log.info(`🏆 Carte de rang générée (image) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
+            
+            // Envoyer l'image
+            if (sendMessage) {
+                await sendMessage(senderId, {
+                    attachment: {
+                        type: 'image',
+                        payload: {
+                            url: imagePath,
+                            is_reusable: false
+                        }
+                    }
+                });
+                
+                // Supprimer le fichier temporaire après envoi
+                setTimeout(() => {
+                    try {
+                        fs.unlinkSync(imagePath);
+                    } catch (e) {
+                        console.error('Erreur suppression fichier temp:', e.message);
+                    }
+                }, 5000);
+                
+                return "🏆 Voici ta carte de rang !";
+            } else {
+                // Fallback texte si pas de fonction sendMessage
+                const rankCard = generateTextRankCard(rankData);
+                addToMemory(senderIdStr, 'assistant', rankCard);
+                return rankCard;
+            }
+            
+        } catch (imageError) {
+            console.error('Erreur génération image:', imageError.message);
+            // Fallback vers carte textuelle
+            const rankCard = generateTextRankCard(rankData);
+            log.info(`🏆 Carte de rang générée (texte) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
+            addToMemory(senderIdStr, 'assistant', rankCard);
+            return rankCard;
+        }
         
     } catch (error) {
         log.error(`❌ Erreur commande rank: ${error.message}`);
-        return "💥 Oops ! Petite erreur lors de la génération de ta carte de rang ! Réessaie dans un moment ! 💕";
+        return "💥 Oops ! Erreur lors de la génération de ta carte de rang ! Réessaie plus tard ! 💕";
     }
 };
 
-// Fonction d'extension pour ajouter de l'expérience (appelée depuis le fichier principal)
+// Fonction d'extension pour ajouter de l'expérience
 module.exports.addExp = function(userId, expGain = 1) {
     const userIdStr = String(userId);
     
@@ -148,7 +347,6 @@ module.exports.addExp = function(userId, expGain = 1) {
     const newExp = currentExp + expGain;
     userExp.set(userIdStr, newExp);
     
-    // Vérifier si l'utilisateur a monté de niveau
     const oldLevel = expToLevel(currentExp);
     const newLevel = expToLevel(newExp);
     
@@ -161,12 +359,12 @@ module.exports.addExp = function(userId, expGain = 1) {
     };
 };
 
-// Fonction pour obtenir les données d'expérience (pour la sauvegarde GitHub)
+// Fonction pour obtenir les données d'expérience
 module.exports.getExpData = function() {
     return Object.fromEntries(userExp);
 };
 
-// Fonction pour charger les données d'expérience (depuis GitHub)
+// Fonction pour charger les données d'expérience
 module.exports.loadExpData = function(data) {
     if (data && typeof data === 'object') {
         Object.entries(data).forEach(([userId, exp]) => {
