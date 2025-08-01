@@ -901,10 +901,16 @@ app.post('/webhook', async (req, res) => {
                                     
                                     // ✅ NOUVEAU: Ajouter de l'expérience pour l'envoi d'image
                                     if (rankCommand) {
-                                        const expResult = rankCommand.addExp(senderId, 2); // 2 XP pour une image
+                                        const expResult = rankCommand.addExp(senderId, 2, commandContext);
                                         
                                         if (expResult.levelUp) {
                                             log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} (image) !`);
+                                            
+                                            // Envoyer notification de niveau après la réponse
+                                            setTimeout(async () => {
+                                                const levelUpMsg = `🎉 Félicitations ! Tu viens d'atteindre le niveau ${expResult.newLevel} ! ✨\n\nTape /rank pour voir ta carte de rang ! 🏆`;
+                                                await sendMessage(senderId, levelUpMsg);
+                                            }, 2000);
                                         }
                                     }
                                     
@@ -934,7 +940,18 @@ app.post('/webhook', async (req, res) => {
                             // Notifier si l'utilisateur a monté de niveau
                             if (expResult.levelUp) {
                                 log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} !`);
-                                
+                                 if (rankCommand) {
+    const expResult = rankCommand.addExp(senderId, 1, commandContext);
+    
+    if (expResult.levelUp) {
+        log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} !`);
+        
+        setTimeout(async () => {
+            const levelUpMsg = `🎉 Félicitations ! Tu viens d'atteindre le niveau ${expResult.newLevel} ! ✨\n\nTape /rank pour voir ta carte de rang ! 🏆`;
+            await sendMessage(senderId, levelUpMsg);
+        }, 1000);
+    }
+}
                                 // Envoyer un message de félicitation après la réponse
                                 setTimeout(async () => {
                                     const levelUpMsg = `🎉 Félicitations ! Tu viens d'atteindre le niveau ${expResult.newLevel} ! ✨\n\nTape /rank pour voir ta carte de rang ! 🏆`;
