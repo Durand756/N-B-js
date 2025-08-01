@@ -1,14 +1,14 @@
 /**
- * Commande /rank - Génère et affiche une carte de rang avec image
+ * Commande /rank - Génère et affiche une carte de rang avec HTML
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Arguments (non utilisés)
  * @param {object} ctx - Contexte partagé du bot 
  */
 
 const axios = require('axios');
-const { createCanvas, loadImage, registerFont } = require('canvas');
 const fs = require('fs');
 const path = require('path');
+const puppeteer = require('puppeteer');
 
 // Configuration du système de niveaux
 const DELTA_NEXT = 5;
@@ -56,184 +56,238 @@ async function getUserName(userId, ctx) {
     }
 }
 
-// Fonction pour créer un avatar par défaut
-function createDefaultAvatar() {
-    const canvas = createCanvas(120, 120);
-    const ctx = canvas.getContext('2d');
+// Génération du HTML pour la carte de rang
+function generateRankCardHTML(data) {
+    const { name, level, exp, expNextLevel, currentExp, rank, totalUsers, avatar } = data;
+    const progress = Math.max(0, Math.min(100, (currentExp / expNextLevel) * 100));
     
-    // Fond dégradé
-    const gradient = ctx.createLinearGradient(0, 0, 120, 120);
-    gradient.addColorStop(0, '#667eea');
-    gradient.addColorStop(1, '#764ba2');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 120, 120);
+    const avatarSrc = avatar || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIwIiBoZWlnaHQ9IjEyMCIgdmlld0JveD0iMCAwIDEyMCAxMjAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxkZWZzPgo8bGluZWFyR3JhZGllbnQgaWQ9ImF2YXRhckdyYWRpZW50IiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj4KPHN0b3Agb2Zmc2V0PSIwJSIgc3R5bGU9InN0b3AtY29sb3I6IzY2N2VlYTtzdG9wLW9wYWNpdHk6MSIgLz4KPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdHlsZT0ic3RvcC1jb2xvcjojNzY0YmEyO3N0b3Atb3BhY2l0eToxIiAvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+CjxjaXJjbGUgY3g9IjYwIiBjeT0iNjAiIHI9IjYwIiBmaWxsPSJ1cmwoI2F2YXRhckdyYWRpZW50KSIvPgo8dGV4dCB4PSI2MCIgeT0iNzUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSI0MCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPvCfkYQ8L3RleHQ+Cjwvc3ZnPg==';
     
-    // Créer un cercle
-    ctx.beginPath();
-    ctx.arc(60, 60, 60, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.fill();
-    
-    // Icône utilisateur
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 60px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('👤', 60, 60);
-    
-    return canvas;
-}
-
-// Fonction pour dessiner un avatar circulaire
-async function drawCircularAvatar(ctx, avatarUrl, x, y, size) {
-    try {
-        let avatarImage;
-        
-        if (avatarUrl) {
-            try {
-                avatarImage = await loadImage(avatarUrl);
-            } catch (error) {
-                // Si échec du chargement, utiliser avatar par défaut
-                avatarImage = createDefaultAvatar();
-            }
-        } else {
-            avatarImage = createDefaultAvatar();
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Arial', sans-serif;
+            background: transparent;
         }
         
-        // Créer le masque circulaire
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
-        ctx.clip();
+        .rank-card {
+            width: 800px;
+            height: 300px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            border-radius: 20px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
         
-        // Dessiner l'image dans le cercle
-        ctx.drawImage(avatarImage, x, y, size, size);
-        ctx.restore();
+        .rank-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.3);
+            z-index: 1;
+        }
         
-        // Bordure blanche
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
-        ctx.stroke();
+        .content {
+            position: relative;
+            z-index: 2;
+            padding: 30px;
+            height: 240px;
+            display: flex;
+            align-items: flex-start;
+        }
+        
+        .avatar-section {
+            margin-right: 30px;
+        }
+        
+        .avatar {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: 4px solid white;
+            object-fit: cover;
+            background: #667eea;
+        }
+        
+        .info-section {
+            flex: 1;
+            color: white;
+        }
+        
+        .username {
+            font-size: 36px;
+            font-weight: bold;
+            margin: 0 0 10px 0;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .level {
+            font-size: 48px;
+            font-weight: bold;
+            color: #FFD700;
+            margin: 0 0 10px 0;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .rank {
+            font-size: 24px;
+            margin: 0 0 20px 0;
+            opacity: 0.9;
+        }
+        
+        .progress-section {
+            margin-bottom: 20px;
+        }
+        
+        .progress-bar {
+            width: 400px;
+            height: 30px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 15px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88 0%, #00d4ff 100%);
+            width: ${progress}%;
+            border-radius: 15px;
+            transition: width 0.3s ease;
+        }
+        
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 16px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+        }
+        
+        .total-exp {
+            font-size: 20px;
+            opacity: 0.9;
+        }
+        
+        .decorations {
+            position: absolute;
+            right: 30px;
+            top: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 3;
+        }
+        
+        .decoration {
+            font-size: 30px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .glow {
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            animation: glow 3s ease-in-out infinite alternate;
+            z-index: 0;
+        }
+        
+        @keyframes glow {
+            from { opacity: 0.5; }
+            to { opacity: 0.8; }
+        }
+    </style>
+</head>
+<body>
+    <div class="rank-card">
+        <div class="glow"></div>
+        <div class="content">
+            <div class="avatar-section">
+                <img src="${avatarSrc}" alt="Avatar" class="avatar" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div style="width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); display: none; align-items: center; justify-content: center; font-size: 60px; border: 4px solid white;">👤</div>
+            </div>
+            <div class="info-section">
+                <h1 class="username">${name}</h1>
+                <div class="level">Niveau ${level}</div>
+                <div class="rank">Rang #${rank} sur ${totalUsers}</div>
+                <div class="progress-section">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                        <div class="progress-text">${currentExp}/${expNextLevel} XP (${Math.round(progress)}%)</div>
+                    </div>
+                </div>
+                <div class="total-exp">XP Total: ${exp}</div>
+            </div>
+        </div>
+        <div class="decorations">
+            <div class="decoration">🏆</div>
+            <div class="decoration">⭐</div>
+            <div class="decoration">🎯</div>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+// Génération d'une carte de rang avec Puppeteer
+async function generateRankCardImage(data, ctx) {
+    let browser;
+    try {
+        // Lancer Puppeteer
+        browser = await puppeteer.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
+        
+        const page = await browser.newPage();
+        await page.setViewport({ width: 840, height: 340 });
+        
+        // Générer le HTML
+        const html = generateRankCardHTML(data);
+        
+        // Charger le HTML
+        await page.setContent(html);
+        
+        // Attendre que tout soit chargé
+        await page.waitForTimeout(1000);
+        
+        // Prendre une capture d'écran
+        const imageBuffer = await page.screenshot({
+            type: 'png',
+            clip: {
+                x: 0,
+                y: 0,
+                width: 840,
+                height: 340
+            }
+        });
+        
+        return imageBuffer;
         
     } catch (error) {
-        console.log('Erreur avatar:', error.message);
-        // Dessiner un rectangle coloré en cas d'erreur totale
-        ctx.fillStyle = '#667eea';
-        ctx.fillRect(x, y, size, size);
-        ctx.fillStyle = 'white';
-        ctx.font = 'bold 40px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('?', x + size/2, y + size/2);
+        ctx.log.error(`Erreur Puppeteer: ${error.message}`);
+        throw error;
+    } finally {
+        if (browser) {
+            await browser.close();
+        }
     }
-}
-
-// Fonction pour dessiner un rectangle arrondi (si pas disponible nativement)
-function roundRect(ctx, x, y, width, height, radius) {
-    ctx.beginPath();
-    ctx.moveTo(x + radius, y);
-    ctx.lineTo(x + width - radius, y);
-    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
-    ctx.lineTo(x + width, y + height - radius);
-    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-    ctx.lineTo(x + radius, y + height);
-    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
-    ctx.lineTo(x, y + radius);
-    ctx.quadraticCurveTo(x, y, x + radius, y);
-    ctx.closePath();
-}
-
-// Génération de la carte de rang avec Canvas
-async function generateRankCard(data) {
-    const { name, level, exp, expNextLevel, currentExp, rank, totalUsers, avatar } = data;
-    
-    // Dimensions de la carte
-    const width = 800;
-    const height = 300;
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext('2d');
-    
-    // Fond dégradé
-    const gradient = ctx.createLinearGradient(0, 0, width, height);
-    gradient.addColorStop(0, '#667eea');
-    gradient.addColorStop(0.5, '#764ba2');
-    gradient.addColorStop(1, '#f093fb');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, width, height);
-    
-    // Overlay semi-transparent
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-    ctx.fillRect(0, 0, width, height);
-    
-    // Avatar
-    await drawCircularAvatar(ctx, avatar, 30, 30, 120);
-    
-    // Nom d'utilisateur
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 36px Arial';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(name, 180, 40);
-    
-    // Niveau
-    ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 48px Arial';
-    ctx.fillText(`Niveau ${level}`, 180, 90);
-    
-    // Rang
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '24px Arial';
-    ctx.fillText(`Rang #${rank} sur ${totalUsers}`, 180, 150);
-    
-    // Barre de progression - Fond
-    const barX = 180;
-    const barY = 180;
-    const barWidth = 400;
-    const barHeight = 30;
-    
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    roundRect(ctx, barX, barY, barWidth, barHeight, 15);
-    ctx.fill();
-    
-    // Barre de progression - Remplissage
-    const progress = Math.max(0, Math.min(1, currentExp / expNextLevel));
-    const progressWidth = barWidth * progress;
-    
-    if (progressWidth > 0) {
-        const progressGradient = ctx.createLinearGradient(barX, barY, barX + progressWidth, barY);
-        progressGradient.addColorStop(0, '#00ff88');
-        progressGradient.addColorStop(1, '#00d4ff');
-        
-        ctx.fillStyle = progressGradient;
-        roundRect(ctx, barX, barY, progressWidth, barHeight, 15);
-        ctx.fill();
-    }
-    
-    // Texte de progression
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '18px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`${currentExp}/${expNextLevel} XP (${Math.round(progress * 100)}%)`, 
-                 barX + barWidth/2, barY + barHeight/2);
-    
-    // XP Total
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.font = '20px Arial';
-    ctx.fillText(`XP Total: ${exp}`, 180, 230);
-    
-    // Décorations
-    ctx.fillStyle = '#FFD700';
-    ctx.font = '30px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('🏆', width - 50, 50);
-    ctx.fillText('⭐', width - 50, 100);
-    ctx.fillText('🎯', width - 50, 150);
-    
-    return canvas.toBuffer('image/png');
 }
 
 // Génération d'une carte de rang textuelle (fallback)
@@ -260,7 +314,6 @@ ${currentExp}/${expNextLevel} XP (Total: ${exp} XP)
 // Fonction pour créer une URL accessible pour l'image
 async function createAccessibleImageUrl(imageBuffer, userId, ctx) {
     try {
-        // Option 1: Essayer d'utiliser l'URL du serveur si définie
         if (process.env.SERVER_URL) {
             const tempDir = path.join(__dirname, '..', 'temp');
             
@@ -278,7 +331,6 @@ async function createAccessibleImageUrl(imageBuffer, userId, ctx) {
             return { filePath, url: publicUrl, isFile: true };
         }
         
-        // Option 2: Fallback vers Data URL (Base64)
         const base64 = imageBuffer.toString('base64');
         const dataUrl = `data:image/png;base64,${base64}`;
         
@@ -318,7 +370,7 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         
         // Initialiser l'expérience si nécessaire
         if (!userExp.has(senderIdStr)) {
-            userExp.set(senderIdStr, 100); // Donner un peu d'XP par défaut pour les tests
+            userExp.set(senderIdStr, 150); // XP par défaut pour les tests
         }
         
         const exp = userExp.get(senderIdStr);
@@ -355,10 +407,9 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         };
         
         try {
-            // Essayer de générer l'image
-            const imageBuffer = await generateRankCard(rankData);
+            // Essayer de générer l'image avec Puppeteer
+            const imageBuffer = await generateRankCardImage(rankData, ctx);
             
-            // Vérifier que le buffer n'est pas vide
             if (!imageBuffer || imageBuffer.length === 0) {
                 throw new Error("Buffer d'image vide");
             }
@@ -369,9 +420,8 @@ module.exports = async function cmdRank(senderId, args, ctx) {
                 throw new Error("Impossible de créer l'URL de l'image");
             }
             
-            log.info(`🏆 Carte de rang générée (${imageResult.isFile ? 'fichier' : 'base64'}) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
+            log.info(`🏆 Carte de rang générée (HTML→PNG) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
             
-            // Programmer le nettoyage du fichier temporaire si nécessaire
             if (imageResult.isFile) {
                 cleanupTempFile(imageResult.filePath);
             }
@@ -383,10 +433,10 @@ module.exports = async function cmdRank(senderId, args, ctx) {
             };
             
         } catch (imageError) {
-            log.warning(`⚠️ Erreur génération image pour ${userName}: ${imageError.message}`);
+            log.warning(`⚠️ Erreur génération image HTML pour ${userName}: ${imageError.message}`);
             // Fallback vers carte textuelle
             const rankCard = generateTextRankCard(rankData);
-            log.info(`🏆 Carte de rang générée (texte) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
+            log.info(`🏆 Carte de rang générée (texte fallback) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
             addToMemory(senderIdStr, 'assistant', rankCard);
             return rankCard;
         }
