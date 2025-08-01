@@ -174,7 +174,7 @@ function createRankCardSVG(data) {
         <text x="180" y="120" fill="#FFD700" font-family="Arial, sans-serif" font-size="48" font-weight="bold" filter="url(#shadow)">Niveau ${level}</text>
         
         <!-- Rang -->
-        <text x="180" y="150" fill="#ffffff" font-family="Arial, sans-serif" font-size="24" filter="url(#shadow)">Rang #${rank} sur ${totalUsers}</text>
+        <text x="180" y="150" fill="#ffffff" font-family="Arial, sans-serif" font-size="24" filter="url(#shadow)">Rang ${rank}/${totalUsers}</text>
         
         <!-- Barre de progression - Fond -->
         <rect x="180" y="180" width="400" height="30" rx="15" ry="15" fill="rgba(255, 255, 255, 0.2)"/>
@@ -190,10 +190,30 @@ function createRankCardSVG(data) {
         <!-- XP Total -->
         <text x="180" y="250" fill="#ffffff" font-family="Arial, sans-serif" font-size="20">XP Total: ${exp}</text>
         
-        <!-- Décorations -->
-        <text x="720" y="50" fill="#FFD700" font-family="Arial, sans-serif" font-size="30">🏆</text>
-        <text x="720" y="100" fill="#FFD700" font-family="Arial, sans-serif" font-size="30">⭐</text>
-        <text x="720" y="150" fill="#FFD700" font-family="Arial, sans-serif" font-size="30">🎯</text>
+        <!-- Décorations avec icônes SVG -->
+        <!-- Trophée -->
+        <g transform="translate(710, 25)">
+            <circle cx="20" cy="20" r="18" fill="#FFD700" stroke="#FFA500" stroke-width="2"/>
+            <path d="M10 15 L15 10 L25 10 L30 15 L28 18 L25 16 L15 16 L12 18 Z" fill="#FFA500"/>
+            <rect x="18" y="20" width="4" height="8" fill="#8B4513"/>
+            <rect x="16" y="28" width="8" height="3" fill="#8B4513"/>
+            <text x="20" y="18" fill="white" font-size="8" text-anchor="middle" font-weight="bold">1</text>
+        </g>
+        
+        <!-- Étoile -->
+        <g transform="translate(710, 75)">
+            <circle cx="20" cy="20" r="18" fill="#FFD700" stroke="#FFA500" stroke-width="2"/>
+            <path d="M20 8 L22 16 L30 16 L24 21 L26 29 L20 24 L14 29 L16 21 L10 16 L18 16 Z" fill="#FFA500"/>
+        </g>
+        
+        <!-- Cible -->
+        <g transform="translate(710, 125)">
+            <circle cx="20" cy="20" r="18" fill="#FFD700" stroke="#FFA500" stroke-width="2"/>
+            <circle cx="20" cy="20" r="14" fill="none" stroke="#FFA500" stroke-width="2"/>
+            <circle cx="20" cy="20" r="10" fill="none" stroke="#FFA500" stroke-width="2"/>
+            <circle cx="20" cy="20" r="6" fill="none" stroke="#FFA500" stroke-width="2"/>
+            <circle cx="20" cy="20" r="3" fill="#FFA500"/>
+        </g>
     </svg>`;
 }
 
@@ -249,7 +269,7 @@ function generateTextRankCard(data) {
 
 👤 **${name}**
 📊 **Niveau:** ${level}
-🎯 **Rang:** #${rank}/${totalUsers}
+🎯 **Rang:** ${rank}/${totalUsers}
 
 📈 **Expérience:**
 ${progressBar} ${Math.round((currentExp / expNextLevel) * 100)}%
@@ -374,7 +394,7 @@ module.exports = async function cmdRank(senderId, args, ctx) {
             return {
                 type: 'image',
                 url: imageResult.url,
-                caption: `🏆 Voici ta carte de rang, ${userName} ! ✨\n\n📊 Niveau ${level} • Rang #${userRank}/${totalUsers}\n💫 Continue à discuter pour gagner plus d'XP !`
+                caption: `🏆 Voici ta carte de rang, ${userName} ! ✨\n\n📊 Niveau ${level} • Rang ${userRank}/${totalUsers}\n💫 Continue à discuter pour gagner plus d'XP !`
             };
             
         } catch (imageError) {
