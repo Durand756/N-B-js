@@ -8,7 +8,7 @@
 const axios = require('axios');
 
 // Configuration DeepSeek via OpenRouter
-const OPENROUTER_API_KEY = "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";
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
 const DEEPSEEK_MODEL = "deepseek/deepseek-r1-0528:free";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
