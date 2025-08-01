@@ -1221,6 +1221,56 @@ app.get('/health', (req, res) => {
     res.status(statusCode).json(healthStatus);
 });
 
+// À ajouter dans le fichier principal (server.js) après la ligne : app.use(bodyParser.json());
+
+// === SERVEUR DE FICHIERS STATIQUES POUR LES IMAGES TEMPORAIRES ===
+const express = require('express');
+app.use('/temp', express.static(path.join(__dirname, 'temp')));
+
+// Middleware pour nettoyer automatiquement les anciens fichiers temporaires
+app.use('/temp', (req, res, next) => {
+    // Nettoyer les fichiers de plus de 1 heure
+    const tempDir = path.join(__dirname, 'temp');
+    if (fs.existsSync(tempDir)) {
+        const files = fs.readdirSync(tempDir);
+        const now = Date.now();
+        
+        files.forEach(file => {
+            const filePath = path.join(tempDir, file);
+            const stats = fs.statSync(filePath);
+            const ageInMs = now - stats.mtime.getTime();
+            
+            // Supprimer si plus d'1 heure (3600000 ms)
+            if (ageInMs > 3600000) {
+                try {
+                    fs.unlinkSync(filePath);
+                    log.debug(`🗑️ Fichier temporaire nettoyé: ${file}`);
+                } catch (error) {
+                    // Nettoyage silencieux
+                }
+            }
+        });
+    }
+    next();
+});
+
+// === VARIABLE D'ENVIRONNEMENT POUR L'URL DU SERVEUR ===
+// À ajouter dans les variables d'environnement ou au début du fichier :
+const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT || 5000}`;
+
+// === ALTERNATIVE: Conversion en Base64 pour éviter les fichiers temporaires ===
+// Si vous préférez éviter complètement les fichiers temporaires, voici une fonction alternative :
+
+function convertImageToBase64DataUrl(imageBuffer) {
+    return `data:image/png;base64,${imageBuffer.toString('base64')}`;
+}
+
+// Cette approche peut être utilisée dans la commande rank comme ceci :
+// const dataUrl = convertImageToBase64DataUrl(imageBuffer);
+// return { type: 'image', url: dataUrl, caption: '...' };
+
+// Note: Facebook Messenger peut avoir des limitations sur la taille des Data URLs
+
 // Route pour voir l'historique des commits GitHub
 app.get('/github-history', async (req, res) => {
     try {
