@@ -1224,7 +1224,7 @@ app.get('/health', (req, res) => {
 // À ajouter dans le fichier principal (server.js) après la ligne : app.use(bodyParser.json());
 
 // === SERVEUR DE FICHIERS STATIQUES POUR LES IMAGES TEMPORAIRES ===
-const express = require('express');
+
 app.use('/temp', express.static(path.join(__dirname, 'temp')));
 
 // Middleware pour nettoyer automatiquement les anciens fichiers temporaires
