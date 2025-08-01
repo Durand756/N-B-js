@@ -1,5 +1,6 @@
 /**
  * Commande /rank - Génère et affiche une carte de rang avec image
+ * Version intégrée avec le système de sauvegarde GitHub du serveur principal
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Arguments (non utilisés)
  * @param {object} ctx - Contexte partagé du bot 
@@ -15,12 +16,27 @@ const DELTA_NEXT = 5;
 const expToLevel = (exp) => Math.floor((1 + Math.sqrt(1 + 8 * exp / DELTA_NEXT)) / 2);
 const levelToExp = (level) => Math.floor(((Math.pow(level, 2) - level) * DELTA_NEXT) / 2);
 
-// Stockage temporaire des données utilisateur
-const userExp = new Map();
+// ✅ NOUVEAU: Utiliser le système de données du serveur principal
+let userExpData = new Map(); // Les données seront synchronisées avec le serveur principal
+
+// ✅ NOUVEAU: Fonction pour obtenir l'image de profil depuis userLastImage
+function getUserProfileImage(userId, ctx) {
+    const { userLastImage } = ctx;
+    return userLastImage.get(String(userId)) || null;
+}
 
 // Fonction pour obtenir l'avatar utilisateur via l'API Facebook
 async function getUserAvatar(userId, ctx) {
     const { PAGE_ACCESS_TOKEN } = ctx;
+    
+    // ✅ PRIORITÉ: Utiliser l'image stockée dans userLastImage
+    const storedImage = getUserProfileImage(userId, ctx);
+    if (storedImage) {
+        ctx.log.debug(`🖼️ Utilisation de l'image de profil stockée pour ${userId}`);
+        return storedImage;
+    }
+    
+    // Fallback vers l'API Facebook si pas d'image stockée
     if (!PAGE_ACCESS_TOKEN) return null;
     
     try {
@@ -33,6 +49,7 @@ async function getUserAvatar(userId, ctx) {
         });
         return response.data.picture?.data?.url || null;
     } catch (error) {
+        ctx.log.debug(`⚠️ Erreur récupération avatar Facebook: ${error.message}`);
         return null;
     }
 }
@@ -40,7 +57,7 @@ async function getUserAvatar(userId, ctx) {
 // Fonction pour obtenir le nom utilisateur via l'API Facebook
 async function getUserName(userId, ctx) {
     const { PAGE_ACCESS_TOKEN } = ctx;
-    if (!PAGE_ACCESS_TOKEN) return `Utilisateur ${userId.substring(0, 8)}`;
+    if (!PAGE_ACCESS_TOKEN) return `Utilisateur ${userId.toString().substring(0, 8)}`;
     
     try {
         const response = await axios.get(`https://graph.facebook.com/v18.0/${userId}`, {
@@ -50,14 +67,14 @@ async function getUserName(userId, ctx) {
             },
             timeout: 10000
         });
-        return response.data.name || `Utilisateur ${userId.substring(0, 8)}`;
+        return response.data.name || `Utilisateur ${userId.toString().substring(0, 8)}`;
     } catch (error) {
-        return `Utilisateur ${userId.substring(0, 8)}`;
+        return `Utilisateur ${userId.toString().substring(0, 8)}`;
     }
 }
 
 // Fonction pour télécharger et traiter l'avatar
-async function processAvatar(avatarUrl) {
+async function processAvatar(avatarUrl, ctx) {
     try {
         if (!avatarUrl) {
             // Créer un avatar par défaut avec Sharp
@@ -83,7 +100,10 @@ async function processAvatar(avatarUrl) {
         // Télécharger et traiter l'avatar
         const response = await axios.get(avatarUrl, {
             responseType: 'arraybuffer',
-            timeout: 10000
+            timeout: 10000,
+            headers: {
+                'User-Agent': 'NakamaBot/4.0'
+            }
         });
 
         return await sharp(response.data)
@@ -92,6 +112,8 @@ async function processAvatar(avatarUrl) {
             .toBuffer();
 
     } catch (error) {
+        ctx.log.debug(`⚠️ Erreur traitement avatar: ${error.message}`);
+        
         // Retourner avatar par défaut en cas d'erreur
         const defaultAvatar = Buffer.from(`
             <svg width="120" height="120" xmlns="http://www.w3.org/2000/svg">
@@ -218,13 +240,13 @@ function createRankCardSVG(data) {
 }
 
 // Génération de la carte de rang avec Sharp + SVG
-async function generateRankCard(data) {
+async function generateRankCard(data, ctx) {
     try {
         // Créer le SVG de base
         const svgContent = createRankCardSVG(data);
         
         // Traiter l'avatar
-        const avatarBuffer = await processAvatar(data.avatar);
+        const avatarBuffer = await processAvatar(data.avatar, ctx);
         
         // Créer l'avatar circulaire
         const circularAvatar = await sharp(avatarBuffer)
@@ -326,6 +348,20 @@ function cleanupTempFile(filePath) {
     }, 10000);
 }
 
+// ✅ NOUVEAU: Fonction pour synchroniser les données avec la Map locale
+function syncExpData(ctx) {
+    // Cette fonction sera appelée par le serveur principal pour synchroniser les données
+    if (ctx.userExpData && typeof ctx.userExpData === 'object') {
+        userExpData.clear();
+        Object.entries(ctx.userExpData).forEach(([userId, exp]) => {
+            if (typeof exp === 'number' && exp >= 0) {
+                userExpData.set(userId, exp);
+            }
+        });
+    }
+}
+
+// ✅ FONCTION PRINCIPALE MODIFIÉE
 module.exports = async function cmdRank(senderId, args, ctx) {
     const { log, userList, addToMemory, saveDataImmediate } = ctx;
     const senderIdStr = String(senderId);
@@ -337,12 +373,18 @@ module.exports = async function cmdRank(senderId, args, ctx) {
             await saveDataImmediate();
         }
         
+        // Synchroniser avec les données du serveur principal
+        syncExpData(ctx);
+        
         // Initialiser l'expérience si nécessaire
-        if (!userExp.has(senderIdStr)) {
-            userExp.set(senderIdStr, 0);
+        if (!userExpData.has(senderIdStr)) {
+            userExpData.set(senderIdStr, 0);
+            // ✅ NOUVEAU: Mettre à jour les données du serveur principal
+            if (!ctx.userExpData) ctx.userExpData = {};
+            ctx.userExpData[senderIdStr] = 0;
         }
         
-        const exp = userExp.get(senderIdStr);
+        const exp = userExpData.get(senderIdStr);
         const level = expToLevel(exp);
         const expForCurrentLevel = levelToExp(level);
         const expForNextLevel = levelToExp(level + 1);
@@ -350,7 +392,7 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         const currentExp = exp - expForCurrentLevel;
         
         // Calculer le rang
-        const allUsersWithExp = Array.from(userExp.entries())
+        const allUsersWithExp = Array.from(userExpData.entries())
             .filter(([id, exp]) => exp > 0)
             .map(([id, exp]) => ({ id, exp }))
             .sort((a, b) => b.exp - a.exp);
@@ -377,7 +419,7 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         
         try {
             // Essayer de générer l'image avec Sharp + SVG
-            const imageBuffer = await generateRankCard(rankData);
+            const imageBuffer = await generateRankCard(rankData, ctx);
             const imageResult = await createAccessibleImageUrl(imageBuffer, senderIdStr, ctx);
             
             if (!imageResult) {
@@ -412,17 +454,30 @@ module.exports = async function cmdRank(senderId, args, ctx) {
     }
 };
 
+// ✅ FONCTIONS D'EXTENSION MODIFIÉES POUR UTILISER LE SYSTÈME DU SERVEUR PRINCIPAL
+
 // Fonction d'extension pour ajouter de l'expérience
-module.exports.addExp = function(userId, expGain = 1) {
+module.exports.addExp = function(userId, expGain = 1, ctx = null) {
     const userIdStr = String(userId);
     
-    if (!userExp.has(userIdStr)) {
-        userExp.set(userIdStr, 0);
+    // Synchroniser avec les données du serveur principal si disponible
+    if (ctx) {
+        syncExpData(ctx);
+        if (!ctx.userExpData) ctx.userExpData = {};
     }
     
-    const currentExp = userExp.get(userIdStr);
+    if (!userExpData.has(userIdStr)) {
+        userExpData.set(userIdStr, 0);
+    }
+    
+    const currentExp = userExpData.get(userIdStr);
     const newExp = currentExp + expGain;
-    userExp.set(userIdStr, newExp);
+    userExpData.set(userIdStr, newExp);
+    
+    // ✅ NOUVEAU: Mettre à jour les données du serveur principal
+    if (ctx && ctx.userExpData) {
+        ctx.userExpData[userIdStr] = newExp;
+    }
     
     const oldLevel = expToLevel(currentExp);
     const newLevel = expToLevel(newExp);
@@ -438,16 +493,37 @@ module.exports.addExp = function(userId, expGain = 1) {
 
 // Fonction pour obtenir les données d'expérience
 module.exports.getExpData = function() {
-    return Object.fromEntries(userExp);
+    return Object.fromEntries(userExpData);
 };
 
 // Fonction pour charger les données d'expérience
 module.exports.loadExpData = function(data) {
     if (data && typeof data === 'object') {
+        userExpData.clear();
         Object.entries(data).forEach(([userId, exp]) => {
             if (typeof exp === 'number' && exp >= 0) {
-                userExp.set(userId, exp);
+                userExpData.set(userId, exp);
             }
         });
     }
+};
+
+// ✅ NOUVEAU: Fonction pour obtenir les statistiques d'expérience
+module.exports.getExpStats = function() {
+    const allUsers = Array.from(userExpData.entries())
+        .filter(([id, exp]) => exp > 0)
+        .map(([id, exp]) => ({ id, exp, level: expToLevel(exp) }))
+        .sort((a, b) => b.exp - a.exp);
+    
+    return {
+        totalUsers: allUsers.length,
+        totalExp: allUsers.reduce((sum, user) => sum + user.exp, 0),
+        averageLevel: allUsers.length > 0 ? 
+            Math.round(allUsers.reduce((sum, user) => sum + user.level, 0) / allUsers.length * 10) / 10 : 0,
+        topUsers: allUsers.slice(0, 10),
+        levelDistribution: allUsers.reduce((dist, user) => {
+            dist[user.level] = (dist[user.level] || 0) + 1;
+            return dist;
+        }, {})
+    };
 };
