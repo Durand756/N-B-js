@@ -284,11 +284,6 @@ async function loadDataFromGitHub() {
                 log.info(`✅ ${Object.keys(data.userMemory).length} conversations chargées depuis GitHub`);
             }
 
-            if (data.userExp && typeof data.userExp === 'object') {
-    commandContext.userExpData = data.userExp;
-    log.info(`✅ ${Object.keys(data.userExp).length} données d'expérience chargées depuis GitHub`);
-}
-
             // Charger userLastImage
             if (data.userLastImage && typeof data.userLastImage === 'object') {
                 Object.entries(data.userLastImage).forEach(([userId, imageUrl]) => {
@@ -696,7 +691,6 @@ const commandContext = {
     // ✅ AJOUT: Données persistantes pour les commandes
     clanData: null, // Sera initialisé par les commandes
     commandData: clanData, // Map pour autres données de commandes
-    userExpData: {}, // 🎯 NOUVEAU: Pour stocker les données d'expérience
     
     // Fonctions utilitaires
     log,
@@ -748,15 +742,8 @@ function loadCommands() {
             COMMANDS.set(commandName, commandModule);
             
             // ✅ NOUVEAU: Capturer la commande rank pour l'expérience
-             if (commandName === 'rank') {
+            if (commandName === 'rank') {
                 rankCommand = commandModule;
-                
-                // 🎯 NOUVEAU: Synchroniser les données d'expérience existantes
-                if (commandContext.userExpData && Object.keys(commandContext.userExpData).length > 0) {
-                    rankCommand.loadExpData(commandContext.userExpData);
-                    log.info(`🎯 Données d'expérience synchronisées avec la commande rank`);
-                }
-                
                 log.info(`🎯 Système d'expérience activé avec la commande rank`);
             }
             
@@ -901,16 +888,10 @@ app.post('/webhook', async (req, res) => {
                                     
                                     // ✅ NOUVEAU: Ajouter de l'expérience pour l'envoi d'image
                                     if (rankCommand) {
-                                        const expResult = rankCommand.addExp(senderId, 2, commandContext);
+                                        const expResult = rankCommand.addExp(senderId, 2); // 2 XP pour une image
                                         
                                         if (expResult.levelUp) {
                                             log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} (image) !`);
-                                            
-                                            // Envoyer notification de niveau après la réponse
-                                            setTimeout(async () => {
-                                                const levelUpMsg = `🎉 Félicitations ! Tu viens d'atteindre le niveau ${expResult.newLevel} ! ✨\n\nTape /rank pour voir ta carte de rang ! 🏆`;
-                                                await sendMessage(senderId, levelUpMsg);
-                                            }, 2000);
                                         }
                                     }
                                     
@@ -940,18 +921,7 @@ app.post('/webhook', async (req, res) => {
                             // Notifier si l'utilisateur a monté de niveau
                             if (expResult.levelUp) {
                                 log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} !`);
-                                 if (rankCommand) {
-    const expResult = rankCommand.addExp(senderId, 1, commandContext);
-    
-    if (expResult.levelUp) {
-        log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} !`);
-        
-        setTimeout(async () => {
-            const levelUpMsg = `🎉 Félicitations ! Tu viens d'atteindre le niveau ${expResult.newLevel} ! ✨\n\nTape /rank pour voir ta carte de rang ! 🏆`;
-            await sendMessage(senderId, levelUpMsg);
-        }, 1000);
-    }
-}
+                                
                                 // Envoyer un message de félicitation après la réponse
                                 setTimeout(async () => {
                                     const levelUpMsg = `🎉 Félicitations ! Tu viens d'atteindre le niveau ${expResult.newLevel} ! ✨\n\nTape /rank pour voir ta carte de rang ! 🏆`;
