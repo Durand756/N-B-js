@@ -15,6 +15,7 @@ const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || "";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const GITHUB_USERNAME = process.env.GITHUB_USERNAME || "";
 const GITHUB_REPO = process.env.GITHUB_REPO || "nakamabot-data";
+const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT || 5000}`;
 const ADMIN_IDS = new Set(
     (process.env.ADMIN_IDS || "").split(",").map(id => id.trim()).filter(id => id)
 );
@@ -1256,14 +1257,7 @@ app.use('/temp', (req, res, next) => {
 
 // === VARIABLE D'ENVIRONNEMENT POUR L'URL DU SERVEUR ===
 // À ajouter dans les variables d'environnement ou au début du fichier :
-const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT || 5000}`;
 
-// === ALTERNATIVE: Conversion en Base64 pour éviter les fichiers temporaires ===
-// Si vous préférez éviter complètement les fichiers temporaires, voici une fonction alternative :
-
-function convertImageToBase64DataUrl(imageBuffer) {
-    return `data:image/png;base64,${imageBuffer.toString('base64')}`;
-}
 
 // Cette approche peut être utilisée dans la commande rank comme ceci :
 // const dataUrl = convertImageToBase64DataUrl(imageBuffer);
