@@ -33,7 +33,7 @@ async function getUserAvatar(userId, ctx) {
         });
         return response.data.picture?.data?.url || null;
     } catch (error) {
-        console.error('Erreur récupération avatar:', error.message);
+        // Suppression du console.error pour éviter les messages indésirables
         return null;
     }
 }
@@ -53,7 +53,7 @@ async function getUserName(userId, ctx) {
         });
         return response.data.name || `Utilisateur ${userId.substring(0, 8)}`;
     } catch (error) {
-        console.error('Erreur récupération nom:', error.message);
+        // Suppression du console.error pour éviter les messages indésirables
         return `Utilisateur ${userId.substring(0, 8)}`;
     }
 }
@@ -109,8 +109,7 @@ async function drawCircularAvatar(ctx, avatarUrl, x, y, size) {
         ctx.stroke();
         
     } catch (error) {
-        console.error('Erreur dessin avatar:', error.message);
-        // Dessiner avatar par défaut en cas d'erreur
+        // Dessiner avatar par défaut en cas d'erreur (silencieux)
         const defaultAvatar = createDefaultAvatar();
         ctx.save();
         ctx.beginPath();
@@ -226,8 +225,40 @@ ${currentExp}/${expNextLevel} XP (Total: ${exp} XP)
 ✨ Continue à discuter pour gagner plus d'XP !`;
 }
 
+// Fonction pour créer un fichier image temporaire avec URL accessible
+async function createTempImageFile(imageBuffer, userId) {
+    const tempDir = path.join(__dirname, 'temp');
+    
+    // Créer le dossier temp s'il n'existe pas
+    if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    const fileName = `rank_${userId}_${Date.now()}.png`;
+    const filePath = path.join(tempDir, fileName);
+    
+    // Écrire le fichier
+    fs.writeFileSync(filePath, imageBuffer);
+    
+    // Retourner le chemin du fichier
+    return filePath;
+}
+
+// Fonction pour nettoyer les fichiers temporaires
+function cleanupTempFile(filePath) {
+    setTimeout(() => {
+        try {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+        } catch (error) {
+            // Nettoyage silencieux - pas de log d'erreur
+        }
+    }, 10000); // Nettoyer après 10 secondes
+}
+
 module.exports = async function cmdRank(senderId, args, ctx) {
-    const { log, userList, addToMemory, saveDataImmediate, sendMessage } = ctx;
+    const { log, userList, addToMemory, saveDataImmediate } = ctx;
     const senderIdStr = String(senderId);
     
     try {
@@ -278,50 +309,22 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         try {
             // Essayer de générer l'image
             const imageBuffer = await generateRankCard(rankData);
-            const imagePath = path.join(__dirname, 'temp', `rank_${senderIdStr}_${Date.now()}.png`);
-            
-            // Créer le dossier temp s'il n'existe pas
-            const tempDir = path.dirname(imagePath);
-            if (!fs.existsSync(tempDir)) {
-                fs.mkdirSync(tempDir, { recursive: true });
-            }
-            
-            // Sauvegarder l'image
-            fs.writeFileSync(imagePath, imageBuffer);
+            const imagePath = await createTempImageFile(imageBuffer, senderIdStr);
             
             log.info(`🏆 Carte de rang générée (image) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
             
-            // Envoyer l'image
-            if (sendMessage) {
-                await sendMessage(senderId, {
-                    attachment: {
-                        type: 'image',
-                        payload: {
-                            url: imagePath,
-                            is_reusable: false
-                        }
-                    }
-                });
-                
-                // Supprimer le fichier temporaire après envoi
-                setTimeout(() => {
-                    try {
-                        fs.unlinkSync(imagePath);
-                    } catch (e) {
-                        console.error('Erreur suppression fichier temp:', e.message);
-                    }
-                }, 5000);
-                
-                return "🏆 Voici ta carte de rang !";
-            } else {
-                // Fallback texte si pas de fonction sendMessage
-                const rankCard = generateTextRankCard(rankData);
-                addToMemory(senderIdStr, 'assistant', rankCard);
-                return rankCard;
-            }
+            // Programmer le nettoyage du fichier temporaire
+            cleanupTempFile(imagePath);
+            
+            // ✅ NOUVELLE LOGIQUE: Retourner l'objet image selon le format du fichier mère
+            return {
+                type: 'image',
+                url: imagePath,
+                caption: `🏆 Voici ta carte de rang, ${userName} ! ✨\n\n📊 Niveau ${level} • Rang #${userRank}/${totalUsers}\n💫 Continue à discuter pour gagner plus d'XP !`
+            };
             
         } catch (imageError) {
-            console.error('Erreur génération image:', imageError.message);
+            log.warning(`⚠️ Erreur génération image pour ${userName}: ${imageError.message}`);
             // Fallback vers carte textuelle
             const rankCard = generateTextRankCard(rankData);
             log.info(`🏆 Carte de rang générée (texte) pour ${userName} - Niveau ${level}, Rang #${userRank}`);
