@@ -25,6 +25,9 @@ const userList = new Set();
 const userLastImage = new Map();
 const clanData = new Map(); // Stockage des données spécifiques aux commandes
 
+// ✅ NOUVEAU: Référence vers la commande rank pour le système d'expérience
+let rankCommand = null;
+
 // Configuration des logs
 const log = {
     info: (msg) => console.log(`${new Date().toISOString()} - INFO - ${msg}`),
@@ -115,7 +118,7 @@ async function createGitHubRepo() {
 let isSaving = false;
 let saveQueue = [];
 
-// === SAUVEGARDE GITHUB AVEC SUPPORT CLANS ===
+// === SAUVEGARDE GITHUB AVEC SUPPORT CLANS ET EXPÉRIENCE ===
 async function saveDataToGitHub() {
     if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
         log.debug("🔄 Pas de sauvegarde GitHub (config manquante)");
@@ -142,16 +145,20 @@ async function saveDataToGitHub() {
             userMemory: Object.fromEntries(userMemory),
             userLastImage: Object.fromEntries(userLastImage),
             
-            // ✅ AJOUT: Sauvegarder les données des clans et autres commandes
-            clanData: commandContext.clanData || null, // Données des clans depuis le contexte
-            commandData: Object.fromEntries(clanData), // Autres données de commandes
+            // ✅ NOUVEAU: Sauvegarder les données d'expérience
+            userExp: rankCommand ? rankCommand.getExpData() : {},
+            
+            // Données des clans et autres commandes
+            clanData: commandContext.clanData || null,
+            commandData: Object.fromEntries(clanData),
             
             lastUpdate: new Date().toISOString(),
-            version: "4.0 Amicale + Vision + GitHub + Clans",
+            version: "4.0 Amicale + Vision + GitHub + Clans + Rank",
             totalUsers: userList.size,
             totalConversations: userMemory.size,
             totalImages: userLastImage.size,
             totalClans: commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0,
+            totalUsersWithExp: rankCommand ? Object.keys(rankCommand.getExpData()).length : 0,
             bot: "NakamaBot",
             creator: "Durand"
         };
@@ -188,7 +195,8 @@ async function saveDataToGitHub() {
 
                 if (response.status === 200 || response.status === 201) {
                     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
-                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs, ${clanCount} clans)`);
+                    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
+                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs, ${clanCount} clans, ${expDataCount} exp)`);
                     success = true;
                 } else {
                     log.error(`❌ Erreur sauvegarde GitHub: ${response.status}`);
@@ -235,7 +243,7 @@ async function saveDataToGitHub() {
     }
 }
 
-// === CHARGEMENT GITHUB AVEC SUPPORT CLANS ===
+// === CHARGEMENT GITHUB AVEC SUPPORT CLANS ET EXPÉRIENCE ===
 async function loadDataFromGitHub() {
     if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
         log.warning("⚠️ Configuration GitHub manquante, utilisation du stockage temporaire uniquement");
@@ -283,14 +291,20 @@ async function loadDataFromGitHub() {
                 log.info(`✅ ${Object.keys(data.userLastImage).length} images chargées depuis GitHub`);
             }
 
-            // ✅ AJOUT: Charger les données des clans
+            // ✅ NOUVEAU: Charger les données d'expérience
+            if (data.userExp && typeof data.userExp === 'object' && rankCommand) {
+                rankCommand.loadExpData(data.userExp);
+                log.info(`✅ ${Object.keys(data.userExp).length} données d'expérience chargées depuis GitHub`);
+            }
+
+            // Charger les données des clans
             if (data.clanData && typeof data.clanData === 'object') {
                 commandContext.clanData = data.clanData;
                 const clanCount = Object.keys(data.clanData.clans || {}).length;
                 log.info(`✅ ${clanCount} clans chargés depuis GitHub`);
             }
 
-            // ✅ AJOUT: Charger autres données de commandes
+            // Charger autres données de commandes
             if (data.commandData && typeof data.commandData === 'object') {
                 Object.entries(data.commandData).forEach(([key, value]) => {
                     clanData.set(key, value);
@@ -659,7 +673,7 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
 
 const COMMANDS = new Map();
 
-// === CONTEXTE DES COMMANDES AVEC SUPPORT CLANS ===
+// === CONTEXTE DES COMMANDES AVEC SUPPORT CLANS ET EXPÉRIENCE ===
 const commandContext = {
     // Variables globales
     VERIFY_TOKEN,
@@ -697,6 +711,7 @@ const commandContext = {
     createGitHubRepo
 };
 
+// ✅ FONCTION loadCommands MODIFIÉE pour capturer la commande rank
 function loadCommands() {
     const commandsDir = path.join(__dirname, 'Cmds');
     
@@ -724,6 +739,13 @@ function loadCommands() {
             }
             
             COMMANDS.set(commandName, commandModule);
+            
+            // ✅ NOUVEAU: Capturer la commande rank pour l'expérience
+            if (commandName === 'rank') {
+                rankCommand = commandModule;
+                log.info(`🎯 Système d'expérience activé avec la commande rank`);
+            }
+            
             log.info(`✅ Commande '${commandName}' chargée`);
             
         } catch (error) {
@@ -771,9 +793,10 @@ async function processCommand(senderId, messageText) {
 // === ROUTE D'ACCUEIL MISE À JOUR ===
 app.get('/', (req, res) => {
     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
     
     res.json({
-        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub + Clans Online ! 💖",
+        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank Online ! 💖",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: "2025",
@@ -782,13 +805,14 @@ app.get('/', (req, res) => {
         conversations: userMemory.size,
         images_stored: userLastImage.size,
         clans_total: clanCount,
-        version: "4.0 Amicale + Vision + GitHub + Clans",
+        users_with_exp: expDataCount,
+        version: "4.0 Amicale + Vision + GitHub + Clans + Rank",
         storage: {
             type: "GitHub API",
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
             auto_save: "Every 5 minutes",
-            includes: ["users", "conversations", "images", "clans", "command_data"]
+            includes: ["users", "conversations", "images", "clans", "command_data", "user_exp"]
         },
         features: [
             "Génération d'images IA",
@@ -796,6 +820,8 @@ app.get('/', (req, res) => {
             "Analyse d'images IA",
             "Chat intelligent et doux",
             "Système de clans persistant",
+            "Système de ranking et expérience",
+            "Cartes de rang personnalisées",
             "Broadcast admin",
             "Recherche 2025",
             "Stats réservées admin",
@@ -820,7 +846,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// ✅ WEBHOOK PRINCIPAL - LOGIQUE CORRIGÉE SANS DOUBLONS
+// ✅ WEBHOOK PRINCIPAL MODIFIÉ - AJOUT D'EXPÉRIENCE ET NOTIFICATIONS DE NIVEAU
 app.post('/webhook', async (req, res) => {
     try {
         const data = req.body;
@@ -859,6 +885,15 @@ app.post('/webhook', async (req, res) => {
                                     
                                     addToMemory(senderId, 'user', '[Image envoyée]');
                                     
+                                    // ✅ NOUVEAU: Ajouter de l'expérience pour l'envoi d'image
+                                    if (rankCommand) {
+                                        const expResult = rankCommand.addExp(senderId, 2); // 2 XP pour une image
+                                        
+                                        if (expResult.levelUp) {
+                                            log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} (image) !`);
+                                        }
+                                    }
+                                    
                                     saveDataImmediate();
                                     
                                     const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
@@ -877,6 +912,25 @@ app.post('/webhook', async (req, res) => {
                     
                     if (messageText) {
                         log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}...`);
+                        
+                        // ✅ NOUVEAU: Ajouter de l'expérience pour chaque message
+                        if (messageText && rankCommand) {
+                            const expResult = rankCommand.addExp(senderId, 1);
+                            
+                            // Notifier si l'utilisateur a monté de niveau
+                            if (expResult.levelUp) {
+                                log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} !`);
+                                
+                                // Envoyer un message de félicitation après la réponse
+                                setTimeout(async () => {
+                                    const levelUpMsg = `🎉 Félicitations ! Tu viens d'atteindre le niveau ${expResult.newLevel} ! ✨\n\nTape /rank pour voir ta carte de rang ! 🏆`;
+                                    await sendMessage(senderId, levelUpMsg);
+                                }, 1000);
+                            }
+                            
+                            // Sauvegarder les données mises à jour
+                            saveDataImmediate();
+                        }
                         
                         const response = await processCommand(senderId, messageText);
                         
@@ -1022,6 +1076,7 @@ app.post('/force-save', async (req, res) => {
     try {
         await saveDataToGitHub();
         const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+        const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
         
         res.json({
             success: true,
@@ -1032,7 +1087,8 @@ app.post('/force-save', async (req, res) => {
                 users: userList.size,
                 conversations: userMemory.size,
                 images: userLastImage.size,
-                clans: clanCount
+                clans: clanCount,
+                users_with_exp: expDataCount
             }
         });
     } catch (error) {
@@ -1048,6 +1104,7 @@ app.post('/reload-data', async (req, res) => {
     try {
         await loadDataFromGitHub();
         const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+        const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
         
         res.json({
             success: true,
@@ -1058,7 +1115,8 @@ app.post('/reload-data', async (req, res) => {
                 users: userList.size,
                 conversations: userMemory.size,
                 images: userLastImage.size,
-                clans: clanCount
+                clans: clanCount,
+                users_with_exp: expDataCount
             }
         });
     } catch (error) {
@@ -1069,17 +1127,19 @@ app.post('/reload-data', async (req, res) => {
     }
 });
 
-// === STATISTIQUES PUBLIQUES MISES À JOUR ===
+// === STATISTIQUES PUBLIQUES MISES À JOUR AVEC EXPÉRIENCE ===
 app.get('/stats', (req, res) => {
     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
     
     res.json({
         users_count: userList.size,
         conversations_count: userMemory.size,
         images_stored: userLastImage.size,
         clans_total: clanCount,
+        users_with_exp: expDataCount,
         commands_available: COMMANDS.size,
-        version: "4.0 Amicale + Vision + GitHub + Clans",
+        version: "4.0 Amicale + Vision + GitHub + Clans + Rank",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: 2025,
@@ -1088,7 +1148,7 @@ app.get('/stats', (req, res) => {
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
             auto_save_interval: "5 minutes",
-            data_types: ["users", "conversations", "images", "clans", "command_data"]
+            data_types: ["users", "conversations", "images", "clans", "command_data", "user_exp"]
         },
         features: [
             "AI Image Generation",
@@ -1096,6 +1156,8 @@ app.get('/stats', (req, res) => {
             "AI Image Analysis",
             "Friendly Chat",
             "Persistent Clan System",
+            "User Ranking System",
+            "Experience & Levels",
             "Admin Stats",
             "Help Suggestions",
             "GitHub Persistent Storage"
@@ -1104,9 +1166,10 @@ app.get('/stats', (req, res) => {
     });
 });
 
-// === SANTÉ DU BOT MISE À JOUR ===
+// === SANTÉ DU BOT MISE À JOUR AVEC EXPÉRIENCE ===
 app.get('/health', (req, res) => {
     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
     
     const healthStatus = {
         status: "healthy",
@@ -1115,16 +1178,18 @@ app.get('/health', (req, res) => {
             ai: Boolean(MISTRAL_API_KEY),
             vision: Boolean(MISTRAL_API_KEY),
             facebook: Boolean(PAGE_ACCESS_TOKEN),
-            github_storage: Boolean(GITHUB_TOKEN && GITHUB_USERNAME)
+            github_storage: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
+            ranking_system: Boolean(rankCommand)
         },
         data: {
             users: userList.size,
             conversations: userMemory.size,
             images_stored: userLastImage.size,
             clans_total: clanCount,
+            users_with_exp: expDataCount,
             commands_loaded: COMMANDS.size
         },
-        version: "4.0 Amicale + Vision + GitHub + Clans",
+        version: "4.0 Amicale + Vision + GitHub + Clans + Rank",
         creator: "Durand",
         repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
         timestamp: new Date().toISOString()
@@ -1142,6 +1207,9 @@ app.get('/health', (req, res) => {
     }
     if (COMMANDS.size === 0) {
         issues.push("Aucune commande chargée");
+    }
+    if (!rankCommand) {
+        issues.push("Système de ranking non chargé");
     }
     
     if (issues.length > 0) {
@@ -1199,12 +1267,12 @@ app.get('/github-history', async (req, res) => {
     }
 });
 
-// === DÉMARRAGE MODIFIÉ ===
+// === DÉMARRAGE MODIFIÉ AVEC SYSTÈME D'EXPÉRIENCE ===
 
 const PORT = process.env.PORT || 5000;
 
 async function startBot() {
-    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub + Clans");
+    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank");
     log.info("💖 Personnalité super gentille et amicale, comme une très bonne amie");
     log.info("👨‍💻 Créée par Durand");
     log.info("📅 Année: 2025");
@@ -1213,6 +1281,13 @@ async function startBot() {
     await loadDataFromGitHub();
 
     loadCommands();
+
+    // ✅ NOUVEAU: Charger les données d'expérience après le chargement des commandes
+    if (rankCommand) {
+        log.info("🎯 Système d'expérience détecté et prêt !");
+    } else {
+        log.warning("⚠️ Commande rank non trouvée - Système d'expérience désactivé");
+    }
 
     const missingVars = [];
     if (!PAGE_ACCESS_TOKEN) {
@@ -1235,19 +1310,21 @@ async function startBot() {
     }
 
     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
 
     log.info(`🎨 ${COMMANDS.size} commandes disponibles`);
     log.info(`👥 ${userList.size} utilisateurs en mémoire`);
     log.info(`💬 ${userMemory.size} conversations en mémoire`);
     log.info(`🖼️ ${userLastImage.size} images en mémoire`);
     log.info(`🏰 ${clanCount} clans en mémoire`);
+    log.info(`⭐ ${expDataCount} utilisateurs avec expérience`);
     log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
     log.info(`📂 Repository: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
     log.info(`🌐 Serveur sur le port ${PORT}`);
     
     startAutoSave();
     
-    log.info("🎉 NakamaBot Amicale + Vision + GitHub + Clans prête à aider avec gentillesse !");
+    log.info("🎉 NakamaBot Amicale + Vision + GitHub + Clans + Rank prête à aider avec gentillesse !");
 
     app.listen(PORT, () => {
         log.info(`🌐 Serveur démarré sur le port ${PORT}`);
