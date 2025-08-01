@@ -2,7 +2,7 @@
  * Commande /rank - Génère et affiche une carte de rang avec HTML
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Arguments (non utilisés)
- * @param {object} ctx - Contexte partagé du bot 
+ * @param {object} ctx - Contexte partagé du bot
  */
 
 const axios = require('axios');
