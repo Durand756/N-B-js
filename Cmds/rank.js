@@ -33,7 +33,6 @@ async function getUserAvatar(userId, ctx) {
         });
         return response.data.picture?.data?.url || null;
     } catch (error) {
-        // Suppression du console.error pour éviter les messages indésirables
         return null;
     }
 }
@@ -53,28 +52,34 @@ async function getUserName(userId, ctx) {
         });
         return response.data.name || `Utilisateur ${userId.substring(0, 8)}`;
     } catch (error) {
-        // Suppression du console.error pour éviter les messages indésirables
         return `Utilisateur ${userId.substring(0, 8)}`;
     }
 }
 
 // Fonction pour créer un avatar par défaut
 function createDefaultAvatar() {
-    const canvas = createCanvas(100, 100);
+    const canvas = createCanvas(120, 120);
     const ctx = canvas.getContext('2d');
     
     // Fond dégradé
-    const gradient = ctx.createLinearGradient(0, 0, 100, 100);
+    const gradient = ctx.createLinearGradient(0, 0, 120, 120);
     gradient.addColorStop(0, '#667eea');
     gradient.addColorStop(1, '#764ba2');
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 100, 100);
+    ctx.fillRect(0, 0, 120, 120);
+    
+    // Créer un cercle
+    ctx.beginPath();
+    ctx.arc(60, 60, 60, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fill();
     
     // Icône utilisateur
     ctx.fillStyle = 'white';
-    ctx.font = 'bold 50px Arial';
+    ctx.font = 'bold 60px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('👤', 50, 65);
+    ctx.textBaseline = 'middle';
+    ctx.fillText('👤', 60, 60);
     
     return canvas;
 }
@@ -82,15 +87,17 @@ function createDefaultAvatar() {
 // Fonction pour dessiner un avatar circulaire
 async function drawCircularAvatar(ctx, avatarUrl, x, y, size) {
     try {
-        let avatarCanvas;
+        let avatarImage;
         
         if (avatarUrl) {
-            const avatar = await loadImage(avatarUrl);
-            avatarCanvas = createCanvas(size, size);
-            const avatarCtx = avatarCanvas.getContext('2d');
-            avatarCtx.drawImage(avatar, 0, 0, size, size);
+            try {
+                avatarImage = await loadImage(avatarUrl);
+            } catch (error) {
+                // Si échec du chargement, utiliser avatar par défaut
+                avatarImage = createDefaultAvatar();
+            }
         } else {
-            avatarCanvas = createDefaultAvatar();
+            avatarImage = createDefaultAvatar();
         }
         
         // Créer le masque circulaire
@@ -98,26 +105,44 @@ async function drawCircularAvatar(ctx, avatarUrl, x, y, size) {
         ctx.beginPath();
         ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
         ctx.clip();
-        ctx.drawImage(avatarCanvas, x, y, size, size);
+        
+        // Dessiner l'image dans le cercle
+        ctx.drawImage(avatarImage, x, y, size, size);
         ctx.restore();
         
-        // Bordure
+        // Bordure blanche
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
         ctx.stroke();
         
     } catch (error) {
-        // Dessiner avatar par défaut en cas d'erreur (silencieux)
-        const defaultAvatar = createDefaultAvatar();
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI * 2);
-        ctx.clip();
-        ctx.drawImage(defaultAvatar, x, y, size, size);
-        ctx.restore();
+        console.log('Erreur avatar:', error.message);
+        // Dessiner un rectangle coloré en cas d'erreur totale
+        ctx.fillStyle = '#667eea';
+        ctx.fillRect(x, y, size, size);
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 40px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('?', x + size/2, y + size/2);
     }
+}
+
+// Fonction pour dessiner un rectangle arrondi (si pas disponible nativement)
+function roundRect(ctx, x, y, width, height, radius) {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
 }
 
 // Génération de la carte de rang avec Canvas
@@ -148,12 +173,14 @@ async function generateRankCard(data) {
     // Nom d'utilisateur
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 36px Arial';
-    ctx.fillText(name, 180, 70);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(name, 180, 40);
     
     // Niveau
     ctx.fillStyle = '#FFD700';
     ctx.font = 'bold 48px Arial';
-    ctx.fillText(`Niveau ${level}`, 180, 120);
+    ctx.fillText(`Niveau ${level}`, 180, 90);
     
     // Rang
     ctx.fillStyle = '#ffffff';
@@ -167,39 +194,44 @@ async function generateRankCard(data) {
     const barHeight = 30;
     
     ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.roundRect(barX, barY, barWidth, barHeight, 15);
+    roundRect(ctx, barX, barY, barWidth, barHeight, 15);
     ctx.fill();
     
     // Barre de progression - Remplissage
-    const progress = currentExp / expNextLevel;
+    const progress = Math.max(0, Math.min(1, currentExp / expNextLevel));
     const progressWidth = barWidth * progress;
     
-    const progressGradient = ctx.createLinearGradient(barX, barY, barX + progressWidth, barY);
-    progressGradient.addColorStop(0, '#00ff88');
-    progressGradient.addColorStop(1, '#00d4ff');
-    
-    ctx.fillStyle = progressGradient;
-    ctx.roundRect(barX, barY, progressWidth, barHeight, 15);
-    ctx.fill();
+    if (progressWidth > 0) {
+        const progressGradient = ctx.createLinearGradient(barX, barY, barX + progressWidth, barY);
+        progressGradient.addColorStop(0, '#00ff88');
+        progressGradient.addColorStop(1, '#00d4ff');
+        
+        ctx.fillStyle = progressGradient;
+        roundRect(ctx, barX, barY, progressWidth, barHeight, 15);
+        ctx.fill();
+    }
     
     // Texte de progression
     ctx.fillStyle = '#ffffff';
     ctx.font = '18px Arial';
     ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     ctx.fillText(`${currentExp}/${expNextLevel} XP (${Math.round(progress * 100)}%)`, 
-                 barX + barWidth/2, barY + barHeight/2 + 6);
+                 barX + barWidth/2, barY + barHeight/2);
     
     // XP Total
     ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
     ctx.font = '20px Arial';
-    ctx.fillText(`XP Total: ${exp}`, 180, 250);
+    ctx.fillText(`XP Total: ${exp}`, 180, 230);
     
     // Décorations
     ctx.fillStyle = '#FFD700';
     ctx.font = '30px Arial';
-    ctx.fillText('🏆', width - 80, 50);
-    ctx.fillText('⭐', width - 80, 100);
-    ctx.fillText('🎯', width - 80, 150);
+    ctx.textAlign = 'center';
+    ctx.fillText('🏆', width - 50, 50);
+    ctx.fillText('⭐', width - 50, 100);
+    ctx.fillText('🎯', width - 50, 150);
     
     return canvas.toBuffer('image/png');
 }
@@ -260,7 +292,7 @@ async function createAccessibleImageUrl(imageBuffer, userId, ctx) {
 
 // Fonction pour nettoyer les fichiers temporaires
 function cleanupTempFile(filePath) {
-    if (!filePath) return; // Pas de fichier à nettoyer (cas Base64)
+    if (!filePath) return;
     
     setTimeout(() => {
         try {
@@ -268,9 +300,9 @@ function cleanupTempFile(filePath) {
                 fs.unlinkSync(filePath);
             }
         } catch (error) {
-            // Nettoyage silencieux - pas de log d'erreur
+            // Nettoyage silencieux
         }
-    }, 10000); // Nettoyer après 10 secondes
+    }, 10000);
 }
 
 module.exports = async function cmdRank(senderId, args, ctx) {
@@ -286,7 +318,7 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         
         // Initialiser l'expérience si nécessaire
         if (!userExp.has(senderIdStr)) {
-            userExp.set(senderIdStr, 0);
+            userExp.set(senderIdStr, 100); // Donner un peu d'XP par défaut pour les tests
         }
         
         const exp = userExp.get(senderIdStr);
@@ -296,14 +328,14 @@ module.exports = async function cmdRank(senderId, args, ctx) {
         const expNextLevel = expForNextLevel - expForCurrentLevel;
         const currentExp = exp - expForCurrentLevel;
         
-        // Calculer le rang (tous les utilisateurs avec de l'XP)
+        // Calculer le rang
         const allUsersWithExp = Array.from(userExp.entries())
             .filter(([id, exp]) => exp > 0)
             .map(([id, exp]) => ({ id, exp }))
             .sort((a, b) => b.exp - a.exp);
         
         const userRank = allUsersWithExp.findIndex(user => user.id === senderIdStr) + 1;
-        const totalUsers = allUsersWithExp.length;
+        const totalUsers = Math.max(allUsersWithExp.length, 1);
         
         // Obtenir les informations utilisateur
         const [userName, userAvatar] = await Promise.all([
@@ -318,13 +350,19 @@ module.exports = async function cmdRank(senderId, args, ctx) {
             expNextLevel: expNextLevel,
             currentExp: currentExp,
             rank: userRank || 1,
-            totalUsers: Math.max(totalUsers, 1),
+            totalUsers: totalUsers,
             avatar: userAvatar
         };
         
         try {
             // Essayer de générer l'image
             const imageBuffer = await generateRankCard(rankData);
+            
+            // Vérifier que le buffer n'est pas vide
+            if (!imageBuffer || imageBuffer.length === 0) {
+                throw new Error("Buffer d'image vide");
+            }
+            
             const imageResult = await createAccessibleImageUrl(imageBuffer, senderIdStr, ctx);
             
             if (!imageResult) {
@@ -338,7 +376,6 @@ module.exports = async function cmdRank(senderId, args, ctx) {
                 cleanupTempFile(imageResult.filePath);
             }
             
-            // ✅ NOUVELLE LOGIQUE: Retourner l'objet image selon le format du fichier mère
             return {
                 type: 'image',
                 url: imageResult.url,
