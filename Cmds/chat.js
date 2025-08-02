@@ -68,7 +68,7 @@ J’ai créé un **chatbot Facebook spécial**: (https://www.facebook.com/profil
 1. Ajoute le bot en ami sur Facebook.  
 2. Envoie-lui une commande en message privé, et la guerre commence !  
 **Plus de spam, plus de désordre… juste de la stratégie et des batailles épiques !** 🏆  
-*(Besoin d’aide ? Demande-moi ou envoie `/clan help` au bot !)*
+*(Besoin d’aide ? Demande-moi ou envoie '/clan help' au bot !)*
 N
 
 PERSONNALITÉ INTELLIGENTE:
