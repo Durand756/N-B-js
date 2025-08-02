@@ -5,27 +5,17 @@
  * @param {object} ctx - Contexte partagé du bot
  */
 module.exports = async function cmdHelp(senderId, args, ctx) {
-    const { isAdmin, sendMessage } = ctx;
+    const { isAdmin } = ctx;
     
     try {
         const imageUrl = 'https://raw.githubusercontent.com/Durand756/N-B-js/refs/heads/main/Cmds/imgs/HELP-NAKAMA.png';
         await ctx.sendImageMessage(senderId, imageUrl);
     } catch (err) {
         ctx.log.error(`❌ Erreur image: ${err.message}`);
-    }    
-    
-    // Message texte principal
-    let text = `╔═══════════╗
-║ 🤖 NAKAMABOT v4.0║
-║ ----------HELP 🤖----------║
-╚═══════════╝
-✨ COMMANDES PRINCIPALES disponibles:`;
+    }
 
-    // Envoyer le message texte principal
-    await sendMessage(senderId, text);
-
-    // Fonction pour envoyer des boutons avec l'API Facebook
-    async function sendButtonMessage(recipientId, text, buttons) {
+    // Fonction pour envoyer un message avec boutons intégrés
+    async function sendMessageWithButtons(recipientId, text, buttons) {
         if (!ctx.PAGE_ACCESS_TOKEN) {
             ctx.log.error("❌ PAGE_ACCESS_TOKEN manquant");
             return { success: false, error: "No token" };
@@ -56,61 +46,25 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
                 }
             );
 
-            if (response.status === 200) {
-                return { success: true };
-            } else {
-                ctx.log.error(`❌ Erreur Facebook API: ${response.status}`);
-                return { success: false, error: `API Error ${response.status}` };
-            }
+            return response.status === 200 ? { success: true } : { success: false, error: `API Error ${response.status}` };
         } catch (error) {
             ctx.log.error(`❌ Erreur envoi boutons: ${error.message}`);
             return { success: false, error: error.message };
         }
     }
 
-    // Fonction pour envoyer des boutons rapides
-    async function sendQuickReplies(recipientId, text, quickReplies) {
-        if (!ctx.PAGE_ACCESS_TOKEN) {
-            ctx.log.error("❌ PAGE_ACCESS_TOKEN manquant");
-            return { success: false, error: "No token" };
-        }
+    await ctx.sleep(300);
 
-        const data = {
-            recipient: { id: String(recipientId) },
-            message: {
-                text: text,
-                quick_replies: quickReplies
-            }
-        };
+    // Message principal avec boutons BASE
+    let mainText = `╔═══════════╗
+║ 🤖 NAKAMABOT v4.0║
+║ ----------HELP 🤖----------║
+╚═══════════╝
 
-        try {
-            const axios = require('axios');
-            const response = await axios.post(
-                "https://graph.facebook.com/v18.0/me/messages",
-                data,
-                {
-                    params: { access_token: ctx.PAGE_ACCESS_TOKEN },
-                    timeout: 15000
-                }
-            );
+🏠 COMMANDES BASE:
+Clique sur les boutons ci-dessous ! ⬇️`;
 
-            if (response.status === 200) {
-                return { success: true };
-            } else {
-                ctx.log.error(`❌ Erreur Facebook API: ${response.status}`);
-                return { success: false, error: `API Error ${response.status}` };
-            }
-        } catch (error) {
-            ctx.log.error(`❌ Erreur envoi quick replies: ${error.message}`);
-            return { success: false, error: error.message };
-        }
-    }
-
-    // Délai entre les messages
-    await ctx.sleep(500);
-
-    // 🏠 COMMANDES BASE
-    await sendButtonMessage(senderId, "🏠 COMMANDES BASE:", [
+    await sendMessageWithButtons(senderId, mainText, [
         {
             type: "postback",
             title: "🏠 /start",
@@ -118,20 +72,23 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
         },
         {
             type: "postback", 
-            title: "❓ /help",
-            payload: "/help"
+            title: "💬 /chat",
+            payload: "/chat Salut NakamaBot !"
         },
         {
             type: "postback",
-            title: "💬 /chat",
-            payload: "/chat Salut !"
+            title: "🏆 /rank",
+            payload: "/rank"
         }
     ]);
 
     await ctx.sleep(800);
 
-    // 🎵 COMMANDES MÉDIA
-    await sendButtonMessage(senderId, "🎵 COMMANDES MÉDIA:", [
+    // Message MÉDIA avec boutons
+    let mediaText = `🎵 COMMANDES MÉDIA:
+Génération d'images et transformations ! 🎨`;
+
+    await sendMessageWithButtons(senderId, mediaText, [
         {
             type: "postback",
             title: "🎵 /music",
@@ -140,7 +97,7 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
         {
             type: "postback",
             title: "🎨 /image",
-            payload: "/image chat mignon"
+            payload: "/image chat mignon kawaii"
         },
         {
             type: "postback",
@@ -151,30 +108,36 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 
     await ctx.sleep(800);
 
-    // Bouton Vision et Clan
-    await sendQuickReplies(senderId, "👁️ VISION & ⚔️ CLANS:", [
+    // Message VISION & CLANS avec boutons
+    let visionText = `👁️ VISION & ⚔️ CLANS:
+Analyse d'images et système de guerre ! 👁️⚔️`;
+
+    await sendMessageWithButtons(senderId, visionText, [
         {
-            content_type: "text",
+            type: "postback",
             title: "👁️ /vision",
             payload: "/vision"
         },
         {
-            content_type: "text", 
+            type: "postback",
             title: "⚔️ /clan help",
             payload: "/clan help"
         },
         {
-            content_type: "text",
-            title: "🏆 /rank",
-            payload: "/rank"
+            type: "postback",
+            title: "🔍 /search",
+            payload: "/search"
         }
     ]);
 
     await ctx.sleep(800);
 
-    // 🔐 COMMANDES ADMIN (si admin)
+    // Boutons ADMIN (si admin)
     if (isAdmin(senderId)) {
-        await sendButtonMessage(senderId, "🔐 COMMANDES ADMIN:", [
+        let adminText = `🔐 COMMANDES ADMIN:
+Panel d'administration spécial ! 🔐`;
+
+        await sendMessageWithButtons(senderId, adminText, [
             {
                 type: "postback",
                 title: "📊 /stats",
@@ -194,34 +157,47 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 
         await ctx.sleep(800);
 
-        await sendQuickReplies(senderId, "🔐 ADMIN AVANCÉ:", [
+        // Boutons admin avancés
+        let adminAdvText = `🔐 ADMIN AVANCÉ:
+Gestion système du bot ! ⚙️`;
+
+        await sendMessageWithButtons(senderId, adminAdvText, [
             {
-                content_type: "text",
+                type: "postback",
                 title: "⏹️ /stop-broadcast",
                 payload: "/stop-broadcast"
             },
             {
-                content_type: "text",
+                type: "postback",
                 title: "🔄 /restart",
                 payload: "/restart"
+            },
+            {
+                type: "postback",
+                title: "❓ /help",
+                payload: "/help"
             }
         ]);
     }
 
     await ctx.sleep(800);
 
-    // Message final avec instructions
-    const finalText = `════════════════════════
-🎨 Images: Envoie ta description !
-🎭 Anime: Image + "/anime" !
-👁️ Vision: Image + "/vision" !
-🏆 Expérience: Gagne des niveaux !
+    // Message final sans boutons
+    let finalText = `════════════════════════
+📝 INSTRUCTIONS:
+🎨 Images: Décris ce que tu veux !
+🎭 Anime: Envoie une image + clique /anime !
+👁️ Vision: Envoie une image + clique /vision !
+🏆 Expérience: Gagne des niveaux en discutant !
+
+💡 Tu peux soit:
+• Cliquer sur les boutons ⬆️
+• Taper directement les commandes
+
 ╰─▸ Créé avec 💕 par Durand
-💖 Toujours là pour t'aider ! ✨
+💖 Toujours là pour t'aider ! ✨`;
 
-💡 Clique sur les boutons ci-dessus ou tape directement les commandes !`;
+    await ctx.sendMessage(senderId, finalText);
 
-    await sendMessage(senderId, finalText);
-
-    return null; // Ne pas renvoyer de texte car tout est envoyé via les fonctions
+    return null; // Pas de retour car tout est envoyé directement
 };
