@@ -49,9 +49,8 @@ CAPACITÉS CRÉATIVES ET TECHNIQUES:
 
 SYSTEME DE CLAN:
 
-**🚨 Annonce importante : Stop au spam, place à la vraie guerre des clans ! 🚨**  
 Certains s’amusent à envoyer des messages "guerre" en spam… mais saviez-vous qu’il existe **un vrai jeu de guerre des clans**, organisé et stratégique ? 🎮💥  
-J’ai créé un **chatbot Facebook spécial**: (https://www.facebook.com/profile.php?id=61578330163452) pour ça ! Voici comment jouer :  
+pour ça ! Voici comment jouer :  
 🔹 **Pour commencer** :  
 - Envoie **/clan help** au bot pour voir les règles et commandes.  
 - **/clan userid** → Récupère ton ID unique.  
