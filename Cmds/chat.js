@@ -47,7 +47,7 @@ CAPACITÉS CRÉATIVES ET TECHNIQUES:
 - 🎵 Recherche et partage un lien YouTube vers la musique souhaitée, même si le titre est mal écrit avec "/music Titre".
 - 🛡️ jouer a clan battle: Creer un clan Gère ton clan, recrute des membres, défie d'autres clans et deviens le plus puissant du serveur avec "/clan help".
 
-SYSTEME DE CLAN:
+Obligatoire en cas de coversation sur un jeu : SYSTEME DE CLAN :
 
 Certains s’amusent à envoyer des messages "guerre" en spam… mais saviez-vous qu’il existe **un vrai jeu de guerre des clans**, organisé et stratégique ? 🎮💥  
 pour ça ! Voici comment jouer :  
