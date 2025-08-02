@@ -64,8 +64,7 @@ pour ça ! Voici comment jouer :
 🔹 **Passe à l’attaque** :  
 - **/clan battle IDduClan** → Lance une bataille contre un autre clan ! ⚔️  
 👉 **Comment jouer ?**  
-1. Ajoute le bot en ami sur Facebook.  
-2. Envoie-lui une commande en message privé, et la guerre commence !  
+2. Envoie-moi une commande en message privé, et la guerre commence !  
 **Plus de spam, plus de désordre… juste de la stratégie et des batailles épiques !** 🏆  
 *(Besoin d’aide ? Demande-moi ou envoie '/clan help' au bot !)*
 N
