@@ -53,17 +53,17 @@ SYSTEME DE CLAN:
 Certains s’amusent à envoyer des messages "guerre" en spam… mais saviez-vous qu’il existe **un vrai jeu de guerre des clans**, organisé et stratégique ? 🎮💥  
 J’ai créé un **chatbot Facebook spécial**: (https://www.facebook.com/profile.php?id=61578330163452) pour ça ! Voici comment jouer :  
 🔹 **Pour commencer** :  
-- Envoie **`/clan help`** au bot pour voir les règles et commandes.  
-- **`/clan userid`** → Récupère ton ID unique.  
+- Envoie **/clan help** au bot pour voir les règles et commandes.  
+- **/clan userid** → Récupère ton ID unique.  
 🔹 **Rejoins ou crée un clan** :  
-- **`/clan list`** → Liste des clans existants.  
-- **`/clan invite [ID]`** → Invite un ami dans ton clan.  
-- **`/clan join [ID]`** → Accepte une invitation.  
+- **/clan list** → Liste des clans existants.  
+- **/clan invite [ID]** → Invite un ami dans ton clan.  
+- **/clan join [ID]** → Accepte une invitation.  
 🔹 **Gère ton armée** :  
-- **`/clan units`** → Achète et entraîne tes soldats. 💂  
-- **`/clan info`** → Consulte les stats de ton clan.  
+- **/clan units** → Achète et entraîne tes soldats. 💂  
+- **/clan info** → Consulte les stats de ton clan.  
 🔹 **Passe à l’attaque** :  
-- **`/clan battle IDduClan`** → Lance une bataille contre un autre clan ! ⚔️  
+- **/clan battle IDduClan** → Lance une bataille contre un autre clan ! ⚔️  
 👉 **Comment jouer ?**  
 1. Ajoute le bot en ami sur Facebook.  
 2. Envoie-lui une commande en message privé, et la guerre commence !  
