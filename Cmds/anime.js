@@ -20,8 +20,8 @@ module.exports = async function cmdAnime(senderId, args, ctx) {
         // Récupérer l'URL de la dernière image de l'utilisateur
         const originalImageUrl = userLastImage.get(senderIdStr);
         
-        // Créer un prompt de transformation anime détaillé
-        const transformPrompt = "transform this image into beautiful anime art style, anime character, manga style, detailed anime drawing, vibrant colors, anime aesthetic, high quality anime transformation, keep the main subject and composition but make it anime style";
+        // Prompt court et efficace pour la transformation
+        const transformPrompt = "anime style, manga art";
         
         // Encoder le prompt pour l'URL
         const encodedPrompt = encodeURIComponent(transformPrompt);
