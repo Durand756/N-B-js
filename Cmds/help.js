@@ -14,8 +14,8 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
         ctx.log.error(`❌ Erreur image: ${err.message}`);
     }
 
-    // Fonction pour envoyer un message avec boutons intégrés
-    async function sendMessageWithButtons(recipientId, text, buttons) {
+    // Fonction corrigée pour envoyer des Quick Replies (plus fiable que les Button Templates)
+    async function sendQuickReplies(recipientId, text, quickReplies) {
         if (!ctx.PAGE_ACCESS_TOKEN) {
             ctx.log.error("❌ PAGE_ACCESS_TOKEN manquant");
             return { success: false, error: "No token" };
@@ -24,14 +24,8 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
         const data = {
             recipient: { id: String(recipientId) },
             message: {
-                attachment: {
-                    type: "template",
-                    payload: {
-                        template_type: "button",
-                        text: text,
-                        buttons: buttons
-                    }
-                }
+                text: text,
+                quick_replies: quickReplies
             }
         };
 
@@ -46,16 +40,22 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
                 }
             );
 
-            return response.status === 200 ? { success: true } : { success: false, error: `API Error ${response.status}` };
+            if (response.status === 200) {
+                ctx.log.info(`✅ Quick replies envoyées à ${recipientId}`);
+                return { success: true };
+            } else {
+                ctx.log.error(`❌ Erreur Facebook API: ${response.status}`);
+                return { success: false, error: `API Error ${response.status}` };
+            }
         } catch (error) {
-            ctx.log.error(`❌ Erreur envoi boutons: ${error.message}`);
+            ctx.log.error(`❌ Erreur envoi quick replies: ${error.message}`);
             return { success: false, error: error.message };
         }
     }
 
     await ctx.sleep(300);
 
-    // Message principal avec boutons BASE
+    // Message principal avec Quick Replies pour commandes BASE
     let mainText = `╔═══════════╗
 ║ 🤖 NAKAMABOT v4.0║
 ║ ----------HELP 🤖----------║
@@ -64,130 +64,130 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 🏠 COMMANDES BASE:
 Clique sur les boutons ci-dessous ! ⬇️`;
 
-    await sendMessageWithButtons(senderId, mainText, [
+    await sendQuickReplies(senderId, mainText, [
         {
-            type: "postback",
+            content_type: "text",
             title: "🏠 /start",
             payload: "/start"
         },
         {
-            type: "postback", 
+            content_type: "text", 
             title: "💬 /chat",
-            payload: "/chat Salut NakamaBot !"
+            payload: "/chat"
         },
         {
-            type: "postback",
+            content_type: "text",
             title: "🏆 /rank",
             payload: "/rank"
         }
     ]);
 
-    await ctx.sleep(800);
+    await ctx.sleep(1000);
 
-    // Message MÉDIA avec boutons
+    // Message MÉDIA avec Quick Replies
     let mediaText = `🎵 COMMANDES MÉDIA:
 Génération d'images et transformations ! 🎨`;
 
-    await sendMessageWithButtons(senderId, mediaText, [
+    await sendQuickReplies(senderId, mediaText, [
         {
-            type: "postback",
+            content_type: "text",
             title: "🎵 /music",
             payload: "/music"
         },
         {
-            type: "postback",
+            content_type: "text",
             title: "🎨 /image",
-            payload: "/image chat mignon kawaii"
+            payload: "/image"
         },
         {
-            type: "postback",
+            content_type: "text",
             title: "🎭 /anime",
             payload: "/anime"
         }
     ]);
 
-    await ctx.sleep(800);
+    await ctx.sleep(1000);
 
-    // Message VISION & CLANS avec boutons
+    // Message VISION & CLANS avec Quick Replies
     let visionText = `👁️ VISION & ⚔️ CLANS:
 Analyse d'images et système de guerre ! 👁️⚔️`;
 
-    await sendMessageWithButtons(senderId, visionText, [
+    await sendQuickReplies(senderId, visionText, [
         {
-            type: "postback",
+            content_type: "text",
             title: "👁️ /vision",
             payload: "/vision"
         },
         {
-            type: "postback",
+            content_type: "text",
             title: "⚔️ /clan help",
             payload: "/clan help"
         },
         {
-            type: "postback",
+            content_type: "text",
             title: "🔍 /search",
             payload: "/search"
         }
     ]);
 
-    await ctx.sleep(800);
+    await ctx.sleep(1000);
 
     // Boutons ADMIN (si admin)
     if (isAdmin(senderId)) {
         let adminText = `🔐 COMMANDES ADMIN:
 Panel d'administration spécial ! 🔐`;
 
-        await sendMessageWithButtons(senderId, adminText, [
+        await sendQuickReplies(senderId, adminText, [
             {
-                type: "postback",
+                content_type: "text",
                 title: "📊 /stats",
                 payload: "/stats"
             },
             {
-                type: "postback",
+                content_type: "text",
                 title: "🔐 /admin", 
                 payload: "/admin"
             },
             {
-                type: "postback",
+                content_type: "text",
                 title: "📢 /broadcast",
                 payload: "/broadcast"
             }
         ]);
 
-        await ctx.sleep(800);
+        await ctx.sleep(1000);
 
         // Boutons admin avancés
         let adminAdvText = `🔐 ADMIN AVANCÉ:
 Gestion système du bot ! ⚙️`;
 
-        await sendMessageWithButtons(senderId, adminAdvText, [
+        await sendQuickReplies(senderId, adminAdvText, [
             {
-                type: "postback",
+                content_type: "text",
                 title: "⏹️ /stop-broadcast",
                 payload: "/stop-broadcast"
             },
             {
-                type: "postback",
+                content_type: "text",
                 title: "🔄 /restart",
                 payload: "/restart"
             },
             {
-                type: "postback",
+                content_type: "text",
                 title: "❓ /help",
                 payload: "/help"
             }
         ]);
     }
 
-    await ctx.sleep(800);
+    await ctx.sleep(1000);
 
     // Message final sans boutons
     let finalText = `════════════════════════
 📝 INSTRUCTIONS:
-🎨 Images: Décris ce que tu veux !
-🎭 Anime: Envoie une image + clique /anime !
-👁️ Vision: Envoie une image + clique /vision !
+🎨 Images: Tape "/image [description]"
+🎭 Anime: Envoie une image + "/anime"
+👁️ Vision: Envoie une image + "/vision"
 🏆 Expérience: Gagne des niveaux en discutant !
 
 💡 Tu peux soit:
