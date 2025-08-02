@@ -86,31 +86,37 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 💖 Toujours là pour t'aider ! ✨`;
 
     // Boutons Quick Reply qui restent visibles
+    // IMPORTANT: Le title est ce qui est envoyé comme message !
     const quickReplies = [
         {
             content_type: "text",
-            title: "🏠 /start",
-            payload: "/start"
+            title: "/start",
+            payload: "START_CMD"
         },
         {
             content_type: "text",
-            title: "🎨 /image",
-            payload: "/image chat mignon"
+            title: "/image chat mignon",
+            payload: "IMAGE_CMD"
         },
         {
             content_type: "text",
-            title: "🎭 /anime",
-            payload: "/anime"
+            title: "/anime",
+            payload: "ANIME_CMD"
         },
         {
             content_type: "text",
-            title: "👁️ /vision", 
-            payload: "/vision"
+            title: "/vision", 
+            payload: "VISION_CMD"
         },
         {
             content_type: "text",
-            title: "🏆 /rank",
-            payload: "/rank"
+            title: "/rank",
+            payload: "RANK_CMD"
+        },
+        {
+            content_type: "text",
+            title: "/clan help",
+            payload: "CLAN_CMD"
         }
     ];
 
@@ -119,13 +125,18 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
         quickReplies.push(
             {
                 content_type: "text",
-                title: "📊 /stats",
-                payload: "/stats"
+                title: "/stats",
+                payload: "STATS_CMD"
             },
             {
                 content_type: "text", 
-                title: "🔐 /admin",
-                payload: "/admin"
+                title: "/admin",
+                payload: "ADMIN_CMD"
+            },
+            {
+                content_type: "text",
+                title: "/broadcast",
+                payload: "BROADCAST_CMD"
             }
         );
     }
