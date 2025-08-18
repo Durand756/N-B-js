@@ -1,5 +1,5 @@
 /**
- * Commande /chat - Conversation avec l'IA intelligente + Auto-exécution de commandes + Contact Admin
+ * Commande /chat - Conversation avec l'IA intelligente + Auto-exécution de commandes
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
@@ -17,17 +17,8 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         return "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
     }
     
-    // ✅ NOUVEAU: Détection des demandes de contact admin
-    const contactIntention = detectContactAdminIntention(args);
-    if (contactIntention.shouldContact) {
-        log.info(`📞 Intention contact admin détectée pour ${senderId}: ${contactIntention.reason}`);
-        
-        // Suggérer d'utiliser la commande contact
-        const contactSuggestion = generateContactSuggestion(contactIntention.reason, contactIntention.extractedMessage);
-        addToMemory(String(senderId), 'user', args);
-        addToMemory(String(senderId), 'assistant', contactSuggestion);
-        return contactSuggestion;
-    }
+    // Enregistrer le message utilisateur
+    addToMemory(String(senderId), 'user', args);
     
     // ✅ NOUVEAU: Détection intelligente des intentions de commandes
     const commandIntentions = await detectCommandIntentions(args, ctx);
@@ -89,158 +80,6 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     return await handleNormalConversation(senderId, args, ctx);
 };
 
-// ✅ NOUVELLE FONCTION: Détecter les demandes de contact admin
-function detectContactAdminIntention(message) {
-    const lowerMessage = message.toLowerCase();
-    
-    // Patterns de détection pour contact admin
-    const contactPatterns = [
-        // Demandes directes d'aide admin
-        { patterns: [/(?:contacter|parler|écrire).*?(?:admin|administrateur|créateur|durand)/i], reason: 'contact_direct' },
-        { patterns: [/(?:aide|help|assistance).*?(?:admin|support|équipe)/i], reason: 'aide_admin' },
-        { patterns: [/(?:problème|bug|erreur|dysfonction).*?(?:grave|urgent|important)/i], reason: 'probleme_technique' },
-        { patterns: [/(?:signaler|reporter|dénoncer).*?(?:problème|bug|utilisateur|abus)/i], reason: 'signalement' },
-        
-        // Demandes de fonctionnalités
-        { patterns: [/(?:ajouter|créer|développer|nouvelle?).*?(?:fonctionnalité|commande|feature)/i], reason: 'demande_feature' },
-        { patterns: [/(?:suggestion|propose|idée).*?(?:amélioration|nouvelle|pour le bot)/i], reason: 'suggestion' },
-        
-        // Questions sur le bot
-        { patterns: [/(?:qui a créé|créateur|développeur|programmé).*?(?:bot|toi|nakamabot)/i], reason: 'question_creation' },
-        { patterns: [/(?:comment.*?fonctionne|comment.*?programmé|code source)/i], reason: 'question_technique' },
-        
-        // Plaintes ou réclamations
-        { patterns: [/(?:pas content|mécontent|plainte|réclamation|pas satisfait)/i], reason: 'plainte' },
-        { patterns: [/(?:ne marche pas|ne fonctionne pas|cassé|broken).*?(?:commande|bot)/i], reason: 'dysfonctionnement' },
-        
-        // Demandes spéciales
-        { patterns: [/(?:ban|bannir|bloquer|exclure).*?utilisateur/i], reason: 'demande_moderation' },
-        { patterns: [/(?:access|accès|permission|droit).*?(?:spécial|admin|modérateur)/i], reason: 'demande_permissions' },
-        
-        // Questions sur les données
-        { patterns: [/(?:supprimer|effacer|delete).*?(?:données|historique|conversation)/i], reason: 'gestion_donnees' },
-        { patterns: [/(?:vie privée|confidentialité|données personnelles|rgpd)/i], reason: 'confidentialite' }
-    ];
-    
-    for (const category of contactPatterns) {
-        for (const pattern of category.patterns) {
-            if (pattern.test(message)) {
-                // Extraire le message pour le contact
-                let extractedMessage = message;
-                
-                // Si c'est une question sur la création, donner une réponse directe
-                if (category.reason === 'question_creation') {
-                    return { shouldContact: false }; // Géré directement par l'IA
-                }
-                
-                return {
-                    shouldContact: true,
-                    reason: category.reason,
-                    extractedMessage: extractedMessage
-                };
-            }
-        }
-    }
-    
-    // Détection des mots-clés urgents
-    const urgentKeywords = ['urgent', 'rapidement', 'vite', 'immédiatement', 'help', 'aide', 'sos'];
-    const problemKeywords = ['problème', 'bug', 'erreur', 'cassé', 'marche pas', 'fonctionne pas'];
-    
-    const hasUrgent = urgentKeywords.some(keyword => lowerMessage.includes(keyword));
-    const hasProblem = problemKeywords.some(keyword => lowerMessage.includes(keyword));
-    
-    if (hasUrgent && hasProblem) {
-        return {
-            shouldContact: true,
-            reason: 'urgence_technique',
-            extractedMessage: message
-        };
-    }
-    
-    return { shouldContact: false };
-}
-
-// ✅ NOUVELLE FONCTION: Générer une suggestion de contact
-function generateContactSuggestion(reason, extractedMessage) {
-    const reasonMessages = {
-        'contact_direct': {
-            title: "💌 **Contact Direct Admin**",
-            message: "Je vois que tu veux contacter directement les administrateurs !",
-            suggestion: "Utilise `/contact [ton message]` pour envoyer un message direct aux admins."
-        },
-        'aide_admin': {
-            title: "🆘 **Aide Administrative**",
-            message: "Tu as besoin d'une aide spécialisée de l'équipe admin !",
-            suggestion: "Utilise `/contact [décris ton problème]` pour obtenir une assistance personnalisée."
-        },
-        'probleme_technique': {
-            title: "🔧 **Problème Technique**",
-            message: "J'ai détecté un problème technique qui nécessite l'attention des admins !",
-            suggestion: "Utilise `/contact [décris le problème en détail]` pour un support technique."
-        },
-        'signalement': {
-            title: "🚨 **Signalement**",
-            message: "Tu veux signaler quelque chose d'important !",
-            suggestion: "Utilise `/contact [décris ce que tu veux signaler]` pour alerter les admins."
-        },
-        'demande_feature': {
-            title: "💡 **Demande de Fonctionnalité**",
-            message: "Tu as une idée de nouvelle fonctionnalité !",
-            suggestion: "Utilise `/contact [décris ta demande de fonctionnalité]` pour la proposer aux développeurs."
-        },
-        'suggestion': {
-            title: "🌟 **Suggestion d'Amélioration**",
-            message: "Tu as une suggestion pour améliorer le bot !",
-            suggestion: "Utilise `/contact [partage ta suggestion]` pour la transmettre à l'équipe."
-        },
-        'plainte': {
-            title: "📝 **Réclamation**",
-            message: "Tu as une réclamation à formuler !",
-            suggestion: "Utilise `/contact [explique ta réclamation]` pour qu'elle soit traitée par les admins."
-        },
-        'dysfonctionnement': {
-            title: "⚠️ **Dysfonctionnement**",
-            message: "Il semble y avoir un dysfonctionnement !",
-            suggestion: "Utilise `/contact [décris ce qui ne marche pas]` pour un support technique."
-        },
-        'demande_moderation': {
-            title: "🛡️ **Demande de Modération**",
-            message: "Tu veux faire une demande de modération !",
-            suggestion: "Utilise `/contact [décris la situation et l'utilisateur concerné]` pour alerter les modérateurs."
-        },
-        'demande_permissions': {
-            title: "🔐 **Demande de Permissions**",
-            message: "Tu veux faire une demande de permissions spéciales !",
-            suggestion: "Utilise `/contact [explique pourquoi tu as besoin de ces permissions]` pour ta demande."
-        },
-        'gestion_donnees': {
-            title: "🗂️ **Gestion des Données**",
-            message: "Tu veux gérer tes données personnelles !",
-            suggestion: "Utilise `/contact [précise quelle donnée tu veux gérer]` pour une demande de gestion de données."
-        },
-        'confidentialite': {
-            title: "🔒 **Confidentialité et Vie Privée**",
-            message: "Tu as des questions sur la confidentialité !",
-            suggestion: "Utilise `/contact [pose ta question sur la confidentialité]` pour obtenir des informations détaillées."
-        },
-        'urgence_technique': {
-            title: "🚨 **Urgence Technique**",
-            message: "J'ai détecté une demande urgente !",
-            suggestion: "Utilise `/contact [décris l'urgence]` pour une assistance immédiate."
-        }
-    };
-    
-    const reasonData = reasonMessages[reason] || {
-        title: "📞 **Contact Admin**",
-        message: "Il semble que tu aies besoin de contacter les administrateurs !",
-        suggestion: "Utilise `/contact [ton message]` pour les contacter directement."
-    };
-    
-    const preview = extractedMessage.length > 60 ? extractedMessage.substring(0, 60) + "..." : extractedMessage;
-    
-    return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** ${reasonData.suggestion}\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 Tu recevras une réponse personnalisée des admins !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
-}
-
 // ✅ FONCTION: Détecter les intentions de commandes dans le message
 async function detectCommandIntentions(message, ctx) {
     const { callMistralAPI } = ctx;
@@ -254,10 +93,6 @@ async function detectCommandIntentions(message, ctx) {
         
         // Musique
         { patterns: [/(?:joue|[ée]coute|musique|chanson|son).*?(?:youtube|video)/i, /(?:trouve|cherche).*?(?:musique|chanson)/i], command: 'music' },
-        
-        // Contact (ajouté pour la détection des commandes)
-        { patterns: [/^\/contact/i, /(?:commande\s+)?contact.*?admin/i], command: 'contact' },
-        { patterns: [/^\/reply/i, /(?:répondr|répons).*?(?:message|utilisateur)/i], command: 'reply' },
         
         // Clans - Patterns détaillés pour toutes les sous-commandes
         { patterns: [/(?:cr[ée]|fond|[ée]tabli).*?(?:clan|empire|guilde)/i, /nouveau.*?clan/i], command: 'clan', subcommand: 'create' },
@@ -296,14 +131,6 @@ async function detectCommandIntentions(message, ctx) {
                 else if (pattern.command === 'music') {
                     const musicMatch = message.match(/(?:joue|[ée]coute|musique|chanson|trouve|cherche)\s+(?:la\s+)?(?:musique|chanson)?\s*(?:de|d')?\s*(.+)/i);
                     extractedArgs = musicMatch ? musicMatch[1].trim() : message;
-                }
-                else if (pattern.command === 'contact') {
-                    const contactMatch = message.match(/contact\s+(.+)/i);
-                    extractedArgs = contactMatch ? contactMatch[1].trim() : '';
-                }
-                else if (pattern.command === 'reply') {
-                    const replyMatch = message.match(/(?:répondr|répons).*?(?:à|au|message)\s+(\S+)\s+(.+)/i);
-                    extractedArgs = replyMatch ? `${replyMatch[1]} ${replyMatch[2]}` : '';
                 }
                 else if (pattern.command === 'vision') {
                     extractedArgs = ''; // Vision n'a pas besoin d'args
@@ -396,8 +223,6 @@ Commandes disponibles:
 - /rank : Voir son rang et niveau
 - /stats : Statistiques du bot
 - /help : Liste des commandes
-- /contact [message] : Contacter les admins
-- /reply [id] [réponse] : Répondre à un utilisateur (admin)
 
 Réponds UNIQUEMENT par un JSON valide:
 {
@@ -517,7 +342,7 @@ async function handleNormalConversation(senderId, args, ctx) {
     const context = getMemoryContext(String(senderId));
     const messageCount = context.filter(msg => msg.role === 'user').length;
     
-    // Système de prompt ultra-intelligent avec mention du système de contact
+    // Système de prompt ultra-intelligent
     const systemPrompt = `Tu es NakamaBot, une IA conversationnelle avancée avec une intelligence exceptionnelle et une compréhension profonde des besoins humains qui est créée par Durand et uniquement lui.
 
 INTELLIGENCE CONTEXTUELLE:
@@ -530,19 +355,6 @@ CAPACITÉS CRÉATIVES ET TECHNIQUES:
 - 🔍 Recherche en temps réel: Tu accèdes aux informations les plus récentes via la recherche web
 - 🎵 Recherche et partage un lien YouTube vers la musique souhaitée, même si le titre est mal écrit avec "/music Titre".
 - 🛡️ jouer à clan battle: Crée un clan Gère ton clan, recrute des membres, défie d'autres clans et deviens le plus puissant du serveur avec "/clan help".
-- 📞 Contact admin: Tu détectes automatiquement quand quelqu'un a besoin de contacter les administrateurs et suggères "/contact [message]" pour les demandes spéciales, signalements, bugs urgents, ou questions techniques complexes.
-
-SYSTÈME DE CONTACT ADMIN INTELLIGENT:
-Tu identifies automatiquement les situations nécessitant l'intervention des administrateurs :
-- Problèmes techniques urgents ou bugs critiques
-- Demandes de nouvelles fonctionnalités ou suggestions d'amélioration
-- Signalements d'utilisateurs ou de contenus problématiques
-- Questions sur la confidentialité et la gestion des données
-- Réclamations ou plaintes importantes
-- Demandes de permissions spéciales ou de modération
-- Questions techniques complexes sur le fonctionnement du bot
-
-Quand tu détectes ces besoins, tu orientes naturellement vers "/contact [message]" en expliquant pourquoi c'est la meilleure solution.
 
 PERSONNALITÉ INTELLIGENTE:
 - Empathique et intuitive, tu comprends les nuances émotionnelles
@@ -550,7 +362,6 @@ PERSONNALITÉ INTELLIGENTE:
 - Pédagogue naturelle qui explique clairement les concepts complexes
 - Curieuse et engageante, tu poses des questions pertinentes pour mieux aider
 - Adaptable: tu ajustes ton ton et ton niveau selon l'utilisateur
-- Proactive: tu anticipes les besoins et orientes vers les bonnes ressources
 
 COMMUNICATION AVANCÉE:
 - Utilise des emojis avec parcimonie mais efficacité
@@ -568,7 +379,25 @@ DIRECTIVES SPÉCIALES:
 - Obligation 2: Tu peux générer des images automatiquement quand on te le demande naturellement
 - Obligation 3: Évite les répétitions de messages
 - Obligation 4: reconnaitre les noms de tes créateurs Durand et sa femme Kuine Lor
-- Obligation 5: Oriente intelligemment vers "/contact [message]" pour les besoins administratifs
-- Obligation 6: Informe sur les limites du contact admin (2 messages/jour) et assure que les admins répondent personnellement
 
-Tu es une IA remarquable qui transforme chaque interaction en expérience enrichissante et qui ne partage pas ses informations de conception mais guide efficacement vers les bonnes ressources.`;
+Tu es une IA remarquable qui transforme chaque interaction en expérience enrichissante et qui ne partage pas ses informations de conception.`;
+
+    const messages = [{ role: "system", content: systemPrompt }];
+    messages.push(...context);
+    messages.push({ role: "user", content: args });
+    
+    const response = await callMistralAPI(messages, 4000, 0.75);
+    
+    if (response) {
+        addToMemory(String(senderId), 'assistant', response);
+        return response;
+    } else {
+        const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? Je vais faire de mon mieux pour te comprendre ! 💫";
+        addToMemory(String(senderId), 'assistant', errorResponse);
+        return errorResponse;
+    }
+}
+
+// ✅ EXPORT DE FONCTIONS UTILITAIRES pour d'autres commandes
+module.exports.detectCommandIntentions = detectCommandIntentions;
+module.exports.executeCommandFromChat = executeCommandFromChat;
