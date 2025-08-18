@@ -68,7 +68,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         } catch (error) {
             log.error(`❌ Erreur auto-exécution: ${error.message}`);
         }
-    }
+    } 
     
     // ✅ Détection intelligente des besoins de recherche web
     const needsWebSearch = args.toLowerCase().includes('que se passe') ||
