@@ -94,8 +94,18 @@ async function detectCommandIntentions(message, ctx) {
         // Musique
         { patterns: [/(?:joue|[ée]coute|musique|chanson|son).*?(?:youtube|video)/i, /(?:trouve|cherche).*?(?:musique|chanson)/i], command: 'music' },
         
-        // Clans
-        { patterns: [/(?:clan|guerre|bataille|combat|fight)/i, /(?:cr[ée]|rejoins|rejoint).*?clan/i], command: 'clan' },
+        // Clans - Patterns détaillés pour toutes les sous-commandes
+        { patterns: [/(?:cr[ée]|fond|[ée]tabli).*?(?:clan|empire|guilde)/i, /nouveau.*?clan/i], command: 'clan', subcommand: 'create' },
+        { patterns: [/(?:info|stat|d[ée]tail).*?clan/i, /(?:voir|affich).*?(?:clan|info)/i], command: 'clan', subcommand: 'info' },
+        { patterns: [/(?:invit|recrut).*?(?:clan|membre)/i, /ajoute.*?(?:clan|membre)/i], command: 'clan', subcommand: 'invite' },
+        { patterns: [/(?:rejoins|rejoint|join).*?clan/i, /(?:entre|int[ée]gr).*?clan/i], command: 'clan', subcommand: 'join' },
+        { patterns: [/(?:quitt|leave|sort).*?clan/i, /abandonne.*?clan/i], command: 'clan', subcommand: 'leave' },
+        { patterns: [/(?:attaqu|battle|combat|guerre).*?clan/i, /(?:battle|fight).*?contre/i], command: 'clan', subcommand: 'battle' },
+        { patterns: [/(?:classement|top|list).*?clan/i, /(?:voir|tous).*?(?:clans|classement)/i], command: 'clan', subcommand: 'list' },
+        { patterns: [/(?:unit[ée]|arm[ée]e|soldat|guerrier|archer|mage)/i, /(?:ach[ée]t|recrut).*?(?:unit[ée]|arm[ée]e)/i], command: 'clan', subcommand: 'units' },
+        { patterns: [/(?:promu|promot|chef|leader).*?clan/i, /nouveau.*?chef/i], command: 'clan', subcommand: 'promote' },
+        { patterns: [/(?:id|identifiant).*?(?:user|utilisateur)/i, /mon.*?id/i], command: 'clan', subcommand: 'userid' },
+        { patterns: [/(?:aide|help).*?clan/i, /(?:guide|manuel).*?clan/i], command: 'clan', subcommand: 'help' },
         
         // Rank
         { patterns: [/(?:niveau|level|rang|rank|exp[ée]rience|xp)/i, /(?:voir|montre).*?(?:rang|level)/i], command: 'rank' },
@@ -113,7 +123,6 @@ async function detectCommandIntentions(message, ctx) {
             if (regex.test(message)) {
                 let extractedArgs = '';
                 
-                // Extraction d'arguments spécifiques selon la commande
                 if (pattern.command === 'image') {
                     const imageMatch = message.match(/(?:image|photo|picture).*?(?:de|d'|du|des)\s+(.+)/i) ||
                                      message.match(/(?:cr[ée]|g[ée]n[ée]r|fai|dessine)\s+(?:une?\s+)?(?:image|photo|picture)?\s*(?:de|d')?\s*(.+)/i);
@@ -128,6 +137,51 @@ async function detectCommandIntentions(message, ctx) {
                 }
                 else if (pattern.command === 'anime') {
                     extractedArgs = ''; // Anime utilise la dernière image
+                }
+                else if (pattern.command === 'clan') {
+                    // Gestion spéciale des sous-commandes de clan
+                    if (pattern.subcommand) {
+                        if (pattern.subcommand === 'create') {
+                            const clanNameMatch = message.match(/(?:cr[ée]|fond|[ée]tabli).*?(?:clan|empire|guilde)\s+(?:appel[ée]|nomm[ée])?\s*(["\"]?[^""\n]+["\"]?)/i) ||
+                                                 message.match(/(?:nouveau|mon)\s+clan\s+(["\"]?[^""\n]+["\"]?)/i);
+                            extractedArgs = clanNameMatch ? `create ${clanNameMatch[1].replace(/[""]/g, '').trim()}` : 'create';
+                        }
+                        else if (pattern.subcommand === 'invite') {
+                            const inviteMatch = message.match(/(?:invit|recrut).*?(@?\w+|<@!?\d+>)/i);
+                            extractedArgs = inviteMatch ? `invite ${inviteMatch[1]}` : 'invite';
+                        }
+                        else if (pattern.subcommand === 'join') {
+                            const joinMatch = message.match(/(?:rejoins|rejoint|join)\s+(?:le\s+)?(?:clan\s+)?([A-Z0-9]+|[^0-9\s][^\n]*)/i);
+                            extractedArgs = joinMatch ? `join ${joinMatch[1].trim()}` : 'join';
+                        }
+                        else if (pattern.subcommand === 'battle') {
+                            const battleMatch = message.match(/(?:attaqu|battle|combat|guerre)\s+(?:le\s+)?(?:clan\s+)?([A-Z0-9]+|[^0-9\s][^\n]*)/i) ||
+                                              message.match(/(?:battle|fight)\s+contre\s+([A-Z0-9]+|[^0-9\s][^\n]*)/i);
+                            extractedArgs = battleMatch ? `battle ${battleMatch[1].trim()}` : 'battle';
+                        }
+                        else if (pattern.subcommand === 'units') {
+                            const unitsMatch = message.match(/(?:ach[ée]t|recrut).*?(\d+)\s*(guerrier|archer|mage|g|a|m)/i) ||
+                                             message.match(/(guerrier|archer|mage|g|a|m).*?(\d+)/i) ||
+                                             message.match(/(\d+)\s*(guerrier|archer|mage|g|a|m)/i);
+                            if (unitsMatch) {
+                                const [, num1, type1, num2] = unitsMatch;
+                                const unitType = type1 || 'guerrier';
+                                const quantity = num1 && !type1 ? num1 : (num2 || num1 || '1');
+                                extractedArgs = `units ${unitType} ${quantity}`;
+                            } else {
+                                extractedArgs = 'units';
+                            }
+                        }
+                        else if (pattern.subcommand === 'promote') {
+                            const promoteMatch = message.match(/(?:promu|promot).*?(@?\w+|<@!?\d+>)/i);
+                            extractedArgs = promoteMatch ? `promote ${promoteMatch[1]}` : 'promote';
+                        }
+                        else {
+                            extractedArgs = pattern.subcommand; // info, list, leave, userid, help
+                        }
+                    } else {
+                        extractedArgs = message; // Cas général clan
+                    }
                 }
                 else {
                     extractedArgs = message;
