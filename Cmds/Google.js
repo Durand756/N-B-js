@@ -5,12 +5,10 @@
  * @param {object} ctx - Contexte partagé du bot 
  */ 
 
-const { GoogleGenAI } = require("@google/genai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Configuration Gemini
-const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY // Ajouter votre clé API dans .env
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, log } = ctx;
@@ -49,12 +47,9 @@ ${conversationHistory ? `Historique de conversation:\n${conversationHistory}` : 
 Utilisateur: ${args}`;
 
         // Appel à Gemini AI
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: systemPrompt,
-        });
-
-        const aiResponse = response.text();
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const result = await model.generateContent(systemPrompt);
+        const aiResponse = result.response.text();
         
         if (aiResponse) {
             // Sauvegarder dans la mémoire
