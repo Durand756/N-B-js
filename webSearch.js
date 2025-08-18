@@ -5,7 +5,7 @@ const axios = require('axios');
  * Utilise des APIs gratuites pour obtenir des informations actuelles
  * Sans clés d'accès, sans modification du serveur principal
  */
-
+ 
 // ✅ CONFIGURATION DES APIs GRATUITES
 const APIs = {
     // API pour l'heure mondiale (gratuite, sans clé)
