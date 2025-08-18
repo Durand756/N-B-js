@@ -51,7 +51,7 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 
     // Envoyer un seul message avec TOUS les boutons principaux
     let helpText = `╔═══════════╗
-║ 🤖 NAKAMABOT v4.0║
+║ 🤖 NAKAMABOT v5.0║
 ║ ----------HELP 🤖----------║
 ╚═══════════╝
 ✨ COMMANDES PRINCIPALES:
