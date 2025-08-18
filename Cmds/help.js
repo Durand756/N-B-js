@@ -64,6 +64,8 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 ┣━━ "/image" [desc] - Crée des images IA
 ┣━━ "/anime" - Transforme en style anime
 ┗━━ "/vision" - Décris tes images
+🐱‍🏍 ADMINS:
+┗━━ "/contact" - Envoie un message a un admin
 ⚔️ CLANS:
 ┗━━ "/clan help" - Univers de guerre virtuelle`;
 
