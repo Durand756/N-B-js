@@ -117,6 +117,11 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
         },
         {
             content_type: "text",
+            title: "/contact",
+            payload: "CONTACT_CMD"
+        },
+        {
+            content_type: "text",
             title: "/clan help",
             payload: "CLAN_CMD"
         }
@@ -133,6 +138,11 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
             {
                 content_type: "text", 
                 title: "/admin",
+                payload: "ADMIN_CMD"
+            },
+            {
+                content_type: "text", 
+                title: "/reply",
                 payload: "ADMIN_CMD"
             },
             {
