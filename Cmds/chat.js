@@ -221,116 +221,30 @@ function generateContactSuggestion(reason, extractedMessage) {
     return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** Utilise \`/contact [ton message]\` pour les contacter directement.\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 Tu recevras une réponse personnalisée !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
 }
 
-// ✅ Détection des intentions de commandes (optimisée avec clans complets)
+// ✅ Détection des intentions de commandes (optimisée)
 async function detectCommandIntentions(message, ctx) {
     const quickPatterns = [
-        // Images
-        { patterns: [/(?:cr[ée]|g[ée]n[ée]r|fai|dessine).*?(?:image|photo|picture)/i, /(?:image|photo|picture).*?(?:de|d'|du|des)/i], command: 'image' },
-        { patterns: [/(?:anime|manga|otaku).*?(?:style|version|transform)/i, /transform.*?anime/i], command: 'anime' },
-        { patterns: [/(?:analys|d[ée]cri|regarde|voir|examine).*?(?:image|photo)/i, /que.*?(?:voir|vois)/i], command: 'vision' },
-        
-        // Musique
-        { patterns: [/(?:[ée]coute|musique|chanson|son).*?(?:youtube|video)/i, /(?:trouve|cherche).*?(?:musique|chanson)/i], command: 'music' },
-        
-        // Contact
-        { patterns: [/^\/contact/i, /(?:commande\s+)?contact.*?admin/i], command: 'contact' },
-        { patterns: [/^\/reply/i, /(?:répondr|répons).*?(?:message|utilisateur)/i], command: 'reply' },
-        
-        // Clans - Patterns détaillés pour toutes les sous-commandes
-        { patterns: [/(?:cr[ée]|fond|[ée]tabli).*?(?:clan|empire|guilde)/i, /nouveau.*?clan/i], command: 'clan', subcommand: 'create' },
-        { patterns: [/(?:info|stat|d[ée]tail).*?clan/i, /(?:voir|affich).*?(?:clan|info)/i], command: 'clan', subcommand: 'info' },
-        { patterns: [/(?:invit|recrut).*?(?:clan|membre)/i, /ajoute.*?(?:clan|membre)/i], command: 'clan', subcommand: 'invite' },
-        { patterns: [/(?:rejoins|rejoint|join).*?clan/i, /(?:entre|int[ée]gr).*?clan/i], command: 'clan', subcommand: 'join' },
-        { patterns: [/(?:quitt|leave|sort).*?clan/i, /abandonne.*?clan/i], command: 'clan', subcommand: 'leave' },
-        { patterns: [/(?:attaqu|battle|combat|guerre).*?clan/i, /(?:battle|fight).*?contre/i], command: 'clan', subcommand: 'battle' },
-        { patterns: [/(?:classement|top|list).*?clan/i, /(?:voir|tous).*?(?:clans|classement)/i], command: 'clan', subcommand: 'list' },
-        { patterns: [/(?:unit[ée]|arm[ée]e|soldat|guerrier|archer|mage)/i, /(?:ach[ée]t|recrut).*?(?:unit[ée]|arm[ée]e)/i], command: 'clan', subcommand: 'units' },
-        { patterns: [/(?:promu|promot|chef|leader).*?clan/i, /nouveau.*?chef/i], command: 'clan', subcommand: 'promote' },
-        { patterns: [/(?:id|identifiant).*?(?:user|utilisateur)/i, /mon.*?id/i], command: 'clan', subcommand: 'userid' },
-        { patterns: [/(?:aide|help).*?clan/i, /(?:guide|manuel).*?clan/i], command: 'clan', subcommand: 'help' },
-        
-        // Autres commandes
-        { patterns: [/(?:niveau|level|rang|rank|exp[ée]rience|xp)/i, /(?:voir|montre).*?(?:rang|level)/i], command: 'rank' },
-        { patterns: [/(?:stat|statistique|info|donn[ée]e).*?(?:bot|serveur)/i], command: 'stats' },
-        { patterns: [/(?:aide|help|commande|fonction)/i, /que.*?(?:faire|peux)/i], command: 'help' }
+        { patterns: [/(?:cr[ée]|g[ée]n[ée]r|fai|dessine).*?(?:image|photo)/i], command: 'image' },
+        { patterns: [/(?:anime|manga).*?(?:style|transform)/i], command: 'anime' },
+        { patterns: [/(?:analys|regarde|voir).*?(?:image|photo)/i], command: 'vision' },
+        { patterns: [/(?:joue|musique|chanson)/i], command: 'music' },
+        { patterns: [/(?:clan|bataille|empire|guerre)/i], command: 'clan' },
+        { patterns: [/(?:niveau|rang|level|xp)/i], command: 'rank' },
+        { patterns: [/(?:aide|help|commande)/i], command: 'help' }
     ];
     
-    // Vérification des patterns rapides
     for (const pattern of quickPatterns) {
         for (const regex of pattern.patterns) {
             if (regex.test(message)) {
-                let extractedArgs = '';
+                let extractedArgs = message;
                 
                 if (pattern.command === 'image') {
-                    const imageMatch = message.match(/(?:image|photo|picture).*?(?:de|d'|du|des)\s+(.+)/i) ||
-                                     message.match(/(?:cr[ée]|g[ée]n[ée]r|fai|dessine)\s+(?:une?\s+)?(?:image|photo|picture)?\s*(?:de|d')?\s*(.+)/i);
-                    extractedArgs = imageMatch ? imageMatch[1].trim() : message;
-                }
-                else if (pattern.command === 'music') {
-                    const musicMatch = message.match(/(?:joue|[ée]coute|musique|chanson|trouve|cherche)\s+(?:la\s+)?(?:musique|chanson)?\s*(?:de|d')?\s*(.+)/i);
-                    extractedArgs = musicMatch ? musicMatch[1].trim() : message;
-                }
-                else if (pattern.command === 'contact') {
-                    const contactMatch = message.match(/contact\s+(.+)/i);
-                    extractedArgs = contactMatch ? contactMatch[1].trim() : '';
-                }
-                else if (pattern.command === 'reply') {
-                    const replyMatch = message.match(/(?:répondr|répons).*?(?:à|au|message)\s+(\S+)\s+(.+)/i);
-                    extractedArgs = replyMatch ? `${replyMatch[1]} ${replyMatch[2]}` : '';
-                }
-                else if (pattern.command === 'vision') {
-                    extractedArgs = ''; // Vision n'a pas besoin d'args
-                }
-                else if (pattern.command === 'anime') {
-                    extractedArgs = ''; // Anime utilise la dernière image
-                }
-                else if (pattern.command === 'clan') {
-                    // Gestion spéciale des sous-commandes de clan
-                    if (pattern.subcommand) {
-                        if (pattern.subcommand === 'create') {
-                            const clanNameMatch = message.match(/(?:cr[ée]|fond|[ée]tabli).*?(?:clan|empire|guilde)\s+(?:appel[ée]|nomm[ée])?\s*(["\"]?[^""\n]+["\"]?)/i) ||
-                                                 message.match(/(?:nouveau|mon)\s+clan\s+(["\"]?[^""\n]+["\"]?)/i);
-                            extractedArgs = clanNameMatch ? `create ${clanNameMatch[1].replace(/[""]/g, '').trim()}` : 'create';
-                        }
-                        else if (pattern.subcommand === 'invite') {
-                            const inviteMatch = message.match(/(?:invit|recrut).*?(@?\w+|<@!?\d+>)/i);
-                            extractedArgs = inviteMatch ? `invite ${inviteMatch[1]}` : 'invite';
-                        }
-                        else if (pattern.subcommand === 'join') {
-                            const joinMatch = message.match(/(?:rejoins|rejoint|join)\s+(?:le\s+)?(?:clan\s+)?([A-Z0-9]+|[^0-9\s][^\n]*)/i);
-                            extractedArgs = joinMatch ? `join ${joinMatch[1].trim()}` : 'join';
-                        }
-                        else if (pattern.subcommand === 'battle') {
-                            const battleMatch = message.match(/(?:attaqu|battle|combat|guerre)\s+(?:le\s+)?(?:clan\s+)?([A-Z0-9]+|[^0-9\s][^\n]*)/i) ||
-                                              message.match(/(?:battle|fight)\s+contre\s+([A-Z0-9]+|[^0-9\s][^\n]*)/i);
-                            extractedArgs = battleMatch ? `battle ${battleMatch[1].trim()}` : 'battle';
-                        }
-                        else if (pattern.subcommand === 'units') {
-                            const unitsMatch = message.match(/(?:ach[ée]t|recrut).*?(\d+)\s*(guerrier|archer|mage|g|a|m)/i) ||
-                                             message.match(/(guerrier|archer|mage|g|a|m).*?(\d+)/i) ||
-                                             message.match(/(\d+)\s*(guerrier|archer|mage|g|a|m)/i);
-                            if (unitsMatch) {
-                                const [, num1, type1, num2] = unitsMatch;
-                                const unitType = type1 || 'guerrier';
-                                const quantity = num1 && !type1 ? num1 : (num2 || num1 || '1');
-                                extractedArgs = `units ${unitType} ${quantity}`;
-                            } else {
-                                extractedArgs = 'units';
-                            }
-                        }
-                        else if (pattern.subcommand === 'promote') {
-                            const promoteMatch = message.match(/(?:promu|promot).*?(@?\w+|<@!?\d+>)/i);
-                            extractedArgs = promoteMatch ? `promote ${promoteMatch[1]}` : 'promote';
-                        }
-                        else {
-                            extractedArgs = pattern.subcommand; // info, list, leave, userid, help
-                        }
-                    } else {
-                        extractedArgs = message; // Cas général clan
-                    }
-                }
-                else {
-                    extractedArgs = message;
+                    const match = message.match(/(?:image|photo).*?(?:de|d')\s+(.+)/i) ||
+                                 message.match(/(?:cr[ée]|dessine)\s+(.+)/i);
+                    extractedArgs = match ? match[1].trim() : message;
+                } else if (pattern.command === 'music') {
+                    const match = message.match(/(?:joue|musique|chanson)\s+(.+)/i);
+                    extractedArgs = match ? match[1].trim() : message;
                 }
                 
                 return {
@@ -341,12 +255,6 @@ async function detectCommandIntentions(message, ctx) {
                 };
             }
         }
-    }
-    
-    // ✅ Analyse IA pour les cas complexes
-    const aiAnalysis = await analyzeWithAI(message, ctx);
-    if (aiAnalysis.shouldExecute) {
-        return aiAnalysis;
     }
     
     return { shouldExecute: false };
