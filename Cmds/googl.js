@@ -47,7 +47,7 @@ ${conversationHistory ? `Historique de conversation:\n${conversationHistory}` : 
 Utilisateur: ${args}`;
 
         // Appel à Gemini AI
-        const model = genAI.getGenerativeModel({ model: "Gemini 2.5 Flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const result = await model.generateContent(systemPrompt);
         const aiResponse = result.response.text();
         
