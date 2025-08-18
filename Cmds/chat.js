@@ -227,7 +227,7 @@ async function detectCommandIntentions(message, ctx) {
         { patterns: [/(?:cr[ée]|g[ée]n[ée]r|fai|dessine).*?(?:image|photo)/i], command: 'image' },
         { patterns: [/(?:anime|manga).*?(?:style|transform)/i], command: 'anime' },
         { patterns: [/(?:analys|regarde|voir).*?(?:image|photo)/i], command: 'vision' },
-        { patterns: [/(?:joue|musique|chanson)/i], command: 'music' },
+        { patterns: [/(?:musique|chanson)/i], command: 'music' },
         { patterns: [/(?:clan|bataille|empire|guerre)/i], command: 'clan' },
         { patterns: [/(?:niveau|rang|level|xp)/i], command: 'rank' },
         { patterns: [/(?:aide|help|commande)/i], command: 'help' }
