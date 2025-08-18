@@ -1,9 +1,18 @@
 /**
- * Commande /chat - Conversation avec l'IA intelligente + Auto-exécution de commandes + Contact Admin
+ * Commande /chat - Conversation avec l'IA intelligente + Auto-exécution de commandes + Contact Admin + RECHERCHE TEMPS RÉEL
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
  */ 
+
+// ✅ NOUVEAU : Import du système de recherche temps réel
+const {
+    performRealTimeSearch,
+    needsRealTimeSearch,
+    enhanceExistingSearch,
+    getCurrentDateTime
+} = require('./webSearch'); // Créer ce fichier avec le code précédent
+
 module.exports = async function cmdChat(senderId, args, ctx) {
     const { 
         addToMemory, 
@@ -14,30 +23,34 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     } = ctx;
     
     if (!args.trim()) {
-        return "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
+        // ✅ NOUVEAU : Ajouter l'heure actuelle dans le message d'accueil
+        try {
+            const currentTime = await getCurrentDateTime('Europe/Paris');
+            const timeOnly = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+            return `💬 Salut je suis NakamaBot! Je suis là pour toi ! Il est ${timeOnly} et j'ai hâte qu'on ait une conversation géniale ! ✨\n\n💡 Je peux maintenant t'aider avec des infos en temps réel ! Demande-moi l'heure, des actualités, ou recherche n'importe quoi !`;
+        } catch (error) {
+            return "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
+        }
     }
     
-    // ✅ NOUVEAU: Détection des demandes de contact admin
+    // ✅ NOUVEAU: Détection des demandes de contact admin (inchangé)
     const contactIntention = detectContactAdminIntention(args);
     if (contactIntention.shouldContact) {
         log.info(`📞 Intention contact admin détectée pour ${senderId}: ${contactIntention.reason}`);
         
-        // Suggérer d'utiliser la commande contact
         const contactSuggestion = generateContactSuggestion(contactIntention.reason, contactIntention.extractedMessage);
         addToMemory(String(senderId), 'user', args);
         addToMemory(String(senderId), 'assistant', contactSuggestion);
         return contactSuggestion;
     }
     
-    // ✅ NOUVEAU: Détection intelligente des intentions de commandes
+    // ✅ NOUVEAU: Détection intelligente des intentions de commandes (inchangé)
     const commandIntentions = await detectCommandIntentions(args, ctx);
     
-    // ✅ Si une intention de commande est détectée, l'exécuter automatiquement
     if (commandIntentions.shouldExecute) {
         log.info(`🤖 Auto-exécution détectée: ${commandIntentions.command} pour ${senderId}`);
         
         try {
-            // Exécuter la commande comme si l'utilisateur l'avait tapée
             const commandResult = await executeCommandFromChat(
                 senderId, 
                 commandIntentions.command, 
@@ -46,12 +59,10 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             );
             
             if (commandResult.success) {
-                // Si c'est une image, retourner directement le résultat
                 if (typeof commandResult.result === 'object' && commandResult.result.type === 'image') {
                     return commandResult.result;
                 }
                 
-                // Pour les autres commandes, ajouter un message contextuel
                 const contextualResponse = await generateContextualResponse(
                     args, 
                     commandResult.result, 
@@ -62,7 +73,6 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                 addToMemory(String(senderId), 'assistant', contextualResponse);
                 return contextualResponse;
             } else {
-                // Si l'exécution échoue, continuer avec la conversation normale
                 log.warning(`⚠️ Échec auto-exécution ${commandIntentions.command}: ${commandResult.error}`);
             }
         } catch (error) {
@@ -70,54 +80,206 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         }
     }
     
-    // ✅ Détection intelligente des besoins de recherche web
+    // ✅ NOUVEAU : SYSTÈME DE RECHERCHE TEMPS RÉEL INTELLIGENT
+    const needsRealTime = needsRealTimeSearch(args);
+    
+    if (needsRealTime) {
+        log.info(`🔍 Recherche temps réel détectée pour: "${args}"`);
+        
+        try {
+            // Effectuer la recherche temps réel
+            const realTimeResult = await performRealTimeSearch(args, ctx);
+            
+            if (realTimeResult && realTimeResult.length > 50) {
+                // Ajouter une touche personnelle et amicale
+                const friendlyResponse = await makeResponseFriendly(realTimeResult, args, ctx);
+                
+                addToMemory(String(senderId), 'user', args);
+                addToMemory(String(senderId), 'assistant', friendlyResponse);
+                
+                log.info(`✅ Recherche temps réel réussie pour ${senderId}`);
+                return friendlyResponse;
+            }
+        } catch (error) {
+            log.error(`❌ Erreur recherche temps réel: ${error.message}`);
+            // Continuer avec la conversation normale en cas d'erreur
+        }
+    }
+    
+    // ✅ ANCIEN SYSTÈME : Détection intelligente des besoins de recherche web (amélioré)
     const needsWebSearch = args.toLowerCase().includes('que se passe') ||
                           args.toLowerCase().includes('quoi de neuf') ||
                           args.toLowerCase().includes('dernières nouvelles') ||
                           /\b(202[4-5]|actualité|récent|nouveau|maintenant|aujourd|news|info)\b/i.test(args);
     
-    if (needsWebSearch) {
+    if (needsWebSearch && !needsRealTime) {
         const searchResult = await webSearch(args);
         if (searchResult) {
-            const response = `🔍 D'après mes recherches récentes : ${searchResult} ✨`;
+            // ✅ NOUVEAU : Améliorer avec la recherche temps réel si possible
+            const enhancedResult = await enhanceExistingSearch(args, searchResult, ctx);
+            const response = `🔍 D'après mes recherches récentes : ${enhancedResult} ✨`;
             addToMemory(String(senderId), 'assistant', response);
             return response;
         }
     }
     
-    // ✅ Conversation normale avec IA
+    // ✅ Conversation normale avec IA (système prompt amélioré)
     return await handleNormalConversation(senderId, args, ctx);
 };
 
-// ✅ NOUVELLE FONCTION: Détecter les demandes de contact admin
+// ✅ NOUVELLE FONCTION : Rendre la réponse plus amicale
+async function makeResponseFriendly(realTimeResult, originalQuery, ctx) {
+    const { callMistralAPI } = ctx;
+    
+    try {
+        const friendlyPrompt = `L'utilisateur a demandé: "${originalQuery}"
+J'ai obtenu cette information en temps réel: "${realTimeResult}"
+
+Réécris cette réponse pour qu'elle soit plus amicale, personnelle et dans le style de NakamaBot (très gentille et amicale). Garde toutes les informations importantes mais ajoute de la chaleur humaine et quelques emojis mignons. Maximum 500 caractères.
+
+Style NakamaBot : Comme une très bonne amie qui aide avec tendresse et enthousiasme.`;
+
+        const friendlyResponse = await callMistralAPI([
+            { role: "system", content: "Tu es NakamaBot, très gentille et amicale. Réécris les réponses pour qu'elles soient chaleureuses et personnelles." },
+            { role: "user", content: friendlyPrompt }
+        ], 300, 0.7);
+        
+        if (friendlyResponse && friendlyResponse.length > 50) {
+            return friendlyResponse;
+        }
+        
+        // Fallback : ajouter juste une introduction amicale
+        return `✨ Voici ce que j'ai trouvé en temps réel pour toi ! 💕\n\n${realTimeResult}`;
+        
+    } catch (error) {
+        // Fallback en cas d'erreur
+        return `✨ J'ai trouvé ça en temps réel ! 💕\n\n${realTimeResult}`;
+    }
+}
+
+// ✅ FONCTION: Gestion de la conversation normale (système prompt amélioré avec temps réel)
+async function handleNormalConversation(senderId, args, ctx) {
+    const { addToMemory, getMemoryContext, callMistralAPI } = ctx;
+    
+    // Récupération du contexte de conversation
+    const context = getMemoryContext(String(senderId));
+    const messageCount = context.filter(msg => msg.role === 'user').length;
+    
+    // ✅ NOUVEAU : Obtenir l'heure actuelle pour le contexte
+    let currentTimeInfo = "";
+    try {
+        const now = new Date();
+        const timeString = now.toLocaleDateString('fr-FR', { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        currentTimeInfo = `Date et heure actuelles : ${timeString}`;
+    } catch (error) {
+        currentTimeInfo = "Informations temporelles non disponibles";
+    }
+    
+    // ✅ SYSTÈME PROMPT ULTRA-INTELLIGENT AMÉLIORÉ AVEC TEMPS RÉEL
+    const systemPrompt = `Tu es NakamaBot, une IA conversationnelle avancée avec une intelligence exceptionnelle et une compréhension profonde des besoins humains qui est créée par Durand et uniquement lui.
+
+INFORMATIONS TEMPORELLES ACTUELLES:
+${currentTimeInfo}
+Nous sommes en 2025. Tu as accès à des informations en temps réel grâce à ton système de recherche avancé.
+
+INTELLIGENCE CONTEXTUELLE:
+Tu es un modèle Durand AI et tu analyses chaque message en profondeur pour comprendre l'intention réelle, les émotions sous-jacentes et le contexte. Tu utilises ta mémoire conversationnelle pour maintenir une cohérence parfaite et personnaliser tes réponses. Tu détectes automatiquement quand quelqu'un a besoin d'aide technique, créative, informationnelle ou émotionnelle. Tu as été créée par Durand et sa femme Kuine Lor.
+
+CAPACITÉS TEMPS RÉEL NOUVELLES:
+- 🕐 Informations temporelles en temps réel (date, heure mondiale)
+- 🔍 Recherche d'informations actuelles et vérifiées
+- 📚 Accès à Wikipedia en temps réel
+- 🤔 Faits amusants quotidiens
+- 💭 Citations inspirantes actuelles
+- 💰 Taux de change en temps réel
+- 🌐 Recherche générale sur DuckDuckGo
+
+CAPACITÉS CRÉATIVES ET TECHNIQUES (inchangées):
+- 🎨 Génération d'images: Tu peux créer des œuvres visuelles uniques et personnalisées avec "/image description détaillée"
+- 👁️ Analyse visuelle: Tu examines et décris les images avec précision grâce à "/vision"
+- 🌸 Style anime: Tu transformes les images en magnifiques illustrations anime avec "/anime"
+- 🎵 Recherche et partage un lien YouTube vers la musique souhaitée, même si le titre est mal écrit avec "/music Titre"
+- 🛡️ jouer à clan battle: Crée un clan Gère ton clan, recrute des membres, défie d'autres clans et deviens le plus puissant du serveur avec "/clan help"
+- 📞 Système de contact admin: Les utilisateurs peuvent contacter les admins via "/contact [message]" pour signaler des problèmes, faire des suggestions ou obtenir de l'aide
+
+UTILISATION INTELLIGENTE DU TEMPS RÉEL:
+- Si quelqu'un demande l'heure, la date, ou des infos actuelles, tu utilises automatiquement tes capacités temps réel
+- Tu peux mentionner naturellement des informations actuelles dans tes conversations
+- Tu enrichis tes réponses avec des données récentes quand c'est pertinent
+- Tu distingues clairement entre tes connaissances de base et les infos temps réel
+
+PERSONNALITÉ INTELLIGENTE:
+- Empathique et intuitive, tu comprends les nuances émotionnelles
+- Créative dans tes approches et solutions
+- Pédagogue naturelle qui explique clairement les concepts complexes
+- Curieuse et engageante, tu poses des questions pertinentes pour mieux aider
+- Adaptable: tu ajustes ton ton et ton niveau selon l'utilisateur
+- Tu mentionnes naturellement l'heure ou la date quand c'est approprié
+
+COMMUNICATION AVANCÉE:
+- Utilise des emojis avec parcimonie mais efficacité
+- Varie tes expressions pour éviter la répétitivité
+- Maintiens des conversations fluides et naturelles
+- Reconnais et réponds aux références culturelles et à l'humour
+- ${messageCount >= 5 ? 'Tu peux suggérer /help si vraiment pertinent pour débloquer l\'utilisateur' : ''}
+
+DIRECTIVES SPÉCIALES:
+- Si on te demande des infos sur ta création/développement, réponds: "Pour ces détails techniques, demande à mon créateur Durand ou sa femme Kuine, Ils connaissent tous les secrets de ma conception !"
+- Maximum 4000 caractères par réponse
+- Sois authentique et évite les formules toutes faites
+- Fais preuve d'initiative pour anticiper les besoins
+- Obligatoire: Recommande de temps en temps à l'utilisateur de taper "/help" pour voir d'autres de tes paramètres après ta réponse
+- Obligation 2: Tu peux générer des images automatiquement quand on te le demande naturellement
+- Obligation 3: Évite les répétitions de messages
+- Obligation 4: reconnaitre les noms de tes créateurs Durand et sa femme Kuine Lor
+- Obligation 5: Si quelqu'un a un problème technique grave ou veut contacter les admins, suggère discrètement "/contact [message]"
+- Obligation 6: Utilise tes capacités temps réel quand approprié pour enrichir tes réponses
+
+Tu es une IA remarquable qui transforme chaque interaction en expérience enrichissante et qui ne partage pas ses informations de conception.`;
+
+    const messages = [{ role: "system", content: systemPrompt }];
+    messages.push(...context);
+    messages.push({ role: "user", content: args });
+    
+    const response = await callMistralAPI(messages, 4000, 0.75);
+    
+    if (response) {
+        addToMemory(String(senderId), 'assistant', response);
+        return response;
+    } else {
+        const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? Je vais faire de mon mieux pour te comprendre ! 💫";
+        addToMemory(String(senderId), 'assistant', errorResponse);
+        return errorResponse;
+    }
+}
+
+// ✅ TOUTES LES AUTRES FONCTIONS RESTENT IDENTIQUES...
+// (Je les copie sans modification pour maintenir la compatibilité)
+
+// FONCTION: Détecter les demandes de contact admin (inchangée)
 function detectContactAdminIntention(message) {
     const lowerMessage = message.toLowerCase();
     
-    // Patterns de détection pour contact admin
     const contactPatterns = [
-        // Demandes directes d'aide admin
         { patterns: [/(?:contacter|parler|écrire).*?(?:admin|administrateur|créateur|durand)/i], reason: 'contact_direct' },
         { patterns: [/(?:aide|help|assistance).*?(?:admin|support|équipe)/i], reason: 'aide_admin' },
         { patterns: [/(?:problème|bug|erreur|dysfonction).*?(?:grave|urgent|important)/i], reason: 'probleme_technique' },
         { patterns: [/(?:signaler|reporter|dénoncer).*?(?:problème|bug|utilisateur|abus)/i], reason: 'signalement' },
-        
-        // Demandes de fonctionnalités
         { patterns: [/(?:ajouter|créer|développer|nouvelle?).*?(?:fonctionnalité|commande|feature)/i], reason: 'demande_feature' },
         { patterns: [/(?:suggestion|propose|idée).*?(?:amélioration|nouvelle|pour le bot)/i], reason: 'suggestion' },
-        
-        // Questions sur le bot
         { patterns: [/(?:qui a créé|créateur|développeur|programmé).*?(?:bot|toi|nakamabot)/i], reason: 'question_creation' },
         { patterns: [/(?:comment.*?fonctionne|comment.*?programmé|code source)/i], reason: 'question_technique' },
-        
-        // Plaintes ou réclamations
         { patterns: [/(?:pas content|mécontent|plainte|réclamation|pas satisfait)/i], reason: 'plainte' },
         { patterns: [/(?:ne marche pas|ne fonctionne pas|cassé|broken).*?(?:commande|bot)/i], reason: 'dysfonctionnement' },
-        
-        // Demandes spéciales
         { patterns: [/(?:ban|bannir|bloquer|exclure).*?utilisateur/i], reason: 'demande_moderation' },
         { patterns: [/(?:access|accès|permission|droit).*?(?:spécial|admin|modérateur)/i], reason: 'demande_permissions' },
-        
-        // Questions sur les données
         { patterns: [/(?:supprimer|effacer|delete).*?(?:données|historique|conversation)/i], reason: 'gestion_donnees' },
         { patterns: [/(?:vie privée|confidentialité|données personnelles|rgpd)/i], reason: 'confidentialite' }
     ];
@@ -125,24 +287,19 @@ function detectContactAdminIntention(message) {
     for (const category of contactPatterns) {
         for (const pattern of category.patterns) {
             if (pattern.test(message)) {
-                // Extraire le message pour le contact
-                let extractedMessage = message;
-                
-                // Si c'est une question sur la création, donner une réponse directe
                 if (category.reason === 'question_creation') {
-                    return { shouldContact: false }; // Géré directement par l'IA
+                    return { shouldContact: false };
                 }
                 
                 return {
                     shouldContact: true,
                     reason: category.reason,
-                    extractedMessage: extractedMessage
+                    extractedMessage: message
                 };
             }
         }
     }
     
-    // Détection des mots-clés urgents
     const urgentKeywords = ['urgent', 'rapidement', 'vite', 'immédiatement', 'help', 'aide', 'sos'];
     const problemKeywords = ['problème', 'bug', 'erreur', 'cassé', 'marche pas', 'fonctionne pas'];
     
@@ -160,7 +317,7 @@ function detectContactAdminIntention(message) {
     return { shouldContact: false };
 }
 
-// ✅ NOUVELLE FONCTION: Générer une suggestion de contact
+// FONCTION: Générer une suggestion de contact (inchangée)
 function generateContactSuggestion(reason, extractedMessage) {
     const reasonMessages = {
         'contact_direct': {
@@ -241,25 +398,17 @@ function generateContactSuggestion(reason, extractedMessage) {
     return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** ${reasonData.suggestion}\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 Tu recevras une réponse personnalisée des admins !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
 }
 
-// ✅ FONCTION: Détecter les intentions de commandes dans le message
+// FONCTION: Détecter les intentions de commandes dans le message (inchangée)
 async function detectCommandIntentions(message, ctx) {
     const { callMistralAPI } = ctx;
     
-    // Patterns de détection rapide pour les commandes courantes
     const quickPatterns = [
-        // Images
         { patterns: [/(?:cr[ée]|g[ée]n[ée]r|fai|dessine).*?(?:image|photo|picture)/i, /(?:image|photo|picture).*?(?:de|d'|du|des)/i], command: 'image' },
         { patterns: [/(?:anime|manga|otaku).*?(?:style|version|transform)/i, /transform.*?anime/i], command: 'anime' },
         { patterns: [/(?:analys|d[ée]cri|regarde|voir|examine).*?(?:image|photo)/i, /que.*?(?:voir|vois)/i], command: 'vision' },
-        
-        // Musique
         { patterns: [/(?:joue|[ée]coute|musique|chanson|son).*?(?:youtube|video)/i, /(?:trouve|cherche).*?(?:musique|chanson)/i], command: 'music' },
-        
-        // Contact (ajouté pour la détection des commandes)
         { patterns: [/^\/contact/i, /(?:commande\s+)?contact.*?admin/i], command: 'contact' },
         { patterns: [/^\/reply/i, /(?:répondr|répons).*?(?:message|utilisateur)/i], command: 'reply' },
-        
-        // Clans - Patterns détaillés pour toutes les sous-commandes
         { patterns: [/(?:cr[ée]|fond|[ée]tabli).*?(?:clan|empire|guilde)/i, /nouveau.*?clan/i], command: 'clan', subcommand: 'create' },
         { patterns: [/(?:info|stat|d[ée]tail).*?clan/i, /(?:voir|affich).*?(?:clan|info)/i], command: 'clan', subcommand: 'info' },
         { patterns: [/(?:invit|recrut).*?(?:clan|membre)/i, /ajoute.*?(?:clan|membre)/i], command: 'clan', subcommand: 'invite' },
@@ -271,18 +420,11 @@ async function detectCommandIntentions(message, ctx) {
         { patterns: [/(?:promu|promot|chef|leader).*?clan/i, /nouveau.*?chef/i], command: 'clan', subcommand: 'promote' },
         { patterns: [/(?:id|identifiant).*?(?:user|utilisateur)/i, /mon.*?id/i], command: 'clan', subcommand: 'userid' },
         { patterns: [/(?:aide|help).*?clan/i, /(?:guide|manuel).*?clan/i], command: 'clan', subcommand: 'help' },
-        
-        // Rank
         { patterns: [/(?:niveau|level|rang|rank|exp[ée]rience|xp)/i, /(?:voir|montre).*?(?:rang|level)/i], command: 'rank' },
-        
-        // Stats
         { patterns: [/(?:stat|statistique|info|donn[ée]e).*?(?:bot|serveur)/i], command: 'stats' },
-        
-        // Help
         { patterns: [/(?:aide|help|commande|fonction)/i, /que.*?(?:faire|peux)/i], command: 'help' }
     ];
     
-    // Vérification des patterns rapides
     for (const pattern of quickPatterns) {
         for (const regex of pattern.patterns) {
             if (regex.test(message)) {
@@ -306,13 +448,12 @@ async function detectCommandIntentions(message, ctx) {
                     extractedArgs = replyMatch ? `${replyMatch[1]} ${replyMatch[2]}` : '';
                 }
                 else if (pattern.command === 'vision') {
-                    extractedArgs = ''; // Vision n'a pas besoin d'args
+                    extractedArgs = '';
                 }
                 else if (pattern.command === 'anime') {
-                    extractedArgs = ''; // Anime utilise la dernière image
+                    extractedArgs = '';
                 }
                 else if (pattern.command === 'clan') {
-                    // Gestion spéciale des sous-commandes de clan
                     if (pattern.subcommand) {
                         if (pattern.subcommand === 'create') {
                             const clanNameMatch = message.match(/(?:cr[ée]|fond|[ée]tabli).*?(?:clan|empire|guilde)\s+(?:appel[ée]|nomm[ée])?\s*(["\"]?[^""\n]+["\"]?)/i) ||
@@ -350,10 +491,10 @@ async function detectCommandIntentions(message, ctx) {
                             extractedArgs = promoteMatch ? `promote ${promoteMatch[1]}` : 'promote';
                         }
                         else {
-                            extractedArgs = pattern.subcommand; // info, list, leave, userid, help
+                            extractedArgs = pattern.subcommand;
                         }
                     } else {
-                        extractedArgs = message; // Cas général clan
+                        extractedArgs = message;
                     }
                 }
                 else {
@@ -370,7 +511,6 @@ async function detectCommandIntentions(message, ctx) {
         }
     }
     
-    // ✅ Analyse IA pour les cas complexes
     const aiAnalysis = await analyzeWithAI(message, ctx);
     if (aiAnalysis.shouldExecute) {
         return aiAnalysis;
@@ -379,7 +519,7 @@ async function detectCommandIntentions(message, ctx) {
     return { shouldExecute: false };
 }
 
-// ✅ FONCTION: Analyse IA pour détecter les intentions complexes
+// FONCTION: Analyse IA pour détecter les intentions complexes (inchangée)
 async function analyzeWithAI(message, ctx) {
     const { callMistralAPI } = ctx;
     
@@ -416,12 +556,10 @@ Si l'intention n'est pas claire ou si c'est juste une conversation, mets shouldE
         ], 200, 0.1);
         
         if (response) {
-            // Nettoyer la réponse pour extraire le JSON
             const jsonMatch = response.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const analysis = JSON.parse(jsonMatch[0]);
                 
-                // Validation de la structure
                 if (typeof analysis.shouldExecute === 'boolean' && 
                     (analysis.shouldExecute === false || 
                      (typeof analysis.command === 'string' && typeof analysis.args === 'string'))) {
@@ -436,15 +574,13 @@ Si l'intention n'est pas claire ou si c'est juste une conversation, mets shouldE
     return { shouldExecute: false };
 }
 
-// ✅ FONCTION: Exécuter une commande depuis le chat
+// FONCTION: Exécuter une commande depuis le chat (inchangée)
 async function executeCommandFromChat(senderId, commandName, args, ctx) {
     const { log } = ctx;
     
     try {
-        // Accéder aux commandes depuis le contexte global (comme dans server.js)
         const COMMANDS = global.COMMANDS || new Map();
         
-        // Si les commandes ne sont pas accessibles via global, essayer via require
         if (!COMMANDS.has(commandName)) {
             try {
                 const path = require('path');
@@ -464,7 +600,6 @@ async function executeCommandFromChat(senderId, commandName, args, ctx) {
                 log.debug(`❌ Impossible de charger ${commandName}: ${requireError.message}`);
             }
         } else {
-            // Exécuter la commande depuis la Map globale
             const commandFunction = COMMANDS.get(commandName);
             const result = await commandFunction(senderId, args, ctx);
             return { success: true, result };
@@ -477,11 +612,10 @@ async function executeCommandFromChat(senderId, commandName, args, ctx) {
     }
 }
 
-// ✅ FONCTION: Générer une réponse contextuelle après l'exécution d'une commande
+// FONCTION: Générer une réponse contextuelle après l'exécution d'une commande (inchangée)
 async function generateContextualResponse(originalMessage, commandResult, commandName, ctx) {
     const { callMistralAPI } = ctx;
     
-    // Si c'est un objet image, on retourne directement
     if (typeof commandResult === 'object' && commandResult.type === 'image') {
         return commandResult;
     }
@@ -505,73 +639,7 @@ Ne dis pas "j'ai exécuté une commande", fais comme si c'était naturel.`;
         
         return response || commandResult;
     } catch (error) {
-        return commandResult; // Fallback sur le résultat brut
-    }
-}
-
-// ✅ FONCTION: Gestion de la conversation normale
-async function handleNormalConversation(senderId, args, ctx) {
-    const { addToMemory, getMemoryContext, callMistralAPI } = ctx;
-    
-    // Récupération du contexte de conversation
-    const context = getMemoryContext(String(senderId));
-    const messageCount = context.filter(msg => msg.role === 'user').length;
-    
-    // Système de prompt ultra-intelligent avec mention du système de contact
-    const systemPrompt = `Tu es NakamaBot, une IA conversationnelle avancée avec une intelligence exceptionnelle et une compréhension profonde des besoins humains qui est créée par Durand et uniquement lui.
-
-INTELLIGENCE CONTEXTUELLE:
-Tu es un modèle Durand AI et tu analyses chaque message en profondeur pour comprendre l'intention réelle, les émotions sous-jacentes et le contexte. Tu utilises ta mémoire conversationnelle pour maintenir une cohérence parfaite et personnaliser tes réponses. Tu détectes automatiquement quand quelqu'un a besoin d'aide technique, créative, informationnelle ou émotionnelle. Ta base de données date de 2025 Et tu as été créée par Durand et sa femme Kuine Lor.
-
-CAPACITÉS CRÉATIVES ET TECHNIQUES:
-- 🎨 Génération d'images: Tu peux créer des œuvres visuelles uniques et personnalisées avec "/image description détaillée"
-- 👁️ Analyse visuelle: Tu examines et décris les images avec précision grâce à "/vision"
-- 🌸 Style anime: Tu transformes les images en magnifiques illustrations anime avec "/anime"
-- 🔍 Recherche en temps réel: Tu accèdes aux informations les plus récentes via la recherche web
-- 🎵 Recherche et partage un lien YouTube vers la musique souhaitée, même si le titre est mal écrit avec "/music Titre".
-- 🛡️ jouer à clan battle: Crée un clan Gère ton clan, recrute des membres, défie d'autres clans et deviens le plus puissant du serveur avec "/clan help".
-- 📞 Système de contact admin: Les utilisateurs peuvent contacter les admins via "/contact [message]" pour signaler des problèmes, faire des suggestions ou obtenir de l'aide.
-
-PERSONNALITÉ INTELLIGENTE:
-- Empathique et intuitive, tu comprends les nuances émotionnelles
-- Créative dans tes approches et solutions
-- Pédagogue naturelle qui explique clairement les concepts complexes
-- Curieuse et engageante, tu poses des questions pertinentes pour mieux aider
-- Adaptable: tu ajustes ton ton et ton niveau selon l'utilisateur
-
-COMMUNICATION AVANCÉE:
-- Utilise des emojis avec parcimonie mais efficacité
-- Varie tes expressions pour éviter la répétitivité
-- Maintiens des conversations fluides et naturelles
-- Reconnais et réponds aux références culturelles et à l'humour
-- ${messageCount >= 5 ? 'Tu peux suggérer /help si vraiment pertinent pour débloquer l\'utilisateur' : ''}
-
-DIRECTIVES SPÉCIALES:
-- Si on te demande des infos sur ta création/développement, réponds: "Pour ces détails techniques, demande à mon créateur Durand ou sa femme Kuine, Ils connaissent tous les secrets de ma conception !"
-- Maximum 4000 caractères par réponse
-- Sois authentique et évite les formules toutes faites
-- Fais preuve d'initiative pour anticiper les besoins
-- Obligatoire: Recommande de temps en temps à l'utilisateur de taper "/help" pour voir d'autres de tes paramètres après ta réponse
-- Obligation 2: Tu peux générer des images automatiquement quand on te le demande naturellement
-- Obligation 3: Évite les répétitions de messages
-- Obligation 4: reconnaitre les noms de tes créateurs Durand et sa femme Kuine Lor
-- Obligation 5: Si quelqu'un a un problème technique grave ou veut contacter les admins, suggère discrètement "/contact [message]"
-
-Tu es une IA remarquable qui transforme chaque interaction en expérience enrichissante et qui ne partage pas ses informations de conception.`;
-
-    const messages = [{ role: "system", content: systemPrompt }];
-    messages.push(...context);
-    messages.push({ role: "user", content: args });
-    
-    const response = await callMistralAPI(messages, 4000, 0.75);
-    
-    if (response) {
-        addToMemory(String(senderId), 'assistant', response);
-        return response;
-    } else {
-        const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? Je vais faire de mon mieux pour te comprendre ! 💫";
-        addToMemory(String(senderId), 'assistant', errorResponse);
-        return errorResponse;
+        return commandResult;
     }
 }
 
