@@ -1,10 +1,11 @@
 /**
- * Commande /chat - Conversation avec Gemini AI (Mistral en fallback)
+ * Commande /chat - Conversation avec Gemini AI (Mistral en fallback) + Recherche Web Intelligente
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
  */
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const axios = require('axios');
 
 // Configuration Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -50,20 +51,363 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         }
     } 
     
-    // ✅ Détection intelligente des besoins de recherche web
-    const needsWebSearch = /\b(202[4-5]|actualité|récent|nouveau|maintenant|aujourd|news|info|que se passe|quoi de neuf|dernières nouvelles)\b/i.test(args);
-    if (needsWebSearch) {
-        const searchResult = await webSearch(args);
-        if (searchResult) {
-            const response = `🔍 D'après mes recherches récentes : ${searchResult} ✨`;
-            addToMemory(String(senderId), 'assistant', response);
-            return response;
+    // ✅ Détection intelligente des besoins de recherche web (NOUVELLE VERSION)
+    const searchAnalysis = await analyzeSearchNeed(args, senderId, ctx);
+    if (searchAnalysis.needsSearch) {
+        log.info(`🔍 Recherche web intelligente pour ${senderId}: ${searchAnalysis.query}`);
+        
+        const searchResults = await performIntelligentWebSearch(searchAnalysis.query, searchAnalysis.searchType, ctx);
+        if (searchResults && searchResults.length > 0) {
+            const enhancedResponse = await generateSearchEnhancedResponse(args, searchResults, ctx);
+            addToMemory(String(senderId), 'user', args);
+            addToMemory(String(senderId), 'assistant', enhancedResponse);
+            return enhancedResponse;
         }
     }
     
     // ✅ Conversation avec Gemini (Mistral en fallback)
     return await handleConversationWithFallback(senderId, args, ctx);
 };
+
+// ✅ NOUVELLE FONCTION: Analyse intelligente des besoins de recherche web
+async function analyzeSearchNeed(message, senderId, ctx) {
+    try {
+        // Patterns de détection immédiate (rapide)
+        const immediateSearchPatterns = [
+            // Actualités et temps réel
+            /\b(actualité|news|nouvelles|récent|dernière|dernièrement|maintenant|aujourd'hui|cette semaine|ce mois)\b/i,
+            // Données temporelles spécifiques
+            /\b(2024|2025|janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\b.*\b(2024|2025)\b/i,
+            // Questions sur l'état actuel
+            /\b(que se passe|quoi de neuf|situation actuelle|état actuel|comment ça va|dernier|plus récent)\b/i,
+            // Événements en cours
+            /\b(en cours|événement|festival|élection|match|championnat|tournoi|concert|conférence)\b/i,
+            // Prix et cours actuels
+            /\b(prix|cours|bourse|crypto|bitcoin|euro|dollar|inflation|taux)\b.*\b(actuel|maintenant|aujourd'hui)\b/i,
+            // Météo et conditions
+            /\b(météo|temps|température|climat|prévision)\b/i
+        ];
+        
+        // Vérification rapide
+        const hasImmediatePattern = immediateSearchPatterns.some(pattern => pattern.test(message));
+        
+        if (hasImmediatePattern) {
+            return {
+                needsSearch: true,
+                query: extractSearchQuery(message),
+                searchType: 'immediate',
+                confidence: 0.9
+            };
+        }
+        
+        // Analyse IA pour les cas complexes
+        const aiAnalysis = await analyzeWithAI(message, ctx);
+        return aiAnalysis;
+        
+    } catch (error) {
+        console.error('Erreur analyse recherche:', error);
+        return { needsSearch: false };
+    }
+}
+
+// ✅ Analyse avec IA pour déterminer le besoin de recherche
+async function analyzeWithAI(message, ctx) {
+    try {
+        const analysisPrompt = `Analyse ce message utilisateur et détermine s'il nécessite une recherche web récente.
+
+Message: "${message}"
+
+Réponds UNIQUEMENT par un JSON valide avec cette structure:
+{
+    "needsSearch": boolean,
+    "query": "requête de recherche optimisée" ou null,
+    "searchType": "news" | "general" | "specific" ou null,
+    "reason": "explication courte"
+}
+
+Critères pour needsSearch=true:
+- Demande d'actualités, événements récents
+- Questions sur des prix, cours, données actuelles  
+- Informations temporelles spécifiques (dates récentes)
+- Sujets qui évoluent rapidement
+- Vérification de faits récents
+
+Critères pour needsSearch=false:
+- Questions générales/théoriques
+- Définitions stables
+- Conversations personnelles
+- Demandes créatives
+- Sujets intemporels`;
+
+        // Essai avec Gemini d'abord
+        try {
+            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            const result = await model.generateContent(analysisPrompt);
+            const response = result.response.text();
+            
+            // Extraction du JSON de la réponse
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const analysis = JSON.parse(jsonMatch[0]);
+                return {
+                    needsSearch: analysis.needsSearch || false,
+                    query: analysis.needsSearch ? (analysis.query || message) : null,
+                    searchType: analysis.searchType || 'general',
+                    confidence: 0.8
+                };
+            }
+        } catch (geminiError) {
+            console.log('Gemini échec pour analyse, fallback Mistral');
+        }
+        
+        // Fallback avec Mistral
+        try {
+            const { callMistralAPI } = ctx;
+            const mistralResponse = await callMistralAPI([
+                { role: "system", content: "Tu analyses si un message nécessite une recherche web. Réponds uniquement par JSON valide." },
+                { role: "user", content: analysisPrompt }
+            ], 300, 0.3);
+            
+            const jsonMatch = mistralResponse.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const analysis = JSON.parse(jsonMatch[0]);
+                return {
+                    needsSearch: analysis.needsSearch || false,
+                    query: analysis.needsSearch ? (analysis.query || message) : null,
+                    searchType: analysis.searchType || 'general',
+                    confidence: 0.7
+                };
+            }
+        } catch (mistralError) {
+            console.log('Mistral aussi en échec pour analyse');
+        }
+        
+    } catch (error) {
+        console.error('Erreur analyse IA:', error);
+    }
+    
+    return { needsSearch: false };
+}
+
+// ✅ Extraction de requête de recherche optimisée
+function extractSearchQuery(message) {
+    // Nettoyer le message pour extraire les termes clés
+    let query = message;
+    
+    // Supprimer les mots de liaison courants
+    const stopWords = /\b(le|la|les|de|du|des|un|une|et|ou|mais|car|donc|pour|dans|sur|avec|sans|que|qui|quoi|comment|pourquoi|où|quand|combien)\b/gi;
+    query = query.replace(stopWords, ' ');
+    
+    // Supprimer les mots interrogatifs en début
+    query = query.replace(/^(dis-moi|peux-tu|pourrais-tu|est-ce que|qu'est-ce que)\s+/i, '');
+    
+    // Nettoyer les espaces multiples
+    query = query.replace(/\s+/g, ' ').trim();
+    
+    // Limiter à 10 mots maximum pour l'efficacité
+    const words = query.split(' ').slice(0, 10);
+    
+    return words.join(' ');
+}
+
+// ✅ NOUVELLE FONCTION: Recherche web intelligente avec API gratuite
+async function performIntelligentWebSearch(query, searchType = 'general', ctx) {
+    const { log } = ctx;
+    
+    try {
+        // Option 1: DuckDuckGo Instant Answer API (Complètement gratuite)
+        const results = await searchWithDuckDuckGo(query, searchType);
+        if (results && results.length > 0) {
+            return results;
+        }
+        
+        // Option 2: Recherche Google avec scraping léger (backup)
+        const googleResults = await searchWithGoogleScraping(query, searchType);
+        if (googleResults && googleResults.length > 0) {
+            return googleResults;
+        }
+        
+        log.warning('🔍 Aucun résultat de recherche trouvé');
+        return null;
+        
+    } catch (error) {
+        log.error(`❌ Erreur recherche web: ${error.message}`);
+        return null;
+    }
+}
+
+// ✅ Recherche avec DuckDuckGo API (Gratuite)
+async function searchWithDuckDuckGo(query, searchType) {
+    try {
+        // API DuckDuckGo Instant Answer (gratuite, pas de limite)
+        const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+        
+        const response = await axios.get(ddgUrl, {
+            timeout: 10000,
+            headers: {
+                'User-Agent': 'NakamaBot/1.0 (Educational Purpose)'
+            }
+        });
+        
+        const data = response.data;
+        const results = [];
+        
+        // Abstract (réponse instantanée)
+        if (data.Abstract && data.Abstract.trim()) {
+            results.push({
+                title: data.AbstractText || 'Réponse instantanée',
+                snippet: data.Abstract,
+                url: data.AbstractURL || '',
+                source: 'DuckDuckGo Instant',
+                type: 'instant'
+            });
+        }
+        
+        // Definition si disponible
+        if (data.Definition && data.Definition.trim()) {
+            results.push({
+                title: 'Définition',
+                snippet: data.Definition,
+                url: data.DefinitionURL || '',
+                source: 'DuckDuckGo',
+                type: 'definition'
+            });
+        }
+        
+        // Topics relatifs
+        if (data.RelatedTopics && data.RelatedTopics.length > 0) {
+            data.RelatedTopics.slice(0, 3).forEach(topic => {
+                if (topic.Text && topic.FirstURL) {
+                    results.push({
+                        title: topic.Text.split(' - ')[0] || 'Information',
+                        snippet: topic.Text,
+                        url: topic.FirstURL,
+                        source: 'DuckDuckGo',
+                        type: 'related'
+                    });
+                }
+            });
+        }
+        
+        return results.length > 0 ? results : null;
+        
+    } catch (error) {
+        console.error('Erreur DuckDuckGo:', error.message);
+        return null;
+    }
+}
+
+// ✅ Recherche Google avec scraping léger (backup)
+async function searchWithGoogleScraping(query, searchType) {
+    try {
+        // Utilisation de l'API SerpAPI gratuite (100 recherches/mois)
+        // Remplace par ta clé API gratuite de SerpAPI
+        const serpApiKey = process.env.SERPAPI_KEY;
+        
+        if (!serpApiKey) {
+            return null;
+        }
+        
+        const serpUrl = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${serpApiKey}&num=5`;
+        
+        const response = await axios.get(serpUrl, {
+            timeout: 10000
+        });
+        
+        const data = response.data;
+        const results = [];
+        
+        // Résultats organiques
+        if (data.organic_results) {
+            data.organic_results.slice(0, 5).forEach(result => {
+                results.push({
+                    title: result.title || 'Résultat',
+                    snippet: result.snippet || '',
+                    url: result.link || '',
+                    source: 'Google',
+                    type: 'organic'
+                });
+            });
+        }
+        
+        // Featured snippet (réponse mise en avant)
+        if (data.answer_box) {
+            results.unshift({
+                title: data.answer_box.title || 'Réponse directe',
+                snippet: data.answer_box.answer || data.answer_box.snippet || '',
+                url: data.answer_box.link || '',
+                source: 'Google Featured',
+                type: 'featured'
+            });
+        }
+        
+        return results.length > 0 ? results : null;
+        
+    } catch (error) {
+        console.error('Erreur SerpAPI:', error.message);
+        return null;
+    }
+}
+
+// ✅ Génération de réponse enrichie avec les résultats de recherche
+async function generateSearchEnhancedResponse(originalMessage, searchResults, ctx) {
+    try {
+        // Préparer le contexte de recherche
+        const searchContext = searchResults.slice(0, 3).map((result, index) => 
+            `[${index + 1}] ${result.title}: ${result.snippet}`
+        ).join('\n');
+        
+        const enhancementPrompt = `Question utilisateur: "${originalMessage}"
+
+Résultats de recherche récents:
+${searchContext}
+
+Génère une réponse naturelle et conversationnelle qui:
+1. Répond directement à la question
+2. Intègre les informations de recherche pertinentes
+3. Reste dans un style amical et accessible
+4. Maximum 2000 caractères
+5. Ajoute 🔍 en début pour indiquer l'usage de la recherche web
+
+Important: Présente l'information comme une connaissance récente, pas comme une liste de résultats.`;
+
+        // Essayer avec Gemini d'abord
+        try {
+            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            const result = await model.generateContent(enhancementPrompt);
+            const response = result.response.text();
+            
+            if (response && response.trim()) {
+                return response;
+            }
+        } catch (geminiError) {
+            console.log('Gemini échec pour synthèse, essai Mistral');
+        }
+        
+        // Fallback Mistral
+        try {
+            const { callMistralAPI } = ctx;
+            const mistralResponse = await callMistralAPI([
+                { role: "system", content: "Tu es un assistant qui synthétise des informations de recherche web de manière naturelle et conversationnelle." },
+                { role: "user", content: enhancementPrompt }
+            ], 1500, 0.7);
+            
+            if (mistralResponse) {
+                return mistralResponse;
+            }
+        } catch (mistralError) {
+            console.log('Mistral aussi en échec pour synthèse');
+        }
+        
+        // Fallback simple si tout échoue
+        const bestResult = searchResults[0];
+        return `🔍 D'après mes recherches récentes : ${bestResult.snippet}\n\nSource: ${bestResult.source}`;
+        
+    } catch (error) {
+        console.error('Erreur génération réponse enrichie:', error);
+        return `🔍 J'ai trouvé des informations récentes mais j'ai du mal à les synthétiser. Voici le plus pertinent : ${searchResults[0].snippet}`;
+    }
+}
 
 // ✅ FONCTION: Gestion conversation avec Gemini et fallback Mistral
 async function handleConversationWithFallback(senderId, args, ctx) {
@@ -103,6 +447,7 @@ INTELLIGENCE & PERSONNALITÉ:
 - Tu comprends les émotions et intentions sous-jacentes  
 - Pédagogue naturelle qui explique clairement
 - Adaptable selon l'utilisateur et le contexte
+- Tu as accès à des recherches web récentes quand nécessaire
 
 CAPACITÉS PRINCIPALES:
 🎨 /image [description] - Créer des images uniques
@@ -112,6 +457,7 @@ CAPACITÉS PRINCIPALES:
 🛡️ /clan - Système de clans et batailles
 📞 /contact [message] - Contacter les admins (2/jour max)
 🆘 /help - Toutes les commandes disponibles
+🔍 Recherche web intelligente automatique
 
 DIRECTIVES:
 - Parle selon la langue de l\'utilisateur et du contexte
@@ -326,7 +672,238 @@ Génère une réponse naturelle et amicale (max 200 chars) qui présente le rés
     }
 }
 
-// ✅ Exports pour autres commandes
+// ✅ NOUVELLES FONCTIONS UTILITAIRES
+
+// Configuration pour les variables d'environnement nécessaires
+const REQUIRED_ENV_VARS = {
+    GEMINI_API_KEY: 'Clé API Google Gemini (gratuite)',
+    SERPAPI_KEY: 'Clé API SerpAPI (optionnel, 100 recherches gratuites/mois)'
+};
+
+// ✅ Fonction de vérification des clés API
+function checkApiKeys() {
+    const missing = [];
+    const warnings = [];
+    
+    if (!process.env.GEMINI_API_KEY) {
+        missing.push('GEMINI_API_KEY (requis pour l\'IA)');
+    }
+    
+    if (!process.env.SERPAPI_KEY) {
+        warnings.push('SERPAPI_KEY (optionnel pour recherches Google avancées)');
+    }
+    
+    if (missing.length > 0) {
+        console.error('❌ Variables d\'environnement manquantes:', missing.join(', '));
+        console.log('📝 Obtenir Gemini API: https://makersuite.google.com/app/apikey');
+    }
+    
+    if (warnings.length > 0) {
+        console.log('⚠️ Optionnel manquant:', warnings.join(', '));
+        console.log('📝 SerpAPI gratuit: https://serpapi.com/');
+    }
+    
+    return missing.length === 0;
+}
+
+// ✅ Cache simple pour éviter les recherches répétitives
+const searchCache = new Map();
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+function getCachedSearch(query) {
+    const cached = searchCache.get(query.toLowerCase());
+    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+        return cached.results;
+    }
+    return null;
+}
+
+function setCachedSearch(query, results) {
+    searchCache.set(query.toLowerCase(), {
+        results,
+        timestamp: Date.now()
+    });
+    
+    // Nettoyer le cache si trop grand
+    if (searchCache.size > 100) {
+        const oldestKey = searchCache.keys().next().value;
+        searchCache.delete(oldestKey);
+    }
+}
+
+// ✅ Amélioration de la recherche DuckDuckGo avec cache
+async function searchWithDuckDuckGoEnhanced(query, searchType) {
+    // Vérifier le cache
+    const cached = getCachedSearch(query);
+    if (cached) {
+        console.log('🎯 Résultat de recherche en cache pour:', query);
+        return cached;
+    }
+    
+    try {
+        const results = await searchWithDuckDuckGo(query, searchType);
+        
+        if (results && results.length > 0) {
+            setCachedSearch(query, results);
+            console.log('🔍 Nouvelle recherche DuckDuckGo:', query, '- Résultats:', results.length);
+        }
+        
+        return results;
+        
+    } catch (error) {
+        console.error('Erreur recherche DuckDuckGo Enhanced:', error.message);
+        return null;
+    }
+}
+
+// ✅ Fonction de recherche avec retry automatique
+async function performIntelligentWebSearchWithRetry(query, searchType = 'general', ctx, maxRetries = 2) {
+    const { log } = ctx;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            // Essayer DuckDuckGo en premier (gratuit illimité)
+            let results = await searchWithDuckDuckGoEnhanced(query, searchType);
+            if (results && results.length > 0) {
+                log.info(`✅ Recherche DuckDuckGo réussie (tentative ${attempt}): ${results.length} résultats`);
+                return results;
+            }
+            
+            // Fallback SerpAPI si configuré
+            if (process.env.SERPAPI_KEY) {
+                results = await searchWithGoogleScraping(query, searchType);
+                if (results && results.length > 0) {
+                    log.info(`✅ Recherche SerpAPI réussie (tentative ${attempt}): ${results.length} résultats`);
+                    return results;
+                }
+            }
+            
+            // Attendre avant nouvelle tentative
+            if (attempt < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+            }
+            
+        } catch (error) {
+            log.warning(`⚠️ Tentative ${attempt} échouée:`, error.message);
+            
+            if (attempt === maxRetries) {
+                throw error;
+            }
+        }
+    }
+    
+    return null;
+}
+
+// ✅ Fonction de formatage intelligent des résultats
+function formatSearchResults(results, maxResults = 3) {
+    if (!results || !Array.isArray(results)) return '';
+    
+    const priorityOrder = ['featured', 'instant', 'definition', 'organic', 'related'];
+    
+    // Trier par priorité
+    results.sort((a, b) => {
+        const aPriority = priorityOrder.indexOf(a.type) !== -1 ? priorityOrder.indexOf(a.type) : 999;
+        const bPriority = priorityOrder.indexOf(b.type) !== -1 ? priorityOrder.indexOf(b.type) : 999;
+        return aPriority - bPriority;
+    });
+    
+    return results.slice(0, maxResults).map((result, index) => {
+        const emoji = getResultEmoji(result.type);
+        const snippet = result.snippet.length > 150 ? 
+            result.snippet.substring(0, 147) + '...' : 
+            result.snippet;
+            
+        return `${emoji} **${result.title}**\n${snippet}`;
+    }).join('\n\n');
+}
+
+// ✅ Emojis pour types de résultats
+function getResultEmoji(type) {
+    const emojis = {
+        'featured': '⭐',
+        'instant': '🎯',
+        'definition': '📚',
+        'organic': '🔍',
+        'related': '🔗',
+        'news': '📰'
+    };
+    return emojis[type] || '📄';
+}
+
+// ✅ Détection de langue pour requêtes multilingues
+function detectLanguageAndAdjustQuery(query) {
+    const frenchPatterns = /\b(le|la|les|des|une?|ce|cette|qui|que|quoi|où|quand|comment|pourquoi|avec|sans|dans|sur|pour|par|de|du|et|ou|mais|donc|car|si|alors|aujourd'hui|maintenant|récemment)\b/i;
+    const englishPatterns = /\b(the|a|an|and|or|but|in|on|at|to|for|of|with|by|from|about|what|where|when|how|why|today|now|recently)\b/i;
+    
+    const isFrench = frenchPatterns.test(query);
+    const isEnglish = englishPatterns.test(query) && !isFrench;
+    
+    return {
+        language: isFrench ? 'fr' : (isEnglish ? 'en' : 'auto'),
+        adjustedQuery: query // On pourrait optimiser la requête selon la langue
+    };
+}
+
+// ✅ Statistiques de recherche (pour monitoring)
+const searchStats = {
+    total: 0,
+    successful: 0,
+    cached: 0,
+    byType: {},
+    errors: []
+};
+
+function updateSearchStats(type, success, fromCache = false) {
+    searchStats.total++;
+    if (success) searchStats.successful++;
+    if (fromCache) searchStats.cached++;
+    
+    searchStats.byType[type] = (searchStats.byType[type] || 0) + 1;
+    
+    // Garder seulement les 10 dernières erreurs
+    if (!success && searchStats.errors.length >= 10) {
+        searchStats.errors.shift();
+    }
+}
+
+function getSearchStats() {
+    return {
+        ...searchStats,
+        successRate: searchStats.total > 0 ? (searchStats.successful / searchStats.total * 100).toFixed(1) + '%' : '0%',
+        cacheRate: searchStats.total > 0 ? (searchStats.cached / searchStats.total * 100).toFixed(1) + '%' : '0%'
+    };
+}
+
+// ✅ Exports pour autres modules
 module.exports.detectCommandIntentions = detectCommandIntentions;
 module.exports.executeCommandFromChat = executeCommandFromChat;
 module.exports.detectContactAdminIntention = detectContactAdminIntention;
+module.exports.performIntelligentWebSearch = performIntelligentWebSearchWithRetry;
+module.exports.checkApiKeys = checkApiKeys;
+module.exports.getSearchStats = getSearchStats;
+
+// ✅ Initialisation au démarrage
+(function initialize() {
+    console.log('🚀 NakamaBot Chat Enhanced - Initialisation...');
+    
+    if (checkApiKeys()) {
+        console.log('✅ Configuration API validée');
+    }
+    
+    console.log('🔍 Recherche web intelligente activée');
+    console.log('💾 Cache de recherche initialisé');
+    console.log('📊 Statistiques de recherche activées');
+    
+    // Nettoyer le cache périodiquement
+    setInterval(() => {
+        const now = Date.now();
+        for (const [key, value] of searchCache.entries()) {
+            if ((now - value.timestamp) > CACHE_TTL) {
+                searchCache.delete(key);
+            }
+        }
+    }, 10 * 60 * 1000); // Nettoyage toutes les 10 minutes
+    
+    console.log('🎯 NakamaBot prêt avec recherche web avancée !');
+})();
