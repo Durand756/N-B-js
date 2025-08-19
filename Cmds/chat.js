@@ -1,11 +1,12 @@
 /**
  * Commande /chat - Conversation avec Gemini AI (Mistral en fallback) + Recherche Web Intelligente
+ * Version corrigée avec APIs 100% gratuites et fiables
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
  */
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const axios = require('axios');
+const cheerio = require('cheerio'); // Pour le scraping léger
 
 // Configuration Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -51,24 +52,22 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         }
     } 
     
-    // ✅ Détection intelligente des besoins de recherche web (NOUVELLE VERSION AMÉLIORÉE)
+    // ✅ Détection intelligente des besoins de recherche web (VERSION AMÉLIORÉE)
     const searchAnalysis = await analyzeSearchNeed(args, senderId, ctx);
     if (searchAnalysis.needsSearch) {
         log.info(`🔍 Recherche web intelligente pour ${senderId}: ${searchAnalysis.query}`);
         
-        const searchResults = await performIntelligentWebSearch(searchAnalysis.query, searchAnalysis.searchType, ctx);
+        const searchResults = await performReliableWebSearch(searchAnalysis.query, searchAnalysis.searchType, ctx);
         if (searchResults && searchResults.length > 0) {
             const enhancedResponse = await generateSearchEnhancedResponse(args, searchResults, ctx);
             addToMemory(String(senderId), 'user', args);
             addToMemory(String(senderId), 'assistant', enhancedResponse);
             return enhancedResponse;
         } else {
-            // Si aucun résultat mais recherche demandée, l'indiquer gentiment
             log.info(`⚠️ Recherche demandée mais aucun résultat pour: ${searchAnalysis.query}`);
-            const noResultResponse = `🔍 J'ai essayé de chercher des informations récentes sur "${searchAnalysis.query}" mais je n'ai pas trouvé de résultats pertinents. Je peux quand même t'aider avec mes connaissances générales ! 💡`;
+            const noResultResponse = `🔍 J'ai essayé de chercher des informations récentes mais je n'ai pas trouvé de résultats pertinents pour "${searchAnalysis.query}". Je peux quand même t'aider avec mes connaissances générales ! 💡`;
             addToMemory(String(senderId), 'user', args);
             addToMemory(String(senderId), 'assistant', noResultResponse);
-            // Continuer avec la conversation normale après avoir informé de l'échec
         }
     }
     
@@ -76,40 +75,66 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     return await handleConversationWithFallback(senderId, args, ctx);
 };
 
-// ✅ NOUVELLE FONCTION: Analyse intelligente des besoins de recherche web
+// ✅ ANALYSE INTELLIGENTE DES BESOINS DE RECHERCHE (VERSION OPTIMISÉE)
 async function analyzeSearchNeed(message, senderId, ctx) {
     try {
-        // Patterns de détection immédiate (rapide)
+        // Nettoyage et normalisation du message
+        const cleanMessage = message.toLowerCase().trim();
+        
+        // Patterns de détection immédiate (plus précis)
         const immediateSearchPatterns = [
-            // Actualités et temps réel
-            /\b(actualité|news|nouvelles|récent|dernière|dernièrement|maintenant|aujourd'hui|cette semaine|ce mois)\b/i,
+            // Actualités et événements récents
+            {
+                regex: /\b(actualité|news|nouvelles|récent|dernier|dernière|aujourd'hui|cette semaine|maintenant|en cours)\b/i,
+                type: 'news',
+                confidence: 0.9
+            },
+            // Sports et compétitions
+            {
+                regex: /\b(champion|championnat|ligue|coupe|match|tournoi|finale|gagnant|vainqueur|résultat|score)\b.*\b(2024|2025|récent|dernier|dernière)\b/i,
+                type: 'sports',
+                confidence: 0.95
+            },
             // Données temporelles spécifiques
-            /\b(2024|2025|janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\b.*\b(2024|2025)\b/i,
-            // Questions sur l'état actuel
-            /\b(que se passe|quoi de neuf|situation actuelle|état actuel|comment ça va|dernier|plus récent)\b/i,
-            // Événements en cours
-            /\b(en cours|événement|festival|élection|match|championnat|tournoi|concert|conférence)\b/i,
+            {
+                regex: /\b(janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+(2024|2025)\b/i,
+                type: 'temporal',
+                confidence: 0.9
+            },
             // Prix et cours actuels
-            /\b(prix|cours|bourse|crypto|bitcoin|euro|dollar|inflation|taux)\b.*\b(actuel|maintenant|aujourd'hui)\b/i,
-            // Météo et conditions
-            /\b(météo|temps|température|climat|prévision)\b/i
+            {
+                regex: /\b(prix|cours|bourse|crypto|bitcoin|ethereum|euro|dollar|inflation|taux)\b.*\b(actuel|maintenant|aujourd'hui|récent)\b/i,
+                type: 'financial',
+                confidence: 0.85
+            },
+            // Météo
+            {
+                regex: /\b(météo|temps|température|prévision|climat)\b/i,
+                type: 'weather',
+                confidence: 0.8
+            }
         ];
         
-        // Vérification rapide
-        const hasImmediatePattern = immediateSearchPatterns.some(pattern => pattern.test(message));
-        
-        if (hasImmediatePattern) {
-            return {
-                needsSearch: true,
-                query: extractSearchQuery(message),
-                searchType: 'immediate',
-                confidence: 0.9
-            };
+        // Vérification rapide avec patterns améliorés
+        for (const pattern of immediateSearchPatterns) {
+            if (pattern.regex.test(message)) {
+                const optimizedQuery = optimizeSearchQuery(message, pattern.type);
+                return {
+                    needsSearch: true,
+                    query: optimizedQuery,
+                    searchType: pattern.type,
+                    confidence: pattern.confidence
+                };
+            }
         }
         
-        // Analyse IA pour les cas complexes
-        const aiAnalysis = await analyzeWithAI(message, ctx);
-        return aiAnalysis;
+        // Analyse IA pour les cas complexes (plus ciblée)
+        if (containsSearchIndicators(message)) {
+            const aiAnalysis = await analyzeWithAI(message, ctx);
+            return aiAnalysis;
+        }
+        
+        return { needsSearch: false };
         
     } catch (error) {
         console.error('Erreur analyse recherche:', error);
@@ -117,33 +142,563 @@ async function analyzeSearchNeed(message, senderId, ctx) {
     }
 }
 
-// ✅ Analyse avec IA pour déterminer le besoin de recherche
+// ✅ OPTIMISATION DES REQUÊTES DE RECHERCHE
+function optimizeSearchQuery(message, searchType) {
+    let query = message.toLowerCase();
+    
+    // Suppression des mots inutiles selon le contexte
+    const commonStopWords = /\b(le|la|les|de|du|des|un|une|et|ou|mais|car|donc|pour|dans|sur|avec|sans|que|qui|quoi|comment|pourquoi|où|quand|combien|dis-moi|peux-tu|pourrais-tu|est-ce que|qu'est-ce que|raconte-moi|explique-moi)\b/gi;
+    
+    // Nettoyage de base
+    query = query.replace(commonStopWords, ' ')
+                .replace(/[?!.,;]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+    
+    // Optimisation spécifique par type
+    switch (searchType) {
+        case 'sports':
+            // Préserver les termes sportifs importants
+            const sportsTerms = query.match(/\b(champion|championnat|ligue|coupe|finale|real madrid|barcelona|psg|manchester|liverpool|milan|juventus|bayern|dortmund|atletico)\b/gi);
+            if (sportsTerms) {
+                query = sportsTerms.join(' ') + ' 2024 résultats';
+            }
+            break;
+            
+        case 'news':
+            // Ajouter des termes temporels pour les actualités
+            if (!/\b(2024|2025|récent|aujourd'hui|maintenant)\b/i.test(query)) {
+                query += ' actualités 2024';
+            }
+            break;
+            
+        case 'financial':
+            // Optimiser pour les données financières
+            const finTerms = query.match(/\b(bitcoin|ethereum|euro|dollar|bourse|crypto)\b/gi);
+            if (finTerms) {
+                query = finTerms.join(' ') + ' cours prix actuel';
+            }
+            break;
+            
+        case 'weather':
+            // Météo avec localisation
+            query = query.replace(/météo|temps|température/gi, '').trim();
+            query = `météo ${query || 'france'} aujourd'hui`;
+            break;
+    }
+    
+    // Limiter à 8 mots maximum pour l'efficacité
+    const words = query.split(' ').filter(word => word.length > 1).slice(0, 8);
+    
+    return words.join(' ');
+}
+
+// ✅ DÉTECTION D'INDICATEURS DE RECHERCHE
+function containsSearchIndicators(message) {
+    const searchIndicators = [
+        /\b(cherche|recherche|trouve|informe|renseigne)\b/i,
+        /\b(dernières?|récentes?|nouvelles?|actuelles?)\b/i,
+        /\b(état|situation|condition|status)\b.*\b(actuel|maintenant)\b/i,
+        /\b(que se passe|quoi de neuf|comment ça va)\b/i,
+        /\b\d{4}\b/, // Années
+        /\b(janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\b/i
+    ];
+    
+    return searchIndicators.some(pattern => pattern.test(message));
+}
+
+// ✅ RECHERCHE WEB FIABLE - NOUVELLE IMPLÉMENTATION
+async function performReliableWebSearch(query, searchType = 'general', ctx) {
+    const { log } = ctx;
+    
+    try {
+        console.log('🔍 Démarrage recherche fiable pour:', query, `(type: ${searchType})`);
+        
+        // Vérifier le cache d'abord
+        const cached = getCachedSearch(query);
+        if (cached) {
+            console.log('💾 Résultat trouvé en cache');
+            return cached;
+        }
+        
+        // 1. PRIORITÉ: Wikipedia (toujours fiable)
+        const wikiResults = await searchWikipediaReliable(query, searchType);
+        if (wikiResults && wikiResults.length > 0) {
+            console.log('✅ Wikipedia réussi:', wikiResults.length, 'résultats');
+            setCachedSearch(query, wikiResults);
+            return wikiResults;
+        }
+        
+        // 2. News API gratuite (actualités)
+        if (searchType === 'news' || searchType === 'sports') {
+            const newsResults = await searchWithNewsAPI(query);
+            if (newsResults && newsResults.length > 0) {
+                console.log('✅ News API réussi:', newsResults.length, 'résultats');
+                setCachedSearch(query, newsResults);
+                return newsResults;
+            }
+        }
+        
+        // 3. Reddit Search API (discussions récentes)
+        const redditResults = await searchReddit(query, searchType);
+        if (redditResults && redditResults.length > 0) {
+            console.log('✅ Reddit réussi:', redditResults.length, 'résultats');
+            setCachedSearch(query, redditResults);
+            return redditResults;
+        }
+        
+        // 4. OpenStreetMap pour géolocalisation
+        if (searchType === 'weather' || containsLocation(query)) {
+            const osmResults = await searchOpenStreetMap(query);
+            if (osmResults && osmResults.length > 0) {
+                console.log('✅ OpenStreetMap réussi:', osmResults.length, 'résultats');
+                setCachedSearch(query, osmResults);
+                return osmResults;
+            }
+        }
+        
+        // 5. FALLBACK: Scraping léger de moteurs de recherche
+        const scrapedResults = await lightWebScraping(query, searchType);
+        if (scrapedResults && scrapedResults.length > 0) {
+            console.log('✅ Scraping léger réussi:', scrapedResults.length, 'résultats');
+            setCachedSearch(query, scrapedResults);
+            return scrapedResults;
+        }
+        
+        log.warning('⚠️ Toutes les méthodes de recherche ont échoué pour:', query);
+        return null;
+        
+    } catch (error) {
+        log.error(`❌ Erreur recherche web: ${error.message}`);
+        return null;
+    }
+}
+
+// ✅ WIKIPEDIA RECHERCHE FIABLE (VERSION AMÉLIORÉE)
+async function searchWikipediaReliable(query, searchType) {
+    try {
+        console.log('📚 Recherche Wikipedia améliorée pour:', query);
+        
+        // 1. Recherche directe par titre
+        let searchUrl = `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+        
+        let response = await axios.get(searchUrl, {
+            timeout: 8000,
+            headers: {
+                'User-Agent': 'NakamaBot/2.0 (Educational; https://example.com/contact)',
+                'Accept': 'application/json'
+            }
+        });
+        
+        if (response.data && response.data.extract && !response.data.type?.includes('disambiguation')) {
+            return formatWikipediaResult(response.data, 'fr');
+        }
+        
+        // 2. Recherche par mots-clés si pas de résultat direct
+        const searchApiUrl = `https://fr.wikipedia.org/w/api.php?action=query&format=json&list=search&srsearch=${encodeURIComponent(query)}&srlimit=3&srinfo=suggestion`;
+        
+        response = await axios.get(searchApiUrl, {
+            timeout: 8000,
+            headers: {
+                'User-Agent': 'NakamaBot/2.0 (Educational; https://example.com/contact)'
+            }
+        });
+        
+        const searchData = response.data;
+        if (searchData.query?.search?.length > 0) {
+            // Prendre le premier résultat de recherche
+            const firstResult = searchData.query.search[0];
+            const pageTitle = firstResult.title;
+            
+            // Récupérer le résumé de cette page
+            const summaryUrl = `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(pageTitle)}`;
+            const summaryResponse = await axios.get(summaryUrl, {
+                timeout: 8000,
+                headers: {
+                    'User-Agent': 'NakamaBot/2.0 (Educational; https://example.com/contact)'
+                }
+            });
+            
+            if (summaryResponse.data?.extract) {
+                return formatWikipediaResult(summaryResponse.data, 'fr');
+            }
+        }
+        
+        // 3. Essayer en anglais si français échoue
+        const enSearchUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+        const enResponse = await axios.get(enSearchUrl, {
+            timeout: 8000,
+            headers: {
+                'User-Agent': 'NakamaBot/2.0 (Educational; https://example.com/contact)'
+            }
+        });
+        
+        if (enResponse.data?.extract) {
+            return formatWikipediaResult(enResponse.data, 'en');
+        }
+        
+        return null;
+        
+    } catch (error) {
+        console.log('❌ Wikipedia échoué:', error.message);
+        return null;
+    }
+}
+
+// ✅ FORMATAGE RÉSULTATS WIKIPEDIA
+function formatWikipediaResult(data, language) {
+    const result = {
+        title: data.title || 'Article Wikipedia',
+        snippet: data.extract || '',
+        url: data.content_urls?.desktop?.page || `https://${language}.wikipedia.org/wiki/${encodeURIComponent(data.title)}`,
+        source: `Wikipedia ${language.toUpperCase()}`,
+        type: 'encyclopedia',
+        thumbnail: data.thumbnail?.source || null
+    };
+    
+    // Limiter la taille du snippet
+    if (result.snippet.length > 300) {
+        result.snippet = result.snippet.substring(0, 297) + '...';
+    }
+    
+    return [result];
+}
+
+// ✅ NEWS API GRATUITE (NewsAPI.org ou alternatives)
+async function searchWithNewsAPI(query) {
+    try {
+        console.log('📰 Recherche actualités pour:', query);
+        
+        // Alternative gratuite: RSS feeds
+        const rssFeeds = [
+            'https://www.lemonde.fr/rss/une.xml',
+            'https://www.franceinfo.fr/rss/',
+            'https://rss.cnn.com/rss/edition.rss'
+        ];
+        
+        for (const feedUrl of rssFeeds) {
+            try {
+                const response = await axios.get(feedUrl, {
+                    timeout: 8000,
+                    headers: {
+                        'User-Agent': 'NakamaBot/2.0 (News Aggregator)'
+                    }
+                });
+                
+                const results = parseRSSFeed(response.data, query);
+                if (results.length > 0) {
+                    return results;
+                }
+            } catch (feedError) {
+                console.log(`Échec RSS ${feedUrl}:`, feedError.message);
+            }
+        }
+        
+        return null;
+        
+    } catch (error) {
+        console.error('❌ News API échoué:', error.message);
+        return null;
+    }
+}
+
+// ✅ PARSER RSS SIMPLE
+function parseRSSFeed(xmlData, query) {
+    try {
+        // Parser XML simple (sans dépendance externe)
+        const items = xmlData.match(/<item>[\s\S]*?<\/item>/gi) || [];
+        const results = [];
+        
+        const queryWords = query.toLowerCase().split(' ').filter(w => w.length > 2);
+        
+        items.slice(0, 5).forEach(item => {
+            const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/i);
+            const descMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>|<description>(.*?)<\/description>/i);
+            const linkMatch = item.match(/<link>(.*?)<\/link>/i);
+            const dateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/i);
+            
+            const title = titleMatch ? (titleMatch[1] || titleMatch[2]) : '';
+            const description = descMatch ? (descMatch[1] || descMatch[2]) : '';
+            
+            // Vérifier la pertinence
+            const content = (title + ' ' + description).toLowerCase();
+            const relevance = queryWords.filter(word => content.includes(word)).length / queryWords.length;
+            
+            if (relevance > 0.3 && title) { // Au moins 30% de mots-clés trouvés
+                results.push({
+                    title: title.replace(/<[^>]*>/g, ''),
+                    snippet: description.replace(/<[^>]*>/g, '').substring(0, 200),
+                    url: linkMatch ? linkMatch[1] : '',
+                    source: 'Actualités RSS',
+                    type: 'news',
+                    date: dateMatch ? dateMatch[1] : null,
+                    relevance: relevance
+                });
+            }
+        });
+        
+        // Trier par pertinence
+        return results.sort((a, b) => b.relevance - a.relevance).slice(0, 3);
+        
+    } catch (error) {
+        console.error('Erreur parsing RSS:', error);
+        return [];
+    }
+}
+
+// ✅ RECHERCHE REDDIT (API PUBLIQUE)
+async function searchReddit(query, searchType) {
+    try {
+        console.log('🔴 Recherche Reddit pour:', query);
+        
+        // API Reddit publique (sans authentification)
+        const subreddits = getRelevantSubreddits(searchType);
+        const searchUrl = `https://www.reddit.com/r/${subreddits}/search.json?q=${encodeURIComponent(query)}&sort=hot&limit=3&restrict_sr=1`;
+        
+        const response = await axios.get(searchUrl, {
+            timeout: 10000,
+            headers: {
+                'User-Agent': 'NakamaBot/2.0 (Web Search Bot)'
+            }
+        });
+        
+        const data = response.data;
+        if (data?.data?.children?.length > 0) {
+            return data.data.children.slice(0, 3).map(post => ({
+                title: post.data.title,
+                snippet: post.data.selftext.substring(0, 200) || `Discussion Reddit avec ${post.data.num_comments} commentaires`,
+                url: `https://reddit.com${post.data.permalink}`,
+                source: `r/${post.data.subreddit}`,
+                type: 'discussion',
+                score: post.data.score,
+                comments: post.data.num_comments
+            }));
+        }
+        
+        return null;
+        
+    } catch (error) {
+        console.log('❌ Reddit échoué:', error.message);
+        return null;
+    }
+}
+
+// ✅ SUBREDDITS PERTINENTS PAR TYPE
+function getRelevantSubreddits(searchType) {
+    const subredditMap = {
+        'sports': 'soccer+football+sports+championship',
+        'news': 'worldnews+news+france',
+        'tech': 'technology+programming+tech',
+        'financial': 'cryptocurrency+investing+finance',
+        'general': 'todayilearned+explainlikeimfive+askreddit'
+    };
+    
+    return subredditMap[searchType] || subredditMap['general'];
+}
+
+// ✅ OPENSTREETMAP POUR GÉOLOCALISATION
+async function searchOpenStreetMap(query) {
+    try {
+        console.log('🗺️ Recherche OSM pour:', query);
+        
+        // API Nominatim d'OpenStreetMap (gratuite)
+        const osmUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=3&addressdetails=1&extratags=1`;
+        
+        const response = await axios.get(osmUrl, {
+            timeout: 8000,
+            headers: {
+                'User-Agent': 'NakamaBot/2.0 (Location Search)'
+            }
+        });
+        
+        const data = response.data;
+        if (Array.isArray(data) && data.length > 0) {
+            return data.slice(0, 2).map(location => ({
+                title: location.display_name.split(',')[0],
+                snippet: `Localisation: ${location.display_name}`,
+                url: `https://www.openstreetmap.org/#map=15/${location.lat}/${location.lon}`,
+                source: 'OpenStreetMap',
+                type: 'location',
+                coordinates: {
+                    lat: parseFloat(location.lat),
+                    lon: parseFloat(location.lon)
+                }
+            }));
+        }
+        
+        return null;
+        
+    } catch (error) {
+        console.log('❌ OpenStreetMap échoué:', error.message);
+        return null;
+    }
+}
+
+// ✅ SCRAPING LÉGER (DERNIER RECOURS)
+async function lightWebScraping(query, searchType) {
+    try {
+        console.log('🕷️ Scraping léger pour:', query);
+        
+        // Utiliser DuckDuckGo HTML (scraping très léger)
+        const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+        
+        const response = await axios.get(ddgUrl, {
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; NakamaBot/2.0)',
+                'Accept': 'text/html,application/xhtml+xml'
+            }
+        });
+        
+        // Parse HTML avec cheerio si disponible, sinon regex
+        if (typeof cheerio !== 'undefined') {
+            const $ = cheerio.load(response.data);
+            const results = [];
+            
+            $('.result__body').each((i, element) => {
+                if (i >= 3) return false; // Limiter à 3 résultats
+                
+                const $el = $(element);
+                const title = $el.find('.result__title a').text().trim();
+                const snippet = $el.find('.result__snippet').text().trim();
+                const url = $el.find('.result__title a').attr('href');
+                
+                if (title && snippet) {
+                    results.push({
+                        title: title,
+                        snippet: snippet.substring(0, 200),
+                        url: url || '',
+                        source: 'DuckDuckGo',
+                        type: 'web'
+                    });
+                }
+            });
+            
+            return results.length > 0 ? results : null;
+        }
+        
+        // Fallback regex si cheerio indisponible
+        const resultMatches = response.data.match(/class="result__body">[\s\S]*?(?=<div class="result__body">|$)/g) || [];
+        const results = [];
+        
+        resultMatches.slice(0, 3).forEach(match => {
+            const titleMatch = match.match(/class="result__title"[^>]*><a[^>]*>([^<]+)/);
+            const snippetMatch = match.match(/class="result__snippet"[^>]*>([^<]+)/);
+            
+            if (titleMatch && snippetMatch) {
+                results.push({
+                    title: titleMatch[1].trim(),
+                    snippet: snippetMatch[1].trim().substring(0, 200),
+                    url: '',
+                    source: 'DuckDuckGo Scraping',
+                    type: 'web'
+                });
+            }
+        });
+        
+        return results.length > 0 ? results : null;
+        
+    } catch (error) {
+        console.log('❌ Scraping léger échoué:', error.message);
+        return null;
+    }
+}
+
+// ✅ VÉRIFICATION DE LOCALISATION DANS LA REQUÊTE
+function containsLocation(query) {
+    const locationIndicators = [
+        /\b(ville|région|pays|france|paris|lyon|marseille|toulouse|bordeaux|lille|nantes|strasbourg|montpellier|nice|rennes)\b/i,
+        /\b(météo|temps|température|climat)\b/i,
+        /\b(où|localisation|position|adresse)\b/i
+    ];
+    
+    return locationIndicators.some(pattern => pattern.test(query));
+}
+
+// ✅ CACHE AMÉLIORÉ AVEC TTL VARIABLE
+const searchCache = new Map();
+
+function getCachedSearch(query) {
+    const cacheKey = query.toLowerCase().trim();
+    const cached = searchCache.get(cacheKey);
+    
+    if (!cached) return null;
+    
+    // TTL variable selon le type de contenu
+    const ttl = getTTLForQuery(query);
+    if ((Date.now() - cached.timestamp) < ttl) {
+        return cached.results;
+    }
+    
+    // Supprimer si expiré
+    searchCache.delete(cacheKey);
+    return null;
+}
+
+function setCachedSearch(query, results) {
+    const cacheKey = query.toLowerCase().trim();
+    searchCache.set(cacheKey, {
+        results,
+        timestamp: Date.now(),
+        query: cacheKey
+    });
+    
+    // Nettoyage automatique si cache trop grand
+    if (searchCache.size > 200) {
+        const oldestKey = Array.from(searchCache.keys())[0];
+        searchCache.delete(oldestKey);
+    }
+}
+
+// ✅ TTL VARIABLE SELON LE TYPE DE REQUÊTE
+function getTTLForQuery(query) {
+    const lowerQuery = query.toLowerCase();
+    
+    // Actualités et sports: 10 minutes
+    if (/\b(actualité|news|match|score|résultat|champion)\b/i.test(lowerQuery)) {
+        return 10 * 60 * 1000;
+    }
+    
+    // Données financières: 5 minutes
+    if (/\b(bitcoin|cours|prix|bourse)\b/i.test(lowerQuery)) {
+        return 5 * 60 * 1000;
+    }
+    
+    // Météo: 30 minutes
+    if (/\b(météo|temps|température)\b/i.test(lowerQuery)) {
+        return 30 * 60 * 1000;
+    }
+    
+    // Contenu encyclopédique: 4 heures
+    return 4 * 60 * 60 * 1000;
+}
+
+// ✅ ANALYSE IA OPTIMISÉE
 async function analyzeWithAI(message, ctx) {
     try {
-        const analysisPrompt = `Analyse ce message utilisateur et détermine s'il nécessite une recherche web récente.
+        const analysisPrompt = `Analyse ce message et détermine s'il nécessite une recherche web récente.
 
 Message: "${message}"
 
-Réponds UNIQUEMENT par un JSON valide avec cette structure:
+Réponds UNIQUEMENT par un JSON valide:
 {
     "needsSearch": boolean,
-    "query": "requête de recherche optimisée" ou null,
-    "searchType": "news" | "general" | "specific" ou null,
+    "query": "requête optimisée" ou null,
+    "searchType": "news|sports|financial|weather|general" ou null,
     "reason": "explication courte"
 }
 
 Critères pour needsSearch=true:
-- Demande d'actualités, événements récents
-- Questions sur des prix, cours, données actuelles  
-- Informations temporelles spécifiques (dates récentes)
-- Sujets qui évoluent rapidement
-- Vérification de faits récents
+- Questions sur événements récents/actualités
+- Résultats sportifs récents
+- Prix/cours actuels  
+- Météo/conditions actuelles
+- Informations qui changent fréquemment
 
 Critères pour needsSearch=false:
-- Questions générales/théoriques
-- Définitions stables
+- Définitions générales
 - Conversations personnelles
-- Demandes créatives
+- Questions théoriques/créatives
 - Sujets intemporels`;
 
         // Essai avec Gemini d'abord
@@ -152,8 +707,7 @@ Critères pour needsSearch=false:
             const result = await model.generateContent(analysisPrompt);
             const response = result.response.text();
             
-            // Extraction du JSON de la réponse
-            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            const jsonMatch = response.match(/\{[\s\S]*?\}/);
             if (jsonMatch) {
                 const analysis = JSON.parse(jsonMatch[0]);
                 return {
@@ -175,7 +729,7 @@ Critères pour needsSearch=false:
                 { role: "user", content: analysisPrompt }
             ], 300, 0.3);
             
-            const jsonMatch = mistralResponse.match(/\{[\s\S]*\}/);
+            const jsonMatch = mistralResponse.match(/\{[\s\S]*?\}/);
             if (jsonMatch) {
                 const analysis = JSON.parse(jsonMatch[0]);
                 return {
@@ -196,456 +750,31 @@ Critères pour needsSearch=false:
     return { needsSearch: false };
 }
 
-// ✅ Extraction de requête de recherche optimisée
-function extractSearchQuery(message) {
-    // Nettoyer le message pour extraire les termes clés
-    let query = message;
-    
-    // Supprimer les mots de liaison courants
-    const stopWords = /\b(le|la|les|de|du|des|un|une|et|ou|mais|car|donc|pour|dans|sur|avec|sans|que|qui|quoi|comment|pourquoi|où|quand|combien)\b/gi;
-    query = query.replace(stopWords, ' ');
-    
-    // Supprimer les mots interrogatifs en début
-    query = query.replace(/^(dis-moi|peux-tu|pourrais-tu|est-ce que|qu'est-ce que)\s+/i, '');
-    
-    // Nettoyer les espaces multiples
-    query = query.replace(/\s+/g, ' ').trim();
-    
-    // Limiter à 10 mots maximum pour l'efficacité
-    const words = query.split(' ').slice(0, 10);
-    
-    return words.join(' ');
-}
-
-// ✅ NOUVELLE FONCTION: Recherche web intelligente avec API gratuite (Version Améliorée)
-async function performIntelligentWebSearch(query, searchType = 'general', ctx) {
-    const { log } = ctx;
-    
-    try {
-        console.log('🔍 Démarrage recherche intelligente pour:', query);
-        
-        // Vérifier le cache d'abord
-        const cached = getCachedSearch(query);
-        if (cached) {
-            console.log('💾 Résultat trouvé en cache');
-            updateSearchStats(searchType, true, true);
-            return cached;
-        }
-        
-        // Essayer DuckDuckGo avec la méthode corrigée
-        const ddgResults = await searchWithDuckDuckGo(query, searchType);
-        if (ddgResults && ddgResults.length > 0) {
-            console.log('✅ DuckDuckGo réussi:', ddgResults.length, 'résultats');
-            setCachedSearch(query, ddgResults);
-            updateSearchStats(searchType, true, false);
-            return ddgResults;
-        }
-        
-        // Fallback avec recherche générique si DuckDuckGo échoue
-        const genericResults = await searchWithGenericAPI(query, searchType);
-        if (genericResults && genericResults.length > 0) {
-            console.log('✅ Recherche générique réussie:', genericResults.length, 'résultats');
-            setCachedSearch(query, genericResults);
-            updateSearchStats(searchType, true, false);
-            return genericResults;
-        }
-        
-        // Fallback SerpAPI si configuré
-        if (process.env.SERPAPI_KEY) {
-            const serpResults = await searchWithGoogleScraping(query, searchType);
-            if (serpResults && serpResults.length > 0) {
-                console.log('✅ SerpAPI réussi:', serpResults.length, 'résultats');
-                setCachedSearch(query, serpResults);
-                updateSearchStats(searchType, true, false);
-                return serpResults;
-            }
-        }
-        
-        log.warning('⚠️ Toutes les méthodes de recherche ont échoué pour:', query);
-        updateSearchStats(searchType, false, false);
-        return null;
-        
-    } catch (error) {
-        log.error(`❌ Erreur recherche web: ${error.message}`);
-        updateSearchStats(searchType, false, false);
-        return null;
-    }
-}
-
-// ✅ Recherche générique de secours (utilise plusieurs sources)
-async function searchWithGenericAPI(query, searchType) {
-    try {
-        // Essayer avec Wikipedia API en français d'abord
-        const wikiResults = await searchWikipedia(query);
-        if (wikiResults && wikiResults.length > 0) {
-            return wikiResults;
-        }
-        
-        // Essayer une recherche Bing sans clé (limitée mais gratuite)
-        const bingResults = await searchBingFree(query);
-        if (bingResults && bingResults.length > 0) {
-            return bingResults;
-        }
-        
-        return null;
-        
-    } catch (error) {
-        console.error('Erreur recherche générique:', error.message);
-        return null;
-    }
-}
-
-// ✅ Recherche Wikipedia (toujours fiable)
-async function searchWikipedia(query) {
-    try {
-        console.log('📚 Recherche Wikipedia pour:', query);
-        
-        // API Wikipedia française
-        const searchUrl = `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
-        
-        const response = await axios.get(searchUrl, {
-            timeout: 8000,
-            headers: {
-                'User-Agent': 'NakamaBot/1.0 (https://github.com/nakamabot)'
-            }
-        });
-        
-        const data = response.data;
-        
-        if (data.extract && data.extract.trim()) {
-            return [{
-                title: data.title || 'Article Wikipedia',
-                snippet: data.extract,
-                url: data.content_urls?.desktop?.page || `https://fr.wikipedia.org/wiki/${encodeURIComponent(query)}`,
-                source: 'Wikipedia FR',
-                type: 'encyclopedia'
-            }];
-        }
-        
-        return null;
-        
-    } catch (error) {
-        // Essayer en anglais si français échoue
-        try {
-            const searchUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
-            
-            const response = await axios.get(searchUrl, {
-                timeout: 8000,
-                headers: {
-                    'User-Agent': 'NakamaBot/1.0 (https://github.com/nakamabot)'
-                }
-            });
-            
-            const data = response.data;
-            
-            if (data.extract && data.extract.trim()) {
-                return [{
-                    title: data.title || 'Wikipedia Article',
-                    snippet: data.extract,
-                    url: data.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(query)}`,
-                    source: 'Wikipedia EN',
-                    type: 'encyclopedia'
-                }];
-            }
-        } catch (enError) {
-            console.log('❌ Wikipedia FR et EN échouées');
-        }
-        
-        return null;
-    }
-}
-
-// ✅ Recherche Bing gratuite (limitée mais fonctionne)
-async function searchBingFree(query) {
-    try {
-        console.log('🔎 Recherche Bing gratuite pour:', query);
-        
-        // Cette méthode utilise l'interface publique de Bing (attention aux limites)
-        const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss`;
-        
-        const response = await axios.get(searchUrl, {
-            timeout: 10000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; NakamaBot/1.0; +https://github.com/nakamabot)'
-            }
-        });
-        
-        // Parser très basique du RSS (pas parfait mais fonctionne)
-        const rssContent = response.data;
-        const items = rssContent.match(/<item>[\s\S]*?<\/item>/g) || [];
-        
-        const results = [];
-        items.slice(0, 3).forEach(item => {
-            const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/);
-            const descMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/);
-            const linkMatch = item.match(/<link>(.*?)<\/link>/);
-            
-            if (titleMatch && descMatch) {
-                results.push({
-                    title: titleMatch[1],
-                    snippet: descMatch[1].replace(/<[^>]*>/g, '').substring(0, 200),
-                    url: linkMatch ? linkMatch[1] : '',
-                    source: 'Bing',
-                    type: 'web'
-                });
-            }
-        });
-        
-        return results.length > 0 ? results : null;
-        
-    } catch (error) {
-        console.error('❌ Bing gratuit échoué:', error.message);
-        return null;
-    }
-}
-
-// ✅ Recherche avec DuckDuckGo API (Gratuite) - Version Corrigée
-async function searchWithDuckDuckGo(query, searchType) {
-    try {
-        console.log('🔍 Recherche DuckDuckGo pour:', query);
-        
-        // API DuckDuckGo avec les bons paramètres (basé sur votre exemple)
-        const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1`;
-        
-        const response = await axios.get(ddgUrl, {
-            timeout: 15000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-        });
-        
-        const data = response.data;
-        console.log('📊 Données reçues:', {
-            hasAbstract: !!data.AbstractText,
-            hasDefinition: !!data.Definition,
-            hasAnswer: !!data.Answer,
-            relatedTopicsCount: data.RelatedTopics ? data.RelatedTopics.length : 0,
-            hasResults: !!data.Results?.length
-        });
-        
-        const results = [];
-        
-        // 1. Réponse directe (Answer)
-        if (data.Answer && data.Answer.trim()) {
-            results.push({
-                title: data.AnswerType || 'Réponse directe',
-                snippet: data.Answer,
-                url: '',
-                source: 'DuckDuckGo Answer',
-                type: 'featured'
-            });
-        }
-        
-        // 2. Résumé (AbstractText + AbstractSource)
-        if (data.AbstractText && data.AbstractText.trim()) {
-            results.push({
-                title: data.Heading || 'Résumé',
-                snippet: data.AbstractText,
-                url: data.AbstractURL || '',
-                source: data.AbstractSource || 'DuckDuckGo',
-                type: 'instant'
-            });
-        }
-        
-        // 3. Définition
-        if (data.Definition && data.Definition.trim()) {
-            results.push({
-                title: 'Définition',
-                snippet: data.Definition,
-                url: data.DefinitionURL || '',
-                source: data.DefinitionSource || 'DuckDuckGo',
-                type: 'definition'
-            });
-        }
-        
-        // 4. Infobox (données structurées)
-        if (data.Infobox && data.Infobox.content && data.Infobox.content.length > 0) {
-            const infoText = data.Infobox.content
-                .filter(item => item.data_type === 'string' && item.value)
-                .slice(0, 3)
-                .map(item => `${item.label}: ${item.value}`)
-                .join(', ');
-                
-            if (infoText) {
-                results.push({
-                    title: data.Infobox.meta?.[0]?.label || 'Informations',
-                    snippet: infoText,
-                    url: '',
-                    source: 'DuckDuckGo Infobox',
-                    type: 'structured'
-                });
-            }
-        }
-        
-        // 5. Topics relatifs (améliorés)
-        if (data.RelatedTopics && Array.isArray(data.RelatedTopics) && data.RelatedTopics.length > 0) {
-            data.RelatedTopics.slice(0, 2).forEach(topic => {
-                if (topic.Text && topic.Text.trim() && topic.FirstURL) {
-                    const titleMatch = topic.Text.match(/^([^-]+)/);
-                    results.push({
-                        title: titleMatch ? titleMatch[1].trim() : 'Information connexe',
-                        snippet: topic.Text,
-                        url: topic.FirstURL,
-                        source: 'DuckDuckGo',
-                        type: 'related'
-                    });
-                }
-            });
-        }
-        
-        // 6. Results directs (si disponibles)
-        if (data.Results && Array.isArray(data.Results) && data.Results.length > 0) {
-            data.Results.slice(0, 2).forEach(result => {
-                if (result.Text && result.FirstURL) {
-                    results.push({
-                        title: result.Text.split(' - ')[0] || 'Résultat',
-                        snippet: result.Text,
-                        url: result.FirstURL,
-                        source: 'DuckDuckGo Results',
-                        type: 'organic'
-                    });
-                }
-            });
-        }
-        
-        console.log(`✅ DuckDuckGo: ${results.length} résultats trouvés`);
-        
-        if (results.length === 0) {
-            console.log('⚠️ DuckDuckGo: Aucun résultat exploitable pour:', query);
-            // Essayer une recherche alternative simplifiée
-            return await searchWithSimplifiedQuery(query);
-        }
-        
-        return results;
-        
-    } catch (error) {
-        console.error('❌ Erreur DuckDuckGo:', error.message);
-        return await searchWithSimplifiedQuery(query);
-    }
-}
-
-// ✅ Recherche de secours avec requête simplifiée
-async function searchWithSimplifiedQuery(originalQuery) {
-    try {
-        // Simplifier la requête (garder seulement les mots clés importants)
-        const simplified = originalQuery
-            .replace(/\b(que|qui|quoi|comment|pourquoi|où|quand|le|la|les|des?|un|une|ce|cette|est|sont|fait|faire|dire|aujourd'hui|maintenant|récent)\b/gi, '')
-            .replace(/[?!.,;]/g, '')
-            .trim()
-            .split(' ')
-            .filter(word => word.length > 2)
-            .slice(0, 3)
-            .join(' ');
-            
-        if (simplified && simplified !== originalQuery) {
-            console.log('🔄 Recherche simplifiée:', simplified);
-            
-            const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(simplified)}&format=json&no_html=1&no_redirect=1`;
-            
-            const response = await axios.get(ddgUrl, {
-                timeout: 10000,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (compatible; NakamaBot/1.0)'
-                }
-            });
-            
-            const data = response.data;
-            const results = [];
-            
-            if (data.AbstractText?.trim()) {
-                results.push({
-                    title: 'Information trouvée',
-                    snippet: data.AbstractText,
-                    url: data.AbstractURL || '',
-                    source: data.AbstractSource || 'DuckDuckGo',
-                    type: 'simplified'
-                });
-            }
-            
-            return results.length > 0 ? results : null;
-        }
-        
-        return null;
-        
-    } catch (error) {
-        console.error('❌ Erreur recherche simplifiée:', error.message);
-        return null;
-    }
-}
-
-// ✅ Recherche Google avec scraping léger (backup)
-async function searchWithGoogleScraping(query, searchType) {
-    try {
-        // Utilisation de l'API SerpAPI gratuite (100 recherches/mois)
-        // Remplace par ta clé API gratuite de SerpAPI
-        const serpApiKey = process.env.SERPAPI_KEY;
-        
-        if (!serpApiKey) {
-            return null;
-        }
-        
-        const serpUrl = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${serpApiKey}&num=5`;
-        
-        const response = await axios.get(serpUrl, {
-            timeout: 10000
-        });
-        
-        const data = response.data;
-        const results = [];
-        
-        // Résultats organiques
-        if (data.organic_results) {
-            data.organic_results.slice(0, 5).forEach(result => {
-                results.push({
-                    title: result.title || 'Résultat',
-                    snippet: result.snippet || '',
-                    url: result.link || '',
-                    source: 'Google',
-                    type: 'organic'
-                });
-            });
-        }
-        
-        // Featured snippet (réponse mise en avant)
-        if (data.answer_box) {
-            results.unshift({
-                title: data.answer_box.title || 'Réponse directe',
-                snippet: data.answer_box.answer || data.answer_box.snippet || '',
-                url: data.answer_box.link || '',
-                source: 'Google Featured',
-                type: 'featured'
-            });
-        }
-        
-        return results.length > 0 ? results : null;
-        
-    } catch (error) {
-        console.error('Erreur SerpAPI:', error.message);
-        return null;
-    }
-}
-
-// ✅ Génération de réponse enrichie avec les résultats de recherche
+// ✅ GÉNÉRATION DE RÉPONSE ENRICHIE AVEC RECHERCHE
 async function generateSearchEnhancedResponse(originalMessage, searchResults, ctx) {
     try {
-        // Préparer le contexte de recherche
-        const searchContext = searchResults.slice(0, 3).map((result, index) => 
-            `[${index + 1}] ${result.title}: ${result.snippet}`
+        // Préparer le contexte de recherche avec scoring
+        const scoredResults = scoreSearchResults(searchResults, originalMessage);
+        const topResults = scoredResults.slice(0, 3);
+        
+        const searchContext = topResults.map((result, index) => 
+            `[${index + 1}] ${result.title}: ${result.snippet} (Source: ${result.source})`
         ).join('\n');
         
         const enhancementPrompt = `Question utilisateur: "${originalMessage}"
 
-Résultats de recherche récents:
+Informations récentes trouvées:
 ${searchContext}
 
 Génère une réponse naturelle et conversationnelle qui:
-1. Répond directement à la question
-2. Intègre les informations de recherche pertinentes
-3. Reste dans un style amical et accessible
-4. Maximum 2000 caractères
-5. Ajoute 🔍 en début pour indiquer l'usage de la recherche web
+1. Répond directement à la question avec les infos récentes
+2. Intègre naturellement les informations pertinentes
+3. Reste amicale et accessible 
+4. Maximum 2500 caractères
+5. Commence par 🔍 pour indiquer l'usage de la recherche web
+6. Mentionne les sources principales à la fin
 
-Important: Présente l'information comme une connaissance récente, pas comme une liste de résultats.`;
+Style: Conversationnel, informatif mais pas robotique.`;
 
         // Essayer avec Gemini d'abord
         try {
@@ -666,7 +795,7 @@ Important: Présente l'information comme une connaissance récente, pas comme un
             const mistralResponse = await callMistralAPI([
                 { role: "system", content: "Tu es un assistant qui synthétise des informations de recherche web de manière naturelle et conversationnelle." },
                 { role: "user", content: enhancementPrompt }
-            ], 1500, 0.7);
+            ], 2000, 0.7);
             
             if (mistralResponse) {
                 return mistralResponse;
@@ -675,17 +804,74 @@ Important: Présente l'information comme une connaissance récente, pas comme un
             console.log('Mistral aussi en échec pour synthèse');
         }
         
-        // Fallback simple si tout échoue
-        const bestResult = searchResults[0];
-        return `🔍 D'après mes recherches récentes : ${bestResult.snippet}\n\nSource: ${bestResult.source}`;
+        // Fallback simple mais informatif
+        const bestResult = topResults[0];
+        const fallbackResponse = `🔍 **${bestResult.title}**\n\n${bestResult.snippet}\n\n*Source: ${bestResult.source}*`;
+        
+        // Ajouter d'autres résultats si pertinents
+        if (topResults.length > 1) {
+            const additionalInfo = topResults.slice(1, 2).map(r => 
+                `\n📌 **Complément**: ${r.snippet.substring(0, 100)}...`
+            ).join('');
+            return fallbackResponse + additionalInfo;
+        }
+        
+        return fallbackResponse;
         
     } catch (error) {
         console.error('Erreur génération réponse enrichie:', error);
-        return `🔍 J'ai trouvé des informations récentes mais j'ai du mal à les synthétiser. Voici le plus pertinent : ${searchResults[0].snippet}`;
+        return `🔍 J'ai trouvé des informations récentes : ${searchResults[0].snippet}\n\n*Source: ${searchResults[0].source}*`;
     }
 }
 
-// ✅ FONCTION: Gestion conversation avec Gemini et fallback Mistral
+// ✅ SCORING DES RÉSULTATS DE RECHERCHE
+function scoreSearchResults(results, originalQuery) {
+    const queryWords = originalQuery.toLowerCase()
+        .split(' ')
+        .filter(word => word.length > 2)
+        .map(word => word.replace(/[^\w]/g, ''));
+    
+    return results.map(result => {
+        let score = 0;
+        const content = (result.title + ' ' + result.snippet).toLowerCase();
+        
+        // Score par pertinence des mots-clés
+        queryWords.forEach(word => {
+            if (content.includes(word)) {
+                score += 2;
+                // Bonus si dans le titre
+                if (result.title.toLowerCase().includes(word)) {
+                    score += 1;
+                }
+            }
+        });
+        
+        // Bonus par type de résultat
+        const typeBonus = {
+            'featured': 5,
+            'news': 4,
+            'encyclopedia': 3,
+            'sports': 3,
+            'discussion': 2,
+            'web': 1
+        };
+        score += typeBonus[result.type] || 0;
+        
+        // Bonus pour sources fiables
+        if (result.source.includes('Wikipedia') || result.source.includes('News')) {
+            score += 2;
+        }
+        
+        // Malus pour snippet trop court
+        if (result.snippet.length < 50) {
+            score -= 1;
+        }
+        
+        return { ...result, score };
+    }).sort((a, b) => b.score - a.score);
+}
+
+// ✅ GESTION CONVERSATION AVEC FALLBACK (INCHANGÉE MAIS OPTIMISÉE)
 async function handleConversationWithFallback(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, log } = ctx;
     
@@ -736,7 +922,7 @@ CAPACITÉS PRINCIPALES:
 🔍 Recherche web intelligente automatique
 
 DIRECTIVES:
-- Parle selon la langue de l\'utilisateur et du contexte
+- Parle selon la langue de l'utilisateur et du contexte
 - Maximum 3000 caractères par réponse
 - Utilise quelques emojis avec parcimonie
 - Évite les répétitions et formules toutes faites
@@ -793,7 +979,9 @@ Utilisateur: ${args}`;
     }
 }
 
-// ✅ Détection des demandes de contact admin (optimisée)
+// ✅ FONCTIONS UTILITAIRES INCHANGÉES MAIS OPTIMISÉES
+
+// Détection des demandes de contact admin
 function detectContactAdminIntention(message) {
     const lowerMessage = message.toLowerCase();
     
@@ -824,7 +1012,7 @@ function detectContactAdminIntention(message) {
     return { shouldContact: false };
 }
 
-// ✅ Génération suggestion de contact (optimisée)
+// Génération suggestion de contact
 function generateContactSuggestion(reason, extractedMessage) {
     const reasonMessages = {
         'contact_direct': { title: "💌 **Contact Admin**", message: "Je vois que tu veux contacter les administrateurs !" },
@@ -844,7 +1032,7 @@ function generateContactSuggestion(reason, extractedMessage) {
     return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** Utilise \`/contact [ton message]\` pour les contacter directement.\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 Tu recevras une réponse personnalisée !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
 }
 
-// ✅ Détection des intentions de commandes (optimisée)
+// Détection des intentions de commandes
 async function detectCommandIntentions(message, ctx) {
     const quickPatterns = [
         { patterns: [/(?:cr[ée]|g[ée]n[ée]r|fai|dessine).*?(?:image|photo)/i], command: 'image' },
@@ -883,7 +1071,7 @@ async function detectCommandIntentions(message, ctx) {
     return { shouldExecute: false };
 }
 
-// ✅ Exécution de commande depuis le chat (optimisée)
+// Exécution de commande depuis le chat
 async function executeCommandFromChat(senderId, commandName, args, ctx) {
     try {
         const COMMANDS = global.COMMANDS || new Map();
@@ -915,14 +1103,13 @@ async function executeCommandFromChat(senderId, commandName, args, ctx) {
     }
 }
 
-// ✅ Génération de réponse contextuelle (optimisée)
+// Génération de réponse contextuelle
 async function generateContextualResponse(originalMessage, commandResult, commandName, ctx) {
     if (typeof commandResult === 'object' && commandResult.type === 'image') {
         return commandResult;
     }
     
     try {
-        // Essayer d'abord avec Gemini
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const contextPrompt = `L'utilisateur a dit: "${originalMessage}"
 J'ai exécuté /${commandName} avec résultat: "${commandResult}"
@@ -933,7 +1120,6 @@ Génère une réponse naturelle et amicale (max 200 chars) qui présente le rés
         return result.response.text() || commandResult;
         
     } catch (error) {
-        // Fallback sur Mistral si besoin
         const { callMistralAPI } = ctx;
         try {
             const response = await callMistralAPI([
@@ -948,238 +1134,168 @@ Génère une réponse naturelle et amicale (max 200 chars) qui présente le rés
     }
 }
 
-// ✅ NOUVELLES FONCTIONS UTILITAIRES
+// ✅ NOUVELLES FONCTIONS DE MONITORING ET STATISTIQUES
 
-// Configuration pour les variables d'environnement nécessaires
-const REQUIRED_ENV_VARS = {
-    GEMINI_API_KEY: 'Clé API Google Gemini (gratuite)',
-    SERPAPI_KEY: 'Clé API SerpAPI (optionnel, 100 recherches gratuites/mois)'
-};
-
-// ✅ Fonction de vérification des clés API
-function checkApiKeys() {
-    const missing = [];
-    const warnings = [];
-    
-    if (!process.env.GEMINI_API_KEY) {
-        missing.push('GEMINI_API_KEY (requis pour l\'IA)');
-    }
-    
-    if (!process.env.SERPAPI_KEY) {
-        warnings.push('SERPAPI_KEY (optionnel pour recherches Google avancées)');
-    }
-    
-    if (missing.length > 0) {
-        console.error('❌ Variables d\'environnement manquantes:', missing.join(', '));
-        console.log('📝 Obtenir Gemini API: https://makersuite.google.com/app/apikey');
-    }
-    
-    if (warnings.length > 0) {
-        console.log('⚠️ Optionnel manquant:', warnings.join(', '));
-        console.log('📝 SerpAPI gratuit: https://serpapi.com/');
-    }
-    
-    return missing.length === 0;
-}
-
-// ✅ Cache simple pour éviter les recherches répétitives
-const searchCache = new Map();
-const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
-
-function getCachedSearch(query) {
-    const cached = searchCache.get(query.toLowerCase());
-    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
-        return cached.results;
-    }
-    return null;
-}
-
-function setCachedSearch(query, results) {
-    searchCache.set(query.toLowerCase(), {
-        results,
-        timestamp: Date.now()
-    });
-    
-    // Nettoyer le cache si trop grand
-    if (searchCache.size > 100) {
-        const oldestKey = searchCache.keys().next().value;
-        searchCache.delete(oldestKey);
-    }
-}
-
-// ✅ Amélioration de la recherche DuckDuckGo avec cache
-async function searchWithDuckDuckGoEnhanced(query, searchType) {
-    // Vérifier le cache
-    const cached = getCachedSearch(query);
-    if (cached) {
-        console.log('🎯 Résultat de recherche en cache pour:', query);
-        return cached;
-    }
-    
-    try {
-        const results = await searchWithDuckDuckGo(query, searchType);
-        
-        if (results && results.length > 0) {
-            setCachedSearch(query, results);
-            console.log('🔍 Nouvelle recherche DuckDuckGo:', query, '- Résultats:', results.length);
-        }
-        
-        return results;
-        
-    } catch (error) {
-        console.error('Erreur recherche DuckDuckGo Enhanced:', error.message);
-        return null;
-    }
-}
-
-// ✅ Fonction de recherche avec retry automatique
-async function performIntelligentWebSearchWithRetry(query, searchType = 'general', ctx, maxRetries = 2) {
-    const { log } = ctx;
-    
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            // Essayer DuckDuckGo en premier (gratuit illimité)
-            let results = await searchWithDuckDuckGoEnhanced(query, searchType);
-            if (results && results.length > 0) {
-                log.info(`✅ Recherche DuckDuckGo réussie (tentative ${attempt}): ${results.length} résultats`);
-                return results;
-            }
-            
-            // Fallback SerpAPI si configuré
-            if (process.env.SERPAPI_KEY) {
-                results = await searchWithGoogleScraping(query, searchType);
-                if (results && results.length > 0) {
-                    log.info(`✅ Recherche SerpAPI réussie (tentative ${attempt}): ${results.length} résultats`);
-                    return results;
-                }
-            }
-            
-            // Attendre avant nouvelle tentative
-            if (attempt < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-            }
-            
-        } catch (error) {
-            log.warning(`⚠️ Tentative ${attempt} échouée:`, error.message);
-            
-            if (attempt === maxRetries) {
-                throw error;
-            }
-        }
-    }
-    
-    return null;
-}
-
-// ✅ Fonction de formatage intelligent des résultats
-function formatSearchResults(results, maxResults = 3) {
-    if (!results || !Array.isArray(results)) return '';
-    
-    const priorityOrder = ['featured', 'instant', 'definition', 'organic', 'related'];
-    
-    // Trier par priorité
-    results.sort((a, b) => {
-        const aPriority = priorityOrder.indexOf(a.type) !== -1 ? priorityOrder.indexOf(a.type) : 999;
-        const bPriority = priorityOrder.indexOf(b.type) !== -1 ? priorityOrder.indexOf(b.type) : 999;
-        return aPriority - bPriority;
-    });
-    
-    return results.slice(0, maxResults).map((result, index) => {
-        const emoji = getResultEmoji(result.type);
-        const snippet = result.snippet.length > 150 ? 
-            result.snippet.substring(0, 147) + '...' : 
-            result.snippet;
-            
-        return `${emoji} **${result.title}**\n${snippet}`;
-    }).join('\n\n');
-}
-
-// ✅ Emojis pour types de résultats
-function getResultEmoji(type) {
-    const emojis = {
-        'featured': '⭐',
-        'instant': '🎯',
-        'definition': '📚',
-        'organic': '🔍',
-        'related': '🔗',
-        'news': '📰'
-    };
-    return emojis[type] || '📄';
-}
-
-// ✅ Détection de langue pour requêtes multilingues
-function detectLanguageAndAdjustQuery(query) {
-    const frenchPatterns = /\b(le|la|les|des|une?|ce|cette|qui|que|quoi|où|quand|comment|pourquoi|avec|sans|dans|sur|pour|par|de|du|et|ou|mais|donc|car|si|alors|aujourd'hui|maintenant|récemment)\b/i;
-    const englishPatterns = /\b(the|a|an|and|or|but|in|on|at|to|for|of|with|by|from|about|what|where|when|how|why|today|now|recently)\b/i;
-    
-    const isFrench = frenchPatterns.test(query);
-    const isEnglish = englishPatterns.test(query) && !isFrench;
-    
-    return {
-        language: isFrench ? 'fr' : (isEnglish ? 'en' : 'auto'),
-        adjustedQuery: query // On pourrait optimiser la requête selon la langue
-    };
-}
-
-// ✅ Statistiques de recherche (pour monitoring)
+// Statistiques de recherche avancées
 const searchStats = {
     total: 0,
     successful: 0,
     cached: 0,
+    bySource: {},
     byType: {},
-    errors: []
+    errors: [],
+    responseTime: []
 };
 
-function updateSearchStats(type, success, fromCache = false) {
+function updateSearchStats(source, type, success, responseTime, fromCache = false) {
     searchStats.total++;
     if (success) searchStats.successful++;
     if (fromCache) searchStats.cached++;
     
+    searchStats.bySource[source] = (searchStats.bySource[source] || 0) + 1;
     searchStats.byType[type] = (searchStats.byType[type] || 0) + 1;
     
-    // Garder seulement les 10 dernières erreurs
-    if (!success && searchStats.errors.length >= 10) {
-        searchStats.errors.shift();
+    if (responseTime) {
+        searchStats.responseTime.push(responseTime);
+        if (searchStats.responseTime.length > 100) {
+            searchStats.responseTime.shift(); // Garder seulement les 100 derniers
+        }
+    }
+    
+    if (!success && searchStats.errors.length < 50) {
+        searchStats.errors.push({
+            timestamp: new Date().toISOString(),
+            source,
+            type,
+            error: 'Search failed'
+        });
     }
 }
 
 function getSearchStats() {
+    const avgResponseTime = searchStats.responseTime.length > 0 
+        ? Math.round(searchStats.responseTime.reduce((a, b) => a + b) / searchStats.responseTime.length)
+        : 0;
+    
     return {
         ...searchStats,
         successRate: searchStats.total > 0 ? (searchStats.successful / searchStats.total * 100).toFixed(1) + '%' : '0%',
-        cacheRate: searchStats.total > 0 ? (searchStats.cached / searchStats.total * 100).toFixed(1) + '%' : '0%'
+        cacheRate: searchStats.total > 0 ? (searchStats.cached / searchStats.total * 100).toFixed(1) + '%' : '0%',
+        avgResponseTime: avgResponseTime + 'ms',
+        topSources: Object.entries(searchStats.bySource)
+            .sort(([,a], [,b]) => b - a)
+            .slice(0, 5),
+        recentErrors: searchStats.errors.slice(-10)
     };
 }
 
-// ✅ Exports pour autres modules
+// Fonction de diagnostic des APIs
+async function diagnoseAPIs() {
+    const diagnosis = {
+        wikipedia: false,
+        reddit: false,
+        osm: false,
+        rss: false,
+        gemini: !!process.env.GEMINI_API_KEY
+    };
+    
+    // Test Wikipedia
+    try {
+        await axios.get('https://fr.wikipedia.org/api/rest_v1/page/summary/France', { timeout: 5000 });
+        diagnosis.wikipedia = true;
+    } catch (e) {
+        console.log('Wikipedia indisponible');
+    }
+    
+    // Test Reddit
+    try {
+        await axios.get('https://www.reddit.com/r/test.json?limit=1', { timeout: 5000 });
+        diagnosis.reddit = true;
+    } catch (e) {
+        console.log('Reddit indisponible');
+    }
+    
+    // Test OpenStreetMap
+    try {
+        await axios.get('https://nominatim.openstreetmap.org/search?format=json&q=Paris&limit=1', { timeout: 5000 });
+        diagnosis.osm = true;
+    } catch (e) {
+        console.log('OpenStreetMap indisponible');
+    }
+    
+    // Test RSS (Le Monde)
+    try {
+        await axios.get('https://www.lemonde.fr/rss/une.xml', { timeout: 5000 });
+        diagnosis.rss = true;
+    } catch (e) {
+        console.log('RSS indisponible');
+    }
+    
+    return diagnosis;
+}
+
+// ✅ EXPORTS POUR AUTRES MODULES
 module.exports.detectCommandIntentions = detectCommandIntentions;
 module.exports.executeCommandFromChat = executeCommandFromChat;
 module.exports.detectContactAdminIntention = detectContactAdminIntention;
-module.exports.performIntelligentWebSearch = performIntelligentWebSearchWithRetry;
-module.exports.checkApiKeys = checkApiKeys;
+module.exports.performReliableWebSearch = performReliableWebSearch;
 module.exports.getSearchStats = getSearchStats;
+module.exports.diagnoseAPIs = diagnoseAPIs;
 
-// ✅ Initialisation au démarrage
-(function initialize() {
-    console.log('🚀 NakamaBot Chat Enhanced - Initialisation...');
+// ✅ INITIALISATION AMÉLIORÉE
+(async function initialize() {
+    console.log('🚀 NakamaBot Chat Enhanced v2.0 - Initialisation...');
     
-    if (checkApiKeys()) {
+    // Vérifier les clés API
+    const missingKeys = [];
+    if (!process.env.GEMINI_API_KEY) missingKeys.push('GEMINI_API_KEY');
+    
+    if (missingKeys.length > 0) {
+        console.error('❌ Variables d\'environnement manquantes:', missingKeys.join(', '));
+        console.log('📝 Obtenir Gemini API: https://makersuite.google.com/app/apikey');
+    } else {
         console.log('✅ Configuration API validée');
     }
     
-    console.log('🔍 Recherche web intelligente activée');
-    console.log('💾 Cache de recherche initialisé');
-    console.log('📊 Statistiques de recherche activées');
+    // Diagnostic des APIs externes
+    console.log('🔍 Diagnostic des APIs externes...');
+    const diagnosis = await diagnoseAPIs();
     
-    // Nettoyer le cache périodiquement
+    Object.entries(diagnosis).forEach(([api, status]) => {
+        console.log(`${status ? '✅' : '❌'} ${api.toUpperCase()}: ${status ? 'Disponible' : 'Indisponible'}`);
+    });
+    
+    const availableAPIs = Object.values(diagnosis).filter(Boolean).length;
+    console.log(`📊 ${availableAPIs}/5 APIs disponibles`);
+    
+    if (availableAPIs >= 2) {
+        console.log('🎯 Recherche web fiable activée');
+    } else {
+        console.log('⚠️ Recherche web limitée (peu d\'APIs disponibles)');
+    }
+    
+    // Initialiser le nettoyage automatique du cache
     setInterval(() => {
-        const now = Date.now();
+        console.log(`🧹 Nettoyage cache: ${searchCache.size} entrées`);
+        
+        let cleaned = 0;
         for (const [key, value] of searchCache.entries()) {
-            if ((now - value.timestamp) > CACHE_TTL) {
+            const ttl = getTTLForQuery(key);
+            if ((Date.now() - value.timestamp) > ttl) {
                 searchCache.delete(key);
+                cleaned++;
             }
         }
-    }, 10 * 60 * 1000); // Nettoyage toutes les 10 minutes
+        
+        if (cleaned > 0) {
+            console.log(`🗑️ ${cleaned} entrées expirées supprimées`);
+        }
+    }, 15 * 60 * 1000); // Nettoyage toutes les 15 minutes
     
-    console.log('🎯 NakamaBot prêt avec recherche web avancée !');
+    console.log('🎯 NakamaBot prêt avec recherche web fiable v2.0 !');
+    
+    // Statistiques initiales
+    console.log('📈 Monitoring des performances activé');
+    console.log('💾 Cache intelligent avec TTL variable activé');
+    console.log('🔄 Système de fallback multi-sources activé');
 })();
