@@ -51,7 +51,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         }
     } 
     
-    // ✅ Détection intelligente des besoins de recherche web (NOUVELLE VERSION)
+    // ✅ Détection intelligente des besoins de recherche web (NOUVELLE VERSION AMÉLIORÉE)
     const searchAnalysis = await analyzeSearchNeed(args, senderId, ctx);
     if (searchAnalysis.needsSearch) {
         log.info(`🔍 Recherche web intelligente pour ${senderId}: ${searchAnalysis.query}`);
@@ -62,6 +62,13 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             addToMemory(String(senderId), 'user', args);
             addToMemory(String(senderId), 'assistant', enhancedResponse);
             return enhancedResponse;
+        } else {
+            // Si aucun résultat mais recherche demandée, l'indiquer gentiment
+            log.info(`⚠️ Recherche demandée mais aucun résultat pour: ${searchAnalysis.query}`);
+            const noResultResponse = `🔍 J'ai essayé de chercher des informations récentes sur "${searchAnalysis.query}" mais je n'ai pas trouvé de résultats pertinents. Je peux quand même t'aider avec mes connaissances générales ! 💡`;
+            addToMemory(String(senderId), 'user', args);
+            addToMemory(String(senderId), 'assistant', noResultResponse);
+            // Continuer avec la conversation normale après avoir informé de l'échec
         }
     }
     
@@ -210,76 +217,273 @@ function extractSearchQuery(message) {
     return words.join(' ');
 }
 
-// ✅ NOUVELLE FONCTION: Recherche web intelligente avec API gratuite
+// ✅ NOUVELLE FONCTION: Recherche web intelligente avec API gratuite (Version Améliorée)
 async function performIntelligentWebSearch(query, searchType = 'general', ctx) {
     const { log } = ctx;
     
     try {
-        // Option 1: DuckDuckGo Instant Answer API (Complètement gratuite)
-        const results = await searchWithDuckDuckGo(query, searchType);
-        if (results && results.length > 0) {
-            return results;
+        console.log('🔍 Démarrage recherche intelligente pour:', query);
+        
+        // Vérifier le cache d'abord
+        const cached = getCachedSearch(query);
+        if (cached) {
+            console.log('💾 Résultat trouvé en cache');
+            updateSearchStats(searchType, true, true);
+            return cached;
         }
         
-        // Option 2: Recherche Google avec scraping léger (backup)
-        const googleResults = await searchWithGoogleScraping(query, searchType);
-        if (googleResults && googleResults.length > 0) {
-            return googleResults;
+        // Essayer DuckDuckGo avec la méthode corrigée
+        const ddgResults = await searchWithDuckDuckGo(query, searchType);
+        if (ddgResults && ddgResults.length > 0) {
+            console.log('✅ DuckDuckGo réussi:', ddgResults.length, 'résultats');
+            setCachedSearch(query, ddgResults);
+            updateSearchStats(searchType, true, false);
+            return ddgResults;
         }
         
-        log.warning('🔍 Aucun résultat de recherche trouvé');
+        // Fallback avec recherche générique si DuckDuckGo échoue
+        const genericResults = await searchWithGenericAPI(query, searchType);
+        if (genericResults && genericResults.length > 0) {
+            console.log('✅ Recherche générique réussie:', genericResults.length, 'résultats');
+            setCachedSearch(query, genericResults);
+            updateSearchStats(searchType, true, false);
+            return genericResults;
+        }
+        
+        // Fallback SerpAPI si configuré
+        if (process.env.SERPAPI_KEY) {
+            const serpResults = await searchWithGoogleScraping(query, searchType);
+            if (serpResults && serpResults.length > 0) {
+                console.log('✅ SerpAPI réussi:', serpResults.length, 'résultats');
+                setCachedSearch(query, serpResults);
+                updateSearchStats(searchType, true, false);
+                return serpResults;
+            }
+        }
+        
+        log.warning('⚠️ Toutes les méthodes de recherche ont échoué pour:', query);
+        updateSearchStats(searchType, false, false);
         return null;
         
     } catch (error) {
         log.error(`❌ Erreur recherche web: ${error.message}`);
+        updateSearchStats(searchType, false, false);
         return null;
     }
 }
 
-// ✅ Recherche avec DuckDuckGo API (Gratuite)
-async function searchWithDuckDuckGo(query, searchType) {
+// ✅ Recherche générique de secours (utilise plusieurs sources)
+async function searchWithGenericAPI(query, searchType) {
     try {
-        // API DuckDuckGo Instant Answer (gratuite, pas de limite)
-        const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+        // Essayer avec Wikipedia API en français d'abord
+        const wikiResults = await searchWikipedia(query);
+        if (wikiResults && wikiResults.length > 0) {
+            return wikiResults;
+        }
         
-        const response = await axios.get(ddgUrl, {
-            timeout: 10000,
+        // Essayer une recherche Bing sans clé (limitée mais gratuite)
+        const bingResults = await searchBingFree(query);
+        if (bingResults && bingResults.length > 0) {
+            return bingResults;
+        }
+        
+        return null;
+        
+    } catch (error) {
+        console.error('Erreur recherche générique:', error.message);
+        return null;
+    }
+}
+
+// ✅ Recherche Wikipedia (toujours fiable)
+async function searchWikipedia(query) {
+    try {
+        console.log('📚 Recherche Wikipedia pour:', query);
+        
+        // API Wikipedia française
+        const searchUrl = `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+        
+        const response = await axios.get(searchUrl, {
+            timeout: 8000,
             headers: {
-                'User-Agent': 'NakamaBot/1.0 (Educational Purpose)'
+                'User-Agent': 'NakamaBot/1.0 (https://github.com/nakamabot)'
             }
         });
         
         const data = response.data;
+        
+        if (data.extract && data.extract.trim()) {
+            return [{
+                title: data.title || 'Article Wikipedia',
+                snippet: data.extract,
+                url: data.content_urls?.desktop?.page || `https://fr.wikipedia.org/wiki/${encodeURIComponent(query)}`,
+                source: 'Wikipedia FR',
+                type: 'encyclopedia'
+            }];
+        }
+        
+        return null;
+        
+    } catch (error) {
+        // Essayer en anglais si français échoue
+        try {
+            const searchUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+            
+            const response = await axios.get(searchUrl, {
+                timeout: 8000,
+                headers: {
+                    'User-Agent': 'NakamaBot/1.0 (https://github.com/nakamabot)'
+                }
+            });
+            
+            const data = response.data;
+            
+            if (data.extract && data.extract.trim()) {
+                return [{
+                    title: data.title || 'Wikipedia Article',
+                    snippet: data.extract,
+                    url: data.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(query)}`,
+                    source: 'Wikipedia EN',
+                    type: 'encyclopedia'
+                }];
+            }
+        } catch (enError) {
+            console.log('❌ Wikipedia FR et EN échouées');
+        }
+        
+        return null;
+    }
+}
+
+// ✅ Recherche Bing gratuite (limitée mais fonctionne)
+async function searchBingFree(query) {
+    try {
+        console.log('🔎 Recherche Bing gratuite pour:', query);
+        
+        // Cette méthode utilise l'interface publique de Bing (attention aux limites)
+        const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss`;
+        
+        const response = await axios.get(searchUrl, {
+            timeout: 10000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; NakamaBot/1.0; +https://github.com/nakamabot)'
+            }
+        });
+        
+        // Parser très basique du RSS (pas parfait mais fonctionne)
+        const rssContent = response.data;
+        const items = rssContent.match(/<item>[\s\S]*?<\/item>/g) || [];
+        
+        const results = [];
+        items.slice(0, 3).forEach(item => {
+            const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/);
+            const descMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/);
+            const linkMatch = item.match(/<link>(.*?)<\/link>/);
+            
+            if (titleMatch && descMatch) {
+                results.push({
+                    title: titleMatch[1],
+                    snippet: descMatch[1].replace(/<[^>]*>/g, '').substring(0, 200),
+                    url: linkMatch ? linkMatch[1] : '',
+                    source: 'Bing',
+                    type: 'web'
+                });
+            }
+        });
+        
+        return results.length > 0 ? results : null;
+        
+    } catch (error) {
+        console.error('❌ Bing gratuit échoué:', error.message);
+        return null;
+    }
+}
+
+// ✅ Recherche avec DuckDuckGo API (Gratuite) - Version Corrigée
+async function searchWithDuckDuckGo(query, searchType) {
+    try {
+        console.log('🔍 Recherche DuckDuckGo pour:', query);
+        
+        // API DuckDuckGo avec les bons paramètres (basé sur votre exemple)
+        const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1`;
+        
+        const response = await axios.get(ddgUrl, {
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
+        
+        const data = response.data;
+        console.log('📊 Données reçues:', {
+            hasAbstract: !!data.AbstractText,
+            hasDefinition: !!data.Definition,
+            hasAnswer: !!data.Answer,
+            relatedTopicsCount: data.RelatedTopics ? data.RelatedTopics.length : 0,
+            hasResults: !!data.Results?.length
+        });
+        
         const results = [];
         
-        // Abstract (réponse instantanée)
-        if (data.Abstract && data.Abstract.trim()) {
+        // 1. Réponse directe (Answer)
+        if (data.Answer && data.Answer.trim()) {
             results.push({
-                title: data.AbstractText || 'Réponse instantanée',
-                snippet: data.Abstract,
+                title: data.AnswerType || 'Réponse directe',
+                snippet: data.Answer,
+                url: '',
+                source: 'DuckDuckGo Answer',
+                type: 'featured'
+            });
+        }
+        
+        // 2. Résumé (AbstractText + AbstractSource)
+        if (data.AbstractText && data.AbstractText.trim()) {
+            results.push({
+                title: data.Heading || 'Résumé',
+                snippet: data.AbstractText,
                 url: data.AbstractURL || '',
-                source: 'DuckDuckGo Instant',
+                source: data.AbstractSource || 'DuckDuckGo',
                 type: 'instant'
             });
         }
         
-        // Definition si disponible
+        // 3. Définition
         if (data.Definition && data.Definition.trim()) {
             results.push({
                 title: 'Définition',
                 snippet: data.Definition,
                 url: data.DefinitionURL || '',
-                source: 'DuckDuckGo',
+                source: data.DefinitionSource || 'DuckDuckGo',
                 type: 'definition'
             });
         }
         
-        // Topics relatifs
-        if (data.RelatedTopics && data.RelatedTopics.length > 0) {
-            data.RelatedTopics.slice(0, 3).forEach(topic => {
-                if (topic.Text && topic.FirstURL) {
+        // 4. Infobox (données structurées)
+        if (data.Infobox && data.Infobox.content && data.Infobox.content.length > 0) {
+            const infoText = data.Infobox.content
+                .filter(item => item.data_type === 'string' && item.value)
+                .slice(0, 3)
+                .map(item => `${item.label}: ${item.value}`)
+                .join(', ');
+                
+            if (infoText) {
+                results.push({
+                    title: data.Infobox.meta?.[0]?.label || 'Informations',
+                    snippet: infoText,
+                    url: '',
+                    source: 'DuckDuckGo Infobox',
+                    type: 'structured'
+                });
+            }
+        }
+        
+        // 5. Topics relatifs (améliorés)
+        if (data.RelatedTopics && Array.isArray(data.RelatedTopics) && data.RelatedTopics.length > 0) {
+            data.RelatedTopics.slice(0, 2).forEach(topic => {
+                if (topic.Text && topic.Text.trim() && topic.FirstURL) {
+                    const titleMatch = topic.Text.match(/^([^-]+)/);
                     results.push({
-                        title: topic.Text.split(' - ')[0] || 'Information',
+                        title: titleMatch ? titleMatch[1].trim() : 'Information connexe',
                         snippet: topic.Text,
                         url: topic.FirstURL,
                         source: 'DuckDuckGo',
@@ -289,10 +493,82 @@ async function searchWithDuckDuckGo(query, searchType) {
             });
         }
         
-        return results.length > 0 ? results : null;
+        // 6. Results directs (si disponibles)
+        if (data.Results && Array.isArray(data.Results) && data.Results.length > 0) {
+            data.Results.slice(0, 2).forEach(result => {
+                if (result.Text && result.FirstURL) {
+                    results.push({
+                        title: result.Text.split(' - ')[0] || 'Résultat',
+                        snippet: result.Text,
+                        url: result.FirstURL,
+                        source: 'DuckDuckGo Results',
+                        type: 'organic'
+                    });
+                }
+            });
+        }
+        
+        console.log(`✅ DuckDuckGo: ${results.length} résultats trouvés`);
+        
+        if (results.length === 0) {
+            console.log('⚠️ DuckDuckGo: Aucun résultat exploitable pour:', query);
+            // Essayer une recherche alternative simplifiée
+            return await searchWithSimplifiedQuery(query);
+        }
+        
+        return results;
         
     } catch (error) {
-        console.error('Erreur DuckDuckGo:', error.message);
+        console.error('❌ Erreur DuckDuckGo:', error.message);
+        return await searchWithSimplifiedQuery(query);
+    }
+}
+
+// ✅ Recherche de secours avec requête simplifiée
+async function searchWithSimplifiedQuery(originalQuery) {
+    try {
+        // Simplifier la requête (garder seulement les mots clés importants)
+        const simplified = originalQuery
+            .replace(/\b(que|qui|quoi|comment|pourquoi|où|quand|le|la|les|des?|un|une|ce|cette|est|sont|fait|faire|dire|aujourd'hui|maintenant|récent)\b/gi, '')
+            .replace(/[?!.,;]/g, '')
+            .trim()
+            .split(' ')
+            .filter(word => word.length > 2)
+            .slice(0, 3)
+            .join(' ');
+            
+        if (simplified && simplified !== originalQuery) {
+            console.log('🔄 Recherche simplifiée:', simplified);
+            
+            const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(simplified)}&format=json&no_html=1&no_redirect=1`;
+            
+            const response = await axios.get(ddgUrl, {
+                timeout: 10000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (compatible; NakamaBot/1.0)'
+                }
+            });
+            
+            const data = response.data;
+            const results = [];
+            
+            if (data.AbstractText?.trim()) {
+                results.push({
+                    title: 'Information trouvée',
+                    snippet: data.AbstractText,
+                    url: data.AbstractURL || '',
+                    source: data.AbstractSource || 'DuckDuckGo',
+                    type: 'simplified'
+                });
+            }
+            
+            return results.length > 0 ? results : null;
+        }
+        
+        return null;
+        
+    } catch (error) {
+        console.error('❌ Erreur recherche simplifiée:', error.message);
         return null;
     }
 }
