@@ -11,6 +11,15 @@ const cheerio = require('cheerio'); // Pour le scraping léger
 // Configuration Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// Configuration commune pour les requêtes Axios
+const axiosConfig = {
+    timeout: 10000, // Timeout augmenté à 10 secondes
+    headers: {
+        'User-Agent': 'NakamaBot/2.0 (Educational; https://example.com/contact)',
+        'Accept': 'application/json'
+    }
+};
+
 module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log } = ctx;
     
@@ -52,7 +61,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         }
     } 
     
-    // ✅ Détection intelligente des besoins de recherche web (VERSION AMÉLIORÉE)
+    // ✅ Détection intelligente des besoins de recherche web
     const searchAnalysis = await analyzeSearchNeed(args, senderId, ctx);
     if (searchAnalysis.needsSearch) {
         log.info(`🔍 Recherche web intelligente pour ${senderId}: ${searchAnalysis.query}`);
@@ -75,39 +84,32 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     return await handleConversationWithFallback(senderId, args, ctx);
 };
 
-// ✅ ANALYSE INTELLIGENTE DES BESOINS DE RECHERCHE (VERSION OPTIMISÉE)
+// ✅ ANALYSE INTELLIGENTE DES BESOINS DE RECHERCHE
 async function analyzeSearchNeed(message, senderId, ctx) {
     try {
-        // Nettoyage et normalisation du message
         const cleanMessage = message.toLowerCase().trim();
         
-        // Patterns de détection immédiate (plus précis)
         const immediateSearchPatterns = [
-            // Actualités et événements récents
             {
                 regex: /\b(actualité|news|nouvelles|récent|dernier|dernière|aujourd'hui|cette semaine|maintenant|en cours)\b/i,
                 type: 'news',
                 confidence: 0.9
             },
-            // Sports et compétitions
             {
                 regex: /\b(champion|championnat|ligue|coupe|match|tournoi|finale|gagnant|vainqueur|résultat|score)\b.*\b(2024|2025|récent|dernier|dernière)\b/i,
                 type: 'sports',
                 confidence: 0.95
             },
-            // Données temporelles spécifiques
             {
                 regex: /\b(janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+(2024|2025)\b/i,
                 type: 'temporal',
                 confidence: 0.9
             },
-            // Prix et cours actuels
             {
                 regex: /\b(prix|cours|bourse|crypto|bitcoin|ethereum|euro|dollar|inflation|taux)\b.*\b(actuel|maintenant|aujourd'hui|récent)\b/i,
                 type: 'financial',
                 confidence: 0.85
             },
-            // Météo
             {
                 regex: /\b(météo|temps|température|prévision|climat)\b/i,
                 type: 'weather',
@@ -115,7 +117,6 @@ async function analyzeSearchNeed(message, senderId, ctx) {
             }
         ];
         
-        // Vérification rapide avec patterns améliorés
         for (const pattern of immediateSearchPatterns) {
             if (pattern.regex.test(message)) {
                 const optimizedQuery = optimizeSearchQuery(message, pattern.type);
@@ -128,7 +129,6 @@ async function analyzeSearchNeed(message, senderId, ctx) {
             }
         }
         
-        // Analyse IA pour les cas complexes (plus ciblée)
         if (containsSearchIndicators(message)) {
             const aiAnalysis = await analyzeWithAI(message, ctx);
             return aiAnalysis;
@@ -146,50 +146,38 @@ async function analyzeSearchNeed(message, senderId, ctx) {
 function optimizeSearchQuery(message, searchType) {
     let query = message.toLowerCase();
     
-    // Suppression des mots inutiles selon le contexte
     const commonStopWords = /\b(le|la|les|de|du|des|un|une|et|ou|mais|car|donc|pour|dans|sur|avec|sans|que|qui|quoi|comment|pourquoi|où|quand|combien|dis-moi|peux-tu|pourrais-tu|est-ce que|qu'est-ce que|raconte-moi|explique-moi)\b/gi;
     
-    // Nettoyage de base
     query = query.replace(commonStopWords, ' ')
                 .replace(/[?!.,;]/g, '')
                 .replace(/\s+/g, ' ')
                 .trim();
     
-    // Optimisation spécifique par type
     switch (searchType) {
         case 'sports':
-            // Préserver les termes sportifs importants
             const sportsTerms = query.match(/\b(champion|championnat|ligue|coupe|finale|real madrid|barcelona|psg|manchester|liverpool|milan|juventus|bayern|dortmund|atletico)\b/gi);
             if (sportsTerms) {
                 query = sportsTerms.join(' ') + ' 2024 résultats';
             }
             break;
-            
         case 'news':
-            // Ajouter des termes temporels pour les actualités
             if (!/\b(2024|2025|récent|aujourd'hui|maintenant)\b/i.test(query)) {
                 query += ' actualités 2024';
             }
             break;
-            
         case 'financial':
-            // Optimiser pour les données financières
             const finTerms = query.match(/\b(bitcoin|ethereum|euro|dollar|bourse|crypto)\b/gi);
             if (finTerms) {
                 query = finTerms.join(' ') + ' cours prix actuel';
             }
             break;
-            
         case 'weather':
-            // Météo avec localisation
             query = query.replace(/météo|temps|température/gi, '').trim();
             query = `météo ${query || 'france'} aujourd'hui`;
             break;
     }
     
-    // Limiter à 8 mots maximum pour l'efficacité
     const words = query.split(' ').filter(word => word.length > 1).slice(0, 8);
-    
     return words.join(' ');
 }
 
@@ -200,81 +188,89 @@ function containsSearchIndicators(message) {
         /\b(dernières?|récentes?|nouvelles?|actuelles?)\b/i,
         /\b(état|situation|condition|status)\b.*\b(actuel|maintenant)\b/i,
         /\b(que se passe|quoi de neuf|comment ça va)\b/i,
-        /\b\d{4}\b/, // Années
+        /\b\d{4}\b/,
         /\b(janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\b/i
     ];
     
     return searchIndicators.some(pattern => pattern.test(message));
 }
 
-// ✅ RECHERCHE WEB FIABLE - NOUVELLE IMPLÉMENTATION
+// ✅ RECHERCHE WEB FIABLE
 async function performReliableWebSearch(query, searchType = 'general', ctx) {
     const { log } = ctx;
+    const startTime = Date.now();
     
     try {
         console.log('🔍 Démarrage recherche fiable pour:', query, `(type: ${searchType})`);
         
-        // Vérifier le cache d'abord
         const cached = getCachedSearch(query);
         if (cached) {
+            updateSearchStats('cache', searchType, true, Date.now() - startTime, true);
             console.log('💾 Résultat trouvé en cache');
             return cached;
         }
         
-        // 1. PRIORITÉ: Wikipedia (toujours fiable)
+        // 1. Wikipedia
         const wikiResults = await searchWikipediaReliable(query, searchType);
         if (wikiResults && wikiResults.length > 0) {
+            updateSearchStats('wikipedia', searchType, true, Date.now() - startTime);
             console.log('✅ Wikipedia réussi:', wikiResults.length, 'résultats');
             setCachedSearch(query, wikiResults);
             return wikiResults;
         }
         
-        // 2. News API gratuite (actualités)
+        // 2. News API
         if (searchType === 'news' || searchType === 'sports') {
             const newsResults = await searchWithNewsAPI(query);
             if (newsResults && newsResults.length > 0) {
+                updateSearchStats('newsapi', searchType, true, Date.now() - startTime);
                 console.log('✅ News API réussi:', newsResults.length, 'résultats');
                 setCachedSearch(query, newsResults);
                 return newsResults;
             }
         }
         
-        // 3. Reddit Search API (discussions récentes)
+        // 3. Reddit
         const redditResults = await searchReddit(query, searchType);
         if (redditResults && redditResults.length > 0) {
+            updateSearchStats('reddit', searchType, true, Date.now() - startTime);
             console.log('✅ Reddit réussi:', redditResults.length, 'résultats');
             setCachedSearch(query, redditResults);
             return redditResults;
         }
         
-        // 4. OpenStreetMap pour géolocalisation
+        // 4. OpenStreetMap
         if (searchType === 'weather' || containsLocation(query)) {
             const osmResults = await searchOpenStreetMap(query);
             if (osmResults && osmResults.length > 0) {
+                updateSearchStats('osm', searchType, true, Date.now() - startTime);
                 console.log('✅ OpenStreetMap réussi:', osmResults.length, 'résultats');
                 setCachedSearch(query, osmResults);
                 return osmResults;
             }
         }
         
-        // 5. FALLBACK: Scraping léger de moteurs de recherche
+        // 5. Scraping léger
         const scrapedResults = await lightWebScraping(query, searchType);
         if (scrapedResults && scrapedResults.length > 0) {
+            updateSearchStats('scraping', searchType, true, Date.now() - startTime);
             console.log('✅ Scraping léger réussi:', scrapedResults.length, 'résultats');
             setCachedSearch(query, scrapedResults);
             return scrapedResults;
         }
         
+        updateSearchStats('none', searchType, false, Date.now() - startTime);
         log.warning('⚠️ Toutes les méthodes de recherche ont échoué pour:', query);
         return null;
         
     } catch (error) {
+        updateSearchStats('none', searchType, false, Date.now() - startTime);
         log.error(`❌ Erreur recherche web: ${error.message}`);
         return null;
     }
 }
 
-// ✅ WIKIPEDIA RECHERCHE FIABLE (VERSION AMÉLIORÉE)
+// ✅ WIKIPEDIA RECHERCHE FIABLE
 async function searchWikipediaReliable(query, searchType) {
     try {
         console.log('📚 Recherche Wikipedia améliorée pour:', query);
@@ -282,56 +278,33 @@ async function searchWikipediaReliable(query, searchType) {
         // 1. Recherche directe par titre
         let searchUrl = `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
         
-        let response = await axios.get(searchUrl, {
-            timeout: 8000,
-            headers: {
-                'User-Agent': 'NakamaBot/2.0 (Educational; https://example.com/contact)',
-                'Accept': 'application/json'
-            }
-        });
+        let response = await axios.get(searchUrl, axiosConfig);
         
         if (response.data && response.data.extract && !response.data.type?.includes('disambiguation')) {
             return formatWikipediaResult(response.data, 'fr');
         }
         
-        // 2. Recherche par mots-clés si pas de résultat direct
+        // 2. Recherche par mots-clés gemini
         const searchApiUrl = `https://fr.wikipedia.org/w/api.php?action=query&format=json&list=search&srsearch=${encodeURIComponent(query)}&srlimit=3&srinfo=suggestion`;
         
-        response = await axios.get(searchApiUrl, {
-            timeout: 8000,
-            headers: {
-                'User-Agent': 'NakamaBot/2.0 (Educational; https://example.com/contact)'
-            }
-        });
+        response = await axios.get(searchApiUrl, axiosConfig);
         
         const searchData = response.data;
         if (searchData.query?.search?.length > 0) {
-            // Prendre le premier résultat de recherche
             const firstResult = searchData.query.search[0];
             const pageTitle = firstResult.title;
             
-            // Récupérer le résumé de cette page
             const summaryUrl = `https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(pageTitle)}`;
-            const summaryResponse = await axios.get(summaryUrl, {
-                timeout: 8000,
-                headers: {
-                    'User-Agent': 'NakamaBot/2.0 (Educational; https://example.com/contact)'
-                }
-            });
+            const summaryResponse = await axios.get(summaryUrl, axiosConfig);
             
             if (summaryResponse.data?.extract) {
                 return formatWikipediaResult(summaryResponse.data, 'fr');
             }
         }
         
-        // 3. Essayer en anglais si français échoue
+        // 3. Essayer en anglais
         const enSearchUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
-        const enResponse = await axios.get(enSearchUrl, {
-            timeout: 8000,
-            headers: {
-                'User-Agent': 'NakamaBot/2.0 (Educational; https://example.com/contact)'
-            }
-        });
+        const enResponse = await axios.get(enSearchUrl, axiosConfig);
         
         if (enResponse.data?.extract) {
             return formatWikipediaResult(enResponse.data, 'en');
@@ -340,7 +313,7 @@ async function searchWikipediaReliable(query, searchType) {
         return null;
         
     } catch (error) {
-        console.log('❌ Wikipedia échoué:', error.message);
+        console.log(`❌ Wikipedia échoué: ${error.message} (Code: ${error.response?.status || 'N/A'})`);
         return null;
     }
 }
@@ -356,7 +329,6 @@ function formatWikipediaResult(data, language) {
         thumbnail: data.thumbnail?.source || null
     };
     
-    // Limiter la taille du snippet
     if (result.snippet.length > 300) {
         result.snippet = result.snippet.substring(0, 297) + '...';
     }
@@ -364,12 +336,11 @@ function formatWikipediaResult(data, language) {
     return [result];
 }
 
-// ✅ NEWS API GRATUITE (NewsAPI.org ou alternatives)
+// ✅ NEWS API GRATUITE
 async function searchWithNewsAPI(query) {
     try {
         console.log('📰 Recherche actualités pour:', query);
         
-        // Alternative gratuite: RSS feeds
         const rssFeeds = [
             'https://www.lemonde.fr/rss/une.xml',
             'https://www.franceinfo.fr/rss/',
@@ -379,8 +350,9 @@ async function searchWithNewsAPI(query) {
         for (const feedUrl of rssFeeds) {
             try {
                 const response = await axios.get(feedUrl, {
-                    timeout: 8000,
+                    ...axiosConfig,
                     headers: {
+                        ...axiosConfig.headers,
                         'User-Agent': 'NakamaBot/2.0 (News Aggregator)'
                     }
                 });
@@ -390,14 +362,14 @@ async function searchWithNewsAPI(query) {
                     return results;
                 }
             } catch (feedError) {
-                console.log(`Échec RSS ${feedUrl}:`, feedError.message);
+                console.log(`Échec RSS ${feedUrl}: ${feedError.message} (Code: ${feedError.response?.status || 'N/A'})`);
             }
         }
         
         return null;
         
     } catch (error) {
-        console.error('❌ News API échoué:', error.message);
+        console.error(`❌ News API échoué: ${error.message} (Code: ${error.response?.status || 'N/A'})`);
         return null;
     }
 }
@@ -405,7 +377,6 @@ async function searchWithNewsAPI(query) {
 // ✅ PARSER RSS SIMPLE
 function parseRSSFeed(xmlData, query) {
     try {
-        // Parser XML simple (sans dépendance externe)
         const items = xmlData.match(/<item>[\s\S]*?<\/item>/gi) || [];
         const results = [];
         
@@ -420,11 +391,10 @@ function parseRSSFeed(xmlData, query) {
             const title = titleMatch ? (titleMatch[1] || titleMatch[2]) : '';
             const description = descMatch ? (descMatch[1] || descMatch[2]) : '';
             
-            // Vérifier la pertinence
             const content = (title + ' ' + description).toLowerCase();
             const relevance = queryWords.filter(word => content.includes(word)).length / queryWords.length;
             
-            if (relevance > 0.3 && title) { // Au moins 30% de mots-clés trouvés
+            if (relevance > 0.3 && title) {
                 results.push({
                     title: title.replace(/<[^>]*>/g, ''),
                     snippet: description.replace(/<[^>]*>/g, '').substring(0, 200),
@@ -437,7 +407,6 @@ function parseRSSFeed(xmlData, query) {
             }
         });
         
-        // Trier par pertinence
         return results.sort((a, b) => b.relevance - a.relevance).slice(0, 3);
         
     } catch (error) {
@@ -446,18 +415,18 @@ function parseRSSFeed(xmlData, query) {
     }
 }
 
-// ✅ RECHERCHE REDDIT (API PUBLIQUE)
+// ✅ RECHERCHE REDDIT
 async function searchReddit(query, searchType) {
     try {
         console.log('🔴 Recherche Reddit pour:', query);
         
-        // API Reddit publique (sans authentification)
         const subreddits = getRelevantSubreddits(searchType);
         const searchUrl = `https://www.reddit.com/r/${subreddits}/search.json?q=${encodeURIComponent(query)}&sort=hot&limit=3&restrict_sr=1`;
         
         const response = await axios.get(searchUrl, {
-            timeout: 10000,
+            ...axiosConfig,
             headers: {
+                ...axiosConfig.headers,
                 'User-Agent': 'NakamaBot/2.0 (Web Search Bot)'
             }
         });
@@ -478,7 +447,7 @@ async function searchReddit(query, searchType) {
         return null;
         
     } catch (error) {
-        console.log('❌ Reddit échoué:', error.message);
+        console.log(`❌ Reddit échoué: ${error.message} (Code: ${error.response?.status || 'N/A'})`);
         return null;
     }
 }
@@ -501,13 +470,13 @@ async function searchOpenStreetMap(query) {
     try {
         console.log('🗺️ Recherche OSM pour:', query);
         
-        // API Nominatim d'OpenStreetMap (gratuite)
         const osmUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=3&addressdetails=1&extratags=1`;
         
         const response = await axios.get(osmUrl, {
-            timeout: 8000,
+            ...axiosConfig,
             headers: {
-                'User-Agent': 'NakamaBot/2.0 (Location Search)'
+                ...axiosConfig.headers,
+                'User-Agent': 'NakamaBot/2.0 (Location Search; contact@example.com)'
             }
         });
         
@@ -529,34 +498,33 @@ async function searchOpenStreetMap(query) {
         return null;
         
     } catch (error) {
-        console.log('❌ OpenStreetMap échoué:', error.message);
+        console.log(`❌ OpenStreetMap échoué: ${error.message} (Code: ${error.response?.status || 'N/A'})`);
         return null;
     }
 }
 
-// ✅ SCRAPING LÉGER (DERNIER RECOURS)
+// ✅ SCRAPING LÉGER
 async function lightWebScraping(query, searchType) {
     try {
         console.log('🕷️ Scraping léger pour:', query);
         
-        // Utiliser DuckDuckGo HTML (scraping très léger)
         const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
         
         const response = await axios.get(ddgUrl, {
-            timeout: 15000,
+            ...axiosConfig,
             headers: {
+                ...axiosConfig.headers,
                 'User-Agent': 'Mozilla/5.0 (compatible; NakamaBot/2.0)',
                 'Accept': 'text/html,application/xhtml+xml'
             }
         });
         
-        // Parse HTML avec cheerio si disponible, sinon regex
         if (typeof cheerio !== 'undefined') {
             const $ = cheerio.load(response.data);
             const results = [];
             
             $('.result__body').each((i, element) => {
-                if (i >= 3) return false; // Limiter à 3 résultats
+                if (i >= 3) return false;
                 
                 const $el = $(element);
                 const title = $el.find('.result__title a').text().trim();
@@ -577,13 +545,12 @@ async function lightWebScraping(query, searchType) {
             return results.length > 0 ? results : null;
         }
         
-        // Fallback regex si cheerio indisponible
         const resultMatches = response.data.match(/class="result__body">[\s\S]*?(?=<div class="result__body">|$)/g) || [];
         const results = [];
         
         resultMatches.slice(0, 3).forEach(match => {
-            const titleMatch = match.match(/class="result__title"[^>]*><a[^>]*>([^<]+)/);
-            const snippetMatch = match.match(/class="result__snippet"[^>]*>([^<]+)/);
+            const titleMatch = match.match(/class="result__title"[^>]*><a[^>]* cursus='[^']*'[^>]*>([^<]+)/i);
+            const snippetMatch = match.match(/class="result__snippet"[^>]*>([^<]+)/i);
             
             if (titleMatch && snippetMatch) {
                 results.push({
@@ -599,7 +566,7 @@ async function lightWebScraping(query, searchType) {
         return results.length > 0 ? results : null;
         
     } catch (error) {
-        console.log('❌ Scraping léger échoué:', error.message);
+        console.log(`❌ Scraping léger échoué: ${error.message} (Code: ${error.response?.status || 'N/A'})`);
         return null;
     }
 }
@@ -624,13 +591,11 @@ function getCachedSearch(query) {
     
     if (!cached) return null;
     
-    // TTL variable selon le type de contenu
     const ttl = getTTLForQuery(query);
     if ((Date.now() - cached.timestamp) < ttl) {
         return cached.results;
     }
     
-    // Supprimer si expiré
     searchCache.delete(cacheKey);
     return null;
 }
@@ -643,7 +608,6 @@ function setCachedSearch(query, results) {
         query: cacheKey
     });
     
-    // Nettoyage automatique si cache trop grand
     if (searchCache.size > 200) {
         const oldestKey = Array.from(searchCache.keys())[0];
         searchCache.delete(oldestKey);
@@ -654,22 +618,18 @@ function setCachedSearch(query, results) {
 function getTTLForQuery(query) {
     const lowerQuery = query.toLowerCase();
     
-    // Actualités et sports: 10 minutes
     if (/\b(actualité|news|match|score|résultat|champion)\b/i.test(lowerQuery)) {
         return 10 * 60 * 1000;
     }
     
-    // Données financières: 5 minutes
     if (/\b(bitcoin|cours|prix|bourse)\b/i.test(lowerQuery)) {
         return 5 * 60 * 1000;
     }
     
-    // Météo: 30 minutes
     if (/\b(météo|temps|température)\b/i.test(lowerQuery)) {
         return 30 * 60 * 1000;
     }
     
-    // Contenu encyclopédique: 4 heures
     return 4 * 60 * 60 * 1000;
 }
 
@@ -701,7 +661,6 @@ Critères pour needsSearch=false:
 - Questions théoriques/créatives
 - Sujets intemporels`;
 
-        // Essai avec Gemini d'abord
         try {
             const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
             const result = await model.generateContent(analysisPrompt);
@@ -721,7 +680,6 @@ Critères pour needsSearch=false:
             console.log('Gemini échec pour analyse, fallback Mistral');
         }
         
-        // Fallback avec Mistral
         try {
             const { callMistralAPI } = ctx;
             const mistralResponse = await callMistralAPI([
@@ -753,7 +711,6 @@ Critères pour needsSearch=false:
 // ✅ GÉNÉRATION DE RÉPONSE ENRICHIE AVEC RECHERCHE
 async function generateSearchEnhancedResponse(originalMessage, searchResults, ctx) {
     try {
-        // Préparer le contexte de recherche avec scoring
         const scoredResults = scoreSearchResults(searchResults, originalMessage);
         const topResults = scoredResults.slice(0, 3);
         
@@ -776,7 +733,6 @@ Génère une réponse naturelle et conversationnelle qui:
 
 Style: Conversationnel, informatif mais pas robotique.`;
 
-        // Essayer avec Gemini d'abord
         try {
             const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
             const result = await model.generateContent(enhancementPrompt);
@@ -789,7 +745,6 @@ Style: Conversationnel, informatif mais pas robotique.`;
             console.log('Gemini échec pour synthèse, essai Mistral');
         }
         
-        // Fallback Mistral
         try {
             const { callMistralAPI } = ctx;
             const mistralResponse = await callMistralAPI([
@@ -804,11 +759,9 @@ Style: Conversationnel, informatif mais pas robotique.`;
             console.log('Mistral aussi en échec pour synthèse');
         }
         
-        // Fallback simple mais informatif
         const bestResult = topResults[0];
         const fallbackResponse = `🔍 **${bestResult.title}**\n\n${bestResult.snippet}\n\n*Source: ${bestResult.source}*`;
         
-        // Ajouter d'autres résultats si pertinents
         if (topResults.length > 1) {
             const additionalInfo = topResults.slice(1, 2).map(r => 
                 `\n📌 **Complément**: ${r.snippet.substring(0, 100)}...`
@@ -835,18 +788,15 @@ function scoreSearchResults(results, originalQuery) {
         let score = 0;
         const content = (result.title + ' ' + result.snippet).toLowerCase();
         
-        // Score par pertinence des mots-clés
         queryWords.forEach(word => {
             if (content.includes(word)) {
                 score += 2;
-                // Bonus si dans le titre
                 if (result.title.toLowerCase().includes(word)) {
                     score += 1;
                 }
             }
         });
         
-        // Bonus par type de résultat
         const typeBonus = {
             'featured': 5,
             'news': 4,
@@ -857,12 +807,10 @@ function scoreSearchResults(results, originalQuery) {
         };
         score += typeBonus[result.type] || 0;
         
-        // Bonus pour sources fiables
         if (result.source.includes('Wikipedia') || result.source.includes('News')) {
             score += 2;
         }
         
-        // Malus pour snippet trop court
         if (result.snippet.length < 50) {
             score -= 1;
         }
@@ -871,15 +819,13 @@ function scoreSearchResults(results, originalQuery) {
     }).sort((a, b) => b.score - a.score);
 }
 
-// ✅ GESTION CONVERSATION AVEC FALLBACK (INCHANGÉE MAIS OPTIMISÉE)
+// ✅ GESTION CONVERSATION AVEC FALLBACK
 async function handleConversationWithFallback(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, log } = ctx;
     
-    // Récupération du contexte (derniers 8 messages pour optimiser)
     const context = getMemoryContext(String(senderId)).slice(-8);
     const messageCount = context.filter(msg => msg.role === 'user').length;
     
-    // Date et heure actuelles
     const now = new Date();
     const dateTime = now.toLocaleString('fr-FR', { 
         weekday: 'long', 
@@ -891,7 +837,6 @@ async function handleConversationWithFallback(senderId, args, ctx) {
         timeZone: 'Europe/Paris'
     });
     
-    // Construction de l'historique de conversation
     let conversationHistory = "";
     if (context.length > 0) {
         conversationHistory = context.map(msg => 
@@ -899,7 +844,6 @@ async function handleConversationWithFallback(senderId, args, ctx) {
         ).join('\n') + '\n';
     }
     
-    // Prompt système optimisé
     const systemPrompt = `Tu es NakamaBot, une IA conversationnelle avancée créée par Durand et sa femme Kuine Lor.
 
 CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
@@ -935,7 +879,6 @@ ${conversationHistory ? `Historique:\n${conversationHistory}` : ''}
 Utilisateur: ${args}`;
 
     try {
-        // ✅ PRIORITÉ: Essayer d'abord avec Gemini
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const result = await model.generateContent(systemPrompt);
         const geminiResponse = result.response.text();
@@ -953,7 +896,6 @@ Utilisateur: ${args}`;
         log.warning(`⚠️ Gemini échec pour ${senderId}: ${geminiError.message}`);
         
         try {
-            // ✅ FALLBACK: Utiliser Mistral en cas d'échec Gemini
             const messages = [{ role: "system", content: systemPrompt }];
             messages.push(...context);
             messages.push({ role: "user", content: args });
@@ -979,9 +921,7 @@ Utilisateur: ${args}`;
     }
 }
 
-// ✅ FONCTIONS UTILITAIRES INCHANGÉES MAIS OPTIMISÉES
-
-// Détection des demandes de contact admin
+// ✅ FONCTIONS UTILITAIRES
 function detectContactAdminIntention(message) {
     const lowerMessage = message.toLowerCase();
     
@@ -998,7 +938,7 @@ function detectContactAdminIntention(message) {
         for (const pattern of category.patterns) {
             if (pattern.test(message)) {
                 if (category.reason === 'question_creation') {
-                    return { shouldContact: false }; // Géré par l'IA
+                    return { shouldContact: false };
                 }
                 return {
                     shouldContact: true,
@@ -1012,7 +952,6 @@ function detectContactAdminIntention(message) {
     return { shouldContact: false };
 }
 
-// Génération suggestion de contact
 function generateContactSuggestion(reason, extractedMessage) {
     const reasonMessages = {
         'contact_direct': { title: "💌 **Contact Admin**", message: "Je vois que tu veux contacter les administrateurs !" },
@@ -1032,7 +971,6 @@ function generateContactSuggestion(reason, extractedMessage) {
     return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** Utilise \`/contact [ton message]\` pour les contacter directement.\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 Tu recevras une réponse personnalisée !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
 }
 
-// Détection des intentions de commandes
 async function detectCommandIntentions(message, ctx) {
     const quickPatterns = [
         { patterns: [/(?:cr[ée]|g[ée]n[ée]r|fai|dessine).*?(?:image|photo)/i], command: 'image' },
@@ -1071,7 +1009,6 @@ async function detectCommandIntentions(message, ctx) {
     return { shouldExecute: false };
 }
 
-// Exécution de commande depuis le chat
 async function executeCommandFromChat(senderId, commandName, args, ctx) {
     try {
         const COMMANDS = global.COMMANDS || new Map();
@@ -1103,7 +1040,6 @@ async function executeCommandFromChat(senderId, commandName, args, ctx) {
     }
 }
 
-// Génération de réponse contextuelle
 async function generateContextualResponse(originalMessage, commandResult, commandName, ctx) {
     if (typeof commandResult === 'object' && commandResult.type === 'image') {
         return commandResult;
@@ -1135,8 +1071,6 @@ Génère une réponse naturelle et amicale (max 200 chars) qui présente le rés
 }
 
 // ✅ NOUVELLES FONCTIONS DE MONITORING ET STATISTIQUES
-
-// Statistiques de recherche avancées
 const searchStats = {
     total: 0,
     successful: 0,
@@ -1158,7 +1092,7 @@ function updateSearchStats(source, type, success, responseTime, fromCache = fals
     if (responseTime) {
         searchStats.responseTime.push(responseTime);
         if (searchStats.responseTime.length > 100) {
-            searchStats.responseTime.shift(); // Garder seulement les 100 derniers
+            searchStats.responseTime.shift();
         }
     }
     
@@ -1189,7 +1123,7 @@ function getSearchStats() {
     };
 }
 
-// Fonction de diagnostic des APIs
+// ✅ FONCTION DE DIAGNOSTIC DES APIs CORRIGÉE
 async function diagnoseAPIs() {
     const diagnosis = {
         wikipedia: false,
@@ -1201,34 +1135,72 @@ async function diagnoseAPIs() {
     
     // Test Wikipedia
     try {
-        await axios.get('https://fr.wikipedia.org/api/rest_v1/page/summary/France', { timeout: 5000 });
-        diagnosis.wikipedia = true;
-    } catch (e) {
-        console.log('Wikipedia indisponible');
+        const response = await axios.get('https://fr.wikipedia.org/api/rest_v1/page/summary/France', axiosConfig);
+        if (response.status === 200 && response.data.extract) {
+            diagnosis.wikipedia = true;
+            console.log('✅ Wikipedia disponible');
+        } else {
+            console.log(`❌ Wikipedia indisponible: Statut ${response.status}`);
+        }
+    } catch (error) {
+        console.log(`❌ Wikipedia indisponible: ${error.message} (Code: ${error.response?.status || 'N/A'})`);
     }
     
     // Test Reddit
     try {
-        await axios.get('https://www.reddit.com/r/test.json?limit=1', { timeout: 5000 });
-        diagnosis.reddit = true;
-    } catch (e) {
-        console.log('Reddit indisponible');
+        const response = await axios.get('https://www.reddit.com/r/test.json?limit=1', {
+            ...axiosConfig,
+            headers: {
+                ...axiosConfig.headers,
+                'User-Agent': 'NakamaBot/2.0 (Web Search Bot)'
+            }
+        });
+        if (response.status === 200 && response.data.data) {
+            diagnosis.reddit = true;
+            console.log('✅ Reddit disponible');
+        } else {
+            console.log(`❌ Reddit indisponible: Statut ${response.status}`);
+        }
+    } catch (error) {
+        console.log(`❌ Reddit indisponible: ${error.message} (Code: ${error.response?.status || 'N/A'})`);
     }
     
     // Test OpenStreetMap
     try {
-        await axios.get('https://nominatim.openstreetmap.org/search?format=json&q=Paris&limit=1', { timeout: 5000 });
-        diagnosis.osm = true;
-    } catch (e) {
-        console.log('OpenStreetMap indisponible');
+        const response = await axios.get('https://nominatim.openstreetmap.org/search?format=json&q=Paris&limit=1', {
+            ...axiosConfig,
+            headers: {
+                ...axiosConfig.headers,
+                'User-Agent': 'NakamaBot/2.0 (Location Search; contact@example.com)'
+            }
+        });
+        if (response.status === 200 && Array.isArray(response.data) && response.data.length > 0) {
+            diagnosis.osm = true;
+            console.log('✅ OpenStreetMap disponible');
+        } else {
+            console.log(`❌ OpenStreetMap indisponible: Statut ${response.status}`);
+        }
+    } catch (error) {
+        console.log(`❌ OpenStreetMap indisponible: ${error.message} (Code: ${error.response?.status || 'N/A'})`);
     }
     
     // Test RSS (Le Monde)
     try {
-        await axios.get('https://www.lemonde.fr/rss/une.xml', { timeout: 5000 });
-        diagnosis.rss = true;
-    } catch (e) {
-        console.log('RSS indisponible');
+        const response = await axios.get('https://www.lemonde.fr/rss/une.xml', {
+            ...axiosConfig,
+            headers: {
+                ...axiosConfig.headers,
+                'User-Agent': 'NakamaBot/2.0 (News Aggregator)'
+            }
+        });
+        if (response.status === 200 && response.data.includes('<rss')) {
+            diagnosis.rss = true;
+            console.log('✅ RSS disponible');
+        } else {
+            console.log(`❌ RSS indisponible: Statut ${response.status}`);
+        }
+    } catch (error) {
+        console.log(`❌ RSS indisponible: ${error.message} (Code: ${error.response?.status || 'N/A'})`);
     }
     
     return diagnosis;
@@ -1244,9 +1216,8 @@ module.exports.diagnoseAPIs = diagnoseAPIs;
 
 // ✅ INITIALISATION AMÉLIORÉE
 (async function initialize() {
-    console.log('🚀 NakamaBot Chat Enhanced v2.0 - Initialisation...');
+    console.log('🚀 NakamaBot Chat Enhanced v2.1 - Initialisation...');
     
-    // Vérifier les clés API
     const missingKeys = [];
     if (!process.env.GEMINI_API_KEY) missingKeys.push('GEMINI_API_KEY');
     
@@ -1257,7 +1228,6 @@ module.exports.diagnoseAPIs = diagnoseAPIs;
         console.log('✅ Configuration API validée');
     }
     
-    // Diagnostic des APIs externes
     console.log('🔍 Diagnostic des APIs externes...');
     const diagnosis = await diagnoseAPIs();
     
@@ -1274,7 +1244,6 @@ module.exports.diagnoseAPIs = diagnoseAPIs;
         console.log('⚠️ Recherche web limitée (peu d\'APIs disponibles)');
     }
     
-    // Initialiser le nettoyage automatique du cache
     setInterval(() => {
         console.log(`🧹 Nettoyage cache: ${searchCache.size} entrées`);
         
@@ -1290,11 +1259,9 @@ module.exports.diagnoseAPIs = diagnoseAPIs;
         if (cleaned > 0) {
             console.log(`🗑️ ${cleaned} entrées expirées supprimées`);
         }
-    }, 15 * 60 * 1000); // Nettoyage toutes les 15 minutes
+    }, 15 * 60 * 1000);
     
-    console.log('🎯 NakamaBot prêt avec recherche web fiable v2.0 !');
-    
-    // Statistiques initiales
+    console.log('🎯 NakamaBot prêt avec recherche web fiable v2.1 !');
     console.log('📈 Monitoring des performances activé');
     console.log('💾 Cache intelligent avec TTL variable activé');
     console.log('🔄 Système de fallback multi-sources activé');
