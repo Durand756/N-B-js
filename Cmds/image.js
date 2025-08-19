@@ -1,23 +1,25 @@
 /**
- * Commande /image - Génération d'images IA
+ * Commande /image - Génération d'images IA avec Gemini (Pollinations en fallback)
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Description de l'image à générer
  * @param {object} ctx - Contexte partagé du bot
  */
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Configuration Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 module.exports = async function cmdImage(senderId, args, ctx) {
     const { addToMemory, getRandomInt, log } = ctx;
     
     if (!args.trim()) {
         return `🎨 OH OUI ! Je peux générer des images magnifiques ! ✨
-
 🖼️ /image [ta description] - Je crée ton image de rêve !
 🎨 /image chat robot mignon - Exemple adorable
 🌸 /image paysage féerique coucher soleil - Exemple poétique
 ⚡ /image random - Une surprise image !
-
 💕 Je suis super douée pour créer des images ! Décris-moi ton rêve et je le dessine pour toi !
 🎭 Tous les styles : réaliste, cartoon, anime, artistique...
-
 💡 Plus tu me donnes de détails, plus ton image sera parfaite !
 ❓ Besoin d'aide ? Tape /help pour voir toutes mes capacités ! 🌟`;
     }
@@ -35,7 +37,9 @@ module.exports = async function cmdImage(senderId, args, ctx) {
             "magical mermaid palace underwater with pearl decorations",
             "sweet vintage tea party with pastel colors and roses",
             "cozy cottagecore house with flower gardens and sunshine",
-            "elegant anime girl with flowing dress in cherry blossoms"
+            "elegant anime girl with flowing dress in cherry blossoms",
+            "mystical dragon soaring through aurora borealis",
+            "cyberpunk city with neon lights and flying cars"
         ];
         prompt = randomPrompts[Math.floor(Math.random() * randomPrompts.length)];
     }
@@ -49,30 +53,175 @@ module.exports = async function cmdImage(senderId, args, ctx) {
         return "❌ Oups ! Ta description est trop longue ! Maximum 200 caractères s'il te plaît ! 🌸";
     }
     
+    // Optimiser le prompt pour de meilleurs résultats
+    const optimizedPrompt = optimizePromptForImageGeneration(prompt);
+    
+    try {
+        // ✅ PRIORITÉ: Essayer d'abord avec Gemini 2.0 Flash Image Generation
+        log.info(`🎨 Tentative génération Gemini pour ${senderId}: ${prompt}`);
+        
+        const imageResult = await generateWithGemini(optimizedPrompt, log);
+        
+        if (imageResult && imageResult.success) {
+            // Sauvegarder dans la mémoire
+            addToMemory(senderIdStr, 'user', `Image demandée: ${prompt}`);
+            addToMemory(senderIdStr, 'assistant', `Image générée par Gemini: ${prompt}`);
+            
+            log.info(`💎 Image Gemini générée avec succès pour ${senderId}`);
+            
+            return {
+                type: "image",
+                url: imageResult.imageUrl,
+                caption: `🎨 Tadaaa ! Image créée par Gemini AI ! ✨
+
+📝 "${prompt}"
+🤖 Générée par: Gemini 2.0 Flash
+🎯 Style: ${imageResult.style || 'Auto-détecté'}
+
+💕 J'espère qu'elle te plaît ! Tape /image pour une nouvelle création ! 🌟`
+            };
+        }
+        
+        throw new Error('Gemini image generation failed');
+        
+    } catch (geminiError) {
+        log.warning(`⚠️ Gemini image échec pour ${senderId}: ${geminiError.message}`);
+        
+        try {
+            // ✅ FALLBACK: Utiliser Pollinations si Gemini échoue
+            log.info(`🔄 Fallback Pollinations pour ${senderId}`);
+            
+            const pollinationsResult = await generateWithPollinations(optimizedPrompt, getRandomInt);
+            
+            if (pollinationsResult && pollinationsResult.success) {
+                // Sauvegarder dans la mémoire
+                addToMemory(senderIdStr, 'user', `Image demandée: ${prompt}`);
+                addToMemory(senderIdStr, 'assistant', `Image générée par Pollinations: ${prompt}`);
+                
+                log.info(`🌸 Image Pollinations générée avec succès pour ${senderId}`);
+                
+                return {
+                    type: "image",
+                    url: pollinationsResult.imageUrl,
+                    caption: `🎨 Tadaaa ! Voici ton image créée avec amour ! ✨
+
+📝 "${prompt}"
+🔢 Seed magique: ${pollinationsResult.seed}
+🤖 Générée par: Pollinations AI
+
+💕 J'espère qu'elle te plaît ! Tape /image pour une nouvelle création ! 🌟`
+                };
+            }
+            
+            throw new Error('Pollinations generation also failed');
+            
+        } catch (pollinationsError) {
+            log.error(`❌ Erreur totale génération image ${senderId}: Gemini(${geminiError.message}) + Pollinations(${pollinationsError.message})`);
+            
+            return `🎨 Oh non ! Mes ateliers artistiques rencontrent une petite difficulté ! 😅
+🔧 Ni mon pinceau Gemini ni mon crayon Pollinations ne fonctionnent pour le moment
+⏰ Réessaie dans quelques secondes, mes outils magiques vont revenir !
+🎲 Ou essaie /image random pour une surprise différente !
+❓ Tape /help si tu as besoin d'aide ! 💖`;
+        }
+    }
+};
+
+// ✅ Génération avec Gemini 2.0 Flash Image Generation
+async function generateWithGemini(prompt, log) {
+    try {
+        // Utiliser le modèle Gemini 2.0 Flash avec génération d'images
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-2.0-flash-preview-image-generation" 
+        });
+        
+        // Créer un prompt enrichi pour de meilleurs résultats
+        const enhancedPrompt = `Create a high-quality, detailed image: ${prompt}. Make it visually appealing, well-composed, and artistically beautiful.`;
+        
+        const result = await model.generateContent(enhancedPrompt);
+        
+        // Vérifier si une image a été générée
+        if (result.response && result.response.candidates && result.response.candidates[0]) {
+            const candidate = result.response.candidates[0];
+            
+            // Chercher les données d'image dans la réponse
+            if (candidate.content && candidate.content.parts) {
+                for (const part of candidate.content.parts) {
+                    if (part.inlineData && part.inlineData.mimeType && part.inlineData.mimeType.startsWith('image/')) {
+                        // Convertir les données base64 en URL utilisable
+                        const base64Data = part.inlineData.data;
+                        const imageUrl = `data:${part.inlineData.mimeType};base64,${base64Data}`;
+                        
+                        return {
+                            success: true,
+                            imageUrl: imageUrl,
+                            style: 'Gemini AI Generated'
+                        };
+                    }
+                }
+            }
+        }
+        
+        throw new Error('No image data found in Gemini response');
+        
+    } catch (error) {
+        log.error(`❌ Erreur Gemini image generation: ${error.message}`);
+        return { success: false, error: error.message };
+    }
+}
+
+// ✅ Génération avec Pollinations (fallback)
+async function generateWithPollinations(prompt, getRandomInt) {
     try {
         // Encoder le prompt pour l'URL
         const encodedPrompt = encodeURIComponent(prompt);
         
-        // Générer l'image avec l'API Pollinations
+        // Générer avec des paramètres optimisés
         const seed = getRandomInt(100000, 999999);
-        const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=768&height=768&seed=${seed}&enhance=true&nologo=true`;
+        const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=768&height=768&seed=${seed}&enhance=true&nologo=true&model=flux`;
         
-        // Sauvegarder dans la mémoire
-        addToMemory(senderIdStr, 'user', `Image demandée: ${prompt}`);
-        addToMemory(senderIdStr, 'bot', `Image générée: ${prompt}`);
-        
-        // Retourner l'image avec caption
         return {
-            type: "image",
-            url: imageUrl,
-            caption: `🎨 Tadaaa ! Voici ton image créée avec amour ! ✨\n\n📝 "${prompt}"\n🔢 Seed magique: ${seed}\n\n💕 J'espère qu'elle te plaît ! Tape /image pour une nouvelle création ou /help pour voir tout ce que je sais faire ! 🌟`
+            success: true,
+            imageUrl: imageUrl,
+            seed: seed
         };
+        
     } catch (error) {
-        log.error(`❌ Erreur génération image: ${error.message}`);
-        return `🎨 Oh non ! Une petite erreur temporaire dans mon atelier artistique ! 😅
-
-🔧 Mon pinceau magique est un peu fatigué, réessaie dans quelques secondes !
-🎲 Ou essaie /image random pour une surprise !
-❓ Tape /help si tu as besoin d'aide ! 💖`;
+        return { success: false, error: error.message };
     }
-};
+}
+
+// ✅ Optimisation du prompt pour de meilleurs résultats
+function optimizePromptForImageGeneration(prompt) {
+    // Nettoyer le prompt
+    let optimized = prompt.trim();
+    
+    // Ajouter des mots-clés pour améliorer la qualité si nécessaire
+    const qualityKeywords = ['high quality', 'detailed', 'beautiful', 'artistic'];
+    const hasQualityKeyword = qualityKeywords.some(keyword => 
+        optimized.toLowerCase().includes(keyword)
+    );
+    
+    if (!hasQualityKeyword && optimized.length < 150) {
+        optimized += ', high quality, detailed, beautiful';
+    }
+    
+    // Remplacer certains mots français par leurs équivalents anglais pour de meilleurs résultats
+    const translations = {
+        'chat': 'cat',
+        'chien': 'dog',
+        'paysage': 'landscape',
+        'portrait': 'portrait',
+        'maison': 'house',
+        'voiture': 'car',
+        'fleur': 'flower',
+        'arbre': 'tree'
+    };
+    
+    for (const [french, english] of Object.entries(translations)) {
+        const regex = new RegExp(`\\b${french}\\b`, 'gi');
+        optimized = optimized.replace(regex, english);
+    }
+    
+    return optimized;
+}
