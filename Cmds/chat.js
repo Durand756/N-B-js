@@ -114,7 +114,8 @@ CAPACITÉS PRINCIPALES:
 🆘 /help - Toutes les commandes disponibles
 
 DIRECTIVES:
-- Maximum 2000 caractères par réponse
+- Parle selon la langue de l\'utilisateur et du contexte
+- Maximum 3000 caractères par réponse
 - Utilise quelques emojis avec parcimonie
 - Évite les répétitions et formules toutes faites
 - ${messageCount >= 5 ? 'Suggère /help si pertinent pour débloquer l\'utilisateur' : ''}
