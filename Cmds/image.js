@@ -75,7 +75,7 @@ module.exports = async function cmdImage(senderId, args, ctx) {
                 caption: `🎨 Tadaaa ! Image créée par Gemini AI ! ✨
 
 📝 "${prompt}"
-🤖 Générée par: Gemini 2.0 Flash
+🤖 Générée par..
 🎯 Style: ${imageResult.style || 'Auto-détecté'}
 
 💕 J'espère qu'elle te plaît ! Tape /image pour une nouvelle création ! 🌟`
@@ -107,7 +107,7 @@ module.exports = async function cmdImage(senderId, args, ctx) {
 
 📝 "${prompt}"
 🔢 Seed magique: ${pollinationsResult.seed}
-🤖 Générée par: Pollinations AI
+🤖 Générée.
 
 💕 J'espère qu'elle te plaît ! Tape /image pour une nouvelle création ! 🌟`
                 };
@@ -130,31 +130,63 @@ module.exports = async function cmdImage(senderId, args, ctx) {
 // ✅ Génération avec Gemini 2.0 Flash Image Generation
 async function generateWithGemini(prompt, log) {
     try {
-        // Utiliser le modèle Gemini 2.0 Flash avec génération d'images
+        // Configuration spéciale pour la génération d'images
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-2.0-flash-preview-image-generation" 
+            model: "gemini-2.0-flash-preview-image-generation"
         });
         
-        // Créer un prompt enrichi pour de meilleurs résultats
-        const enhancedPrompt = `Create a high-quality, detailed image: ${prompt}. Make it visually appealing, well-composed, and artistically beautiful.`;
+        // Prompt optimisé pour la génération d'images
+        const imagePrompt = `Generate an image: ${prompt}`;
         
-        const result = await model.generateContent(enhancedPrompt);
+        // Utiliser la méthode spécifique pour les images
+        const result = await model.generateContent({
+            contents: [
+                {
+                    role: "user",
+                    parts: [
+                        {
+                            text: imagePrompt
+                        }
+                    ]
+                }
+            ],
+            generationConfig: {
+                maxOutputTokens: 1024,
+                temperature: 0.7,
+                topP: 0.8,
+                topK: 40
+            }
+        });
         
-        // Vérifier si une image a été générée
-        if (result.response && result.response.candidates && result.response.candidates[0]) {
-            const candidate = result.response.candidates[0];
+        // Traitement de la réponse image
+        const response = await result.response;
+        
+        // Méthode 1: Vérifier les candidates
+        if (response.candidates && response.candidates.length > 0) {
+            const candidate = response.candidates[0];
             
-            // Chercher les données d'image dans la réponse
             if (candidate.content && candidate.content.parts) {
                 for (const part of candidate.content.parts) {
-                    if (part.inlineData && part.inlineData.mimeType && part.inlineData.mimeType.startsWith('image/')) {
-                        // Convertir les données base64 en URL utilisable
+                    // Chercher les données inline
+                    if (part.inlineData && part.inlineData.data) {
+                        const mimeType = part.inlineData.mimeType || 'image/png';
                         const base64Data = part.inlineData.data;
-                        const imageUrl = `data:${part.inlineData.mimeType};base64,${base64Data}`;
+                        const imageUrl = `data:${mimeType};base64,${base64Data}`;
                         
+                        log.info(`✅ Image Gemini générée avec succès (inline data)`);
                         return {
                             success: true,
                             imageUrl: imageUrl,
+                            style: 'Gemini AI Generated'
+                        };
+                    }
+                    
+                    // Chercher les blobs de données
+                    if (part.fileData && part.fileData.fileUri) {
+                        log.info(`✅ Image Gemini générée avec succès (file URI)`);
+                        return {
+                            success: true,
+                            imageUrl: part.fileData.fileUri,
                             style: 'Gemini AI Generated'
                         };
                     }
@@ -162,10 +194,31 @@ async function generateWithGemini(prompt, log) {
             }
         }
         
+        // Méthode 2: Vérifier directement dans la réponse
+        if (response.data) {
+            const imageUrl = `data:image/png;base64,${response.data}`;
+            log.info(`✅ Image Gemini générée avec succès (response data)`);
+            return {
+                success: true,
+                imageUrl: imageUrl,
+                style: 'Gemini AI Generated'
+            };
+        }
+        
+        // Si aucune image n'est trouvée
+        log.warning(`⚠️ Aucune donnée image trouvée dans la réponse Gemini`);
         throw new Error('No image data found in Gemini response');
         
     } catch (error) {
-        log.error(`❌ Erreur Gemini image generation: ${error.message}`);
+        // Log détaillé pour debugging
+        if (error.message.includes('response modalities')) {
+            log.error(`❌ Erreur modalité Gemini: Le modèle ne supporte pas cette configuration`);
+        } else if (error.message.includes('400')) {
+            log.error(`❌ Erreur requête Gemini (400): ${error.message}`);
+        } else {
+            log.error(`❌ Erreur générale Gemini image: ${error.message}`);
+        }
+        
         return { success: false, error: error.message };
     }
 }
