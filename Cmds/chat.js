@@ -148,17 +148,14 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             return welcomeMsg;
         }
         
-        // 🧠 MÉMOIRE IMMÉDIATE: Enregistrer le message utilisateur DÈS LE DÉBUT
-        addToMemory(String(senderId), 'user', args);
-        log.debug(`💾 Message utilisateur sauvegardé immédiatement: ${senderId}`);
-        
         // ✅ Détection des demandes de contact admin
         const contactIntention = detectContactAdminIntention(args);
         if (contactIntention.shouldContact) {
             log.info(`📞 Intention contact admin détectée pour ${senderId}: ${contactIntention.reason}`);
             const contactSuggestion = generateContactSuggestion(contactIntention.reason, contactIntention.extractedMessage);
             
-            // ✅ Seule la réponse assistant à ajouter (user déjà fait)
+            // ✅ UN SEUL APPEL groupé
+            addToMemory(String(senderId), 'user', args);
             addToMemory(String(senderId), 'assistant', contactSuggestion);
             return contactSuggestion;
         }
@@ -174,14 +171,16 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                 if (commandResult.success) {
                     // Gestion spéciale pour les images
                     if (typeof commandResult.result === 'object' && commandResult.result.type === 'image') {
-                        // ✅ Message user déjà en mémoire, pas besoin de le re-ajouter
+                        // ✅ UN SEUL addToMemory pour les images
+                        addToMemory(String(senderId), 'user', args);
                         return commandResult.result;
                     }
                     
                     // Réponse contextuelle naturelle
                     const contextualResponse = await generateContextualResponse(args, commandResult.result, intelligentCommand.command, ctx);
                     
-                    // ✅ Seule la réponse assistant à ajouter (user déjà fait)
+                    // ✅ UN SEUL APPEL groupé
+                    addToMemory(String(senderId), 'user', args);
                     addToMemory(String(senderId), 'assistant', contextualResponse);
                     return contextualResponse;
                 } else {
@@ -207,7 +206,8 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                     const naturalResponse = await generateNaturalResponse(args, searchResults, ctx);
                     
                     if (naturalResponse) {
-                        // ✅ Seule la réponse assistant à ajouter (user déjà fait)
+                        // ✅ UN SEUL APPEL groupé pour recherche
+                        addToMemory(String(senderId), 'user', args);
                         addToMemory(String(senderId), 'assistant', naturalResponse);
                         log.info(`🔍✅ Recherche terminée avec succès pour ${senderId}`);
                         return naturalResponse;
@@ -218,28 +218,17 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                 }
             } catch (searchError) {
                 log.error(`❌ Erreur recherche intelligente pour ${senderId}: ${searchError.message}`);
-                // ⚠️ IMPORTANT: Même en cas d'erreur, continuer pour ne pas perdre la conversation
-                log.info(`🔄 Fallback vers conversation normale après erreur de recherche`);
+                // Continue avec conversation normale en cas d'erreur
             }
         }
         
         // ✅ Conversation classique avec Gemini (Mistral en fallback)
-        // Le message user est DÉJÀ en mémoire, on ne fait que la réponse
-        return await handleConversationWithFallbackMemorySafe(senderId, args, ctx);
+        return await handleConversationWithFallback(senderId, args, ctx);
         
     } finally {
         // 🛡️ PROTECTION 5: Libérer la demande à la fin (TOUJOURS exécuté)
         activeRequests.delete(senderId);
         log.debug(`🔓 Demande libérée pour ${senderId}`);
-        
-        // 🧠 SÉCURITÉ MÉMOIRE: Vérifier que le message user est bien en mémoire
-        const currentContext = getMemoryContext(String(senderId));
-        const lastMessage = currentContext[currentContext.length - 2]; // Avant-dernier (le dernier sera la réponse)
-        
-        if (!lastMessage || lastMessage.role !== 'user' || lastMessage.content !== args) {
-            log.warning(`⚠️ Message utilisateur manquant en mémoire pour ${senderId}, ajout de sécurité`);
-            addToMemory(String(senderId), 'user', args);
-        }
     }
 };
 
@@ -573,8 +562,8 @@ RÉPONSE NATURELLE:`;
     }
 }
 
-// ✅ FONCTION MODIFIÉE: Conversation avec mémoire déjà sauvegardée
-async function handleConversationWithFallbackMemorySafe(senderId, args, ctx) {
+// ✅ FONCTION EXISTANTE MODIFIÉE: Gestion conversation avec Gemini et fallback Mistral (UN SEUL addToMemory)
+async function handleConversationWithFallback(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, log } = ctx;
     
     // Récupération du contexte (derniers 8 messages pour optimiser)
@@ -641,7 +630,8 @@ Utilisateur: ${args}`;
         const geminiResponse = await callGeminiWithRotation(systemPrompt);
         
         if (geminiResponse && geminiResponse.trim()) {
-            // ✅ SEULE LA RÉPONSE ASSISTANT (user déjà en mémoire)
+            // ✅ UN SEUL APPEL groupé à addToMemory
+            addToMemory(String(senderId), 'user', args);
             addToMemory(String(senderId), 'assistant', geminiResponse);
             log.info(`💎 Gemini réponse pour ${senderId}: ${args.substring(0, 30)}...`);
             return geminiResponse;
@@ -661,7 +651,8 @@ Utilisateur: ${args}`;
             const mistralResponse = await callMistralAPI(messages, 2000, 0.75);
             
             if (mistralResponse) {
-                // ✅ SEULE LA RÉPONSE ASSISTANT (user déjà en mémoire)
+                // ✅ UN SEUL APPEL groupé à addToMemory
+                addToMemory(String(senderId), 'user', args);
                 addToMemory(String(senderId), 'assistant', mistralResponse);
                 log.info(`🔄 Mistral fallback pour ${senderId}: ${args.substring(0, 30)}...`);
                 return mistralResponse;
@@ -673,7 +664,7 @@ Utilisateur: ${args}`;
             log.error(`❌ Erreur totale conversation ${senderId}: Gemini(${geminiError.message}) + Mistral(${mistralError.message})`);
             
             const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? 💫";
-            // ✅ SEULE LA RÉPONSE ASSISTANT (user déjà en mémoire)
+            // ✅ UN SEUL addToMemory pour les erreurs
             addToMemory(String(senderId), 'assistant', errorResponse);
             return errorResponse;
         }
