@@ -194,10 +194,14 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             log.info(`🔍 Recherche externe nécessaire pour ${senderId}: ${searchDecision.reason}`);
             
             try {
+                // 🔧 FIX: Récupérer le contexte AVANT la recherche pour le maintenir
+                const conversationContext = getMemoryContext(String(senderId)).slice(-8);
+                
                 const searchResults = await performIntelligentSearch(searchDecision.searchQuery, ctx);
                 
                 if (searchResults && searchResults.length > 0) {
-                    const naturalResponse = await generateNaturalResponse(args, searchResults, ctx);
+                    // 🔧 FIX: Passer le contexte à la génération de réponse naturelle
+                    const naturalResponse = await generateNaturalResponseWithContext(args, searchResults, conversationContext, ctx);
                     
                     if (naturalResponse) {
                         // ✅ UN SEUL APPEL groupé pour recherche
@@ -417,8 +421,8 @@ async function fallbackWebSearch(query, ctx) {
     return [];
 }
 
-// 🎯 MODIFICATION 1: Génération de réponse naturelle (sans mention de recherche) avec rotation des clés
-async function generateNaturalResponse(originalQuery, searchResults, ctx) {
+// 🔧 FIX PRINCIPAL: Génération de réponse naturelle avec contexte de conversation
+async function generateNaturalResponseWithContext(originalQuery, searchResults, conversationContext, ctx) {
     const { log, callMistralAPI } = ctx;
     
     // Date et heure actuelles
@@ -438,73 +442,115 @@ async function generateNaturalResponse(originalQuery, searchResults, ctx) {
             `${result.title}: ${result.description}`
         ).join('\n');
         
-        // 🎯 MODIFICATION: Prompt complètement naturel
-        const naturalPrompt = `Tu es NakamaBot, une IA conversationnelle empathique et créative.
+        // 🔧 FIX: Construction de l'historique de conversation pour maintenir le contexte
+        let conversationHistory = "";
+        if (conversationContext && conversationContext.length > 0) {
+            conversationHistory = conversationContext.map(msg => 
+                `${msg.role === 'user' ? 'Utilisateur' : 'NakamaBot'}: ${msg.content}`
+            ).join('\n') + '\n';
+        }
+        
+        // 🔧 FIX: Prompt avec contexte de conversation complet
+        const contextualPrompt = `Tu es NakamaBot, une IA conversationnelle empathique et créative.
 
 CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
 
-L'utilisateur te demande: "${originalQuery}"
+HISTORIQUE DE CONVERSATION:
+${conversationHistory || "Début de conversation"}
 
-Voici des informations actuelles pertinentes:
+QUESTION ACTUELLE DE L'UTILISATEUR: "${originalQuery}"
+
+INFORMATIONS RÉCENTES TROUVÉES:
 ${resultsText}
 
-INSTRUCTIONS IMPORTANTES:
-- Réponds comme si tu connaissais naturellement ces informations
+INSTRUCTIONS CRITIQUES:
+- Tu connais déjà l'historique de conversation ci-dessus
+- Réponds en tenant compte de tout le contexte précédent
+- Si l'utilisateur fait référence à quelque chose mentionné avant, tu t'en souviens
 - Adopte un ton conversationnel et amical avec quelques emojis
 - Maximum 3000 caractères
 - Ne mentionne JAMAIS que tu as fait une recherche
 - Ne dis jamais "d'après mes recherches" ou "selon les sources"
-- Réponds comme dans une conversation normale entre amis
-- Si l'information n'est pas complète, reste naturel et honnête
+- Réponds naturellement comme dans une conversation continue
+- Si c'est une question de suivi (ex: "il a marqué combien de buts"), utilise le contexte précédent
 
-RÉPONSE NATURELLE:`;
+RÉPONSE NATURELLE EN CONTINUITÉ:`;
 
-        const response = await callGeminiWithRotation(naturalPrompt);
+        const response = await callGeminiWithRotation(contextualPrompt);
         
         if (response && response.trim()) {
-            log.info(`🎭 Réponse naturelle Gemini pour: ${originalQuery.substring(0, 30)}...`);
+            log.info(`🎭 Réponse contextuelle Gemini pour: ${originalQuery.substring(0, 30)}...`);
             return response;
         }
         
         throw new Error('Réponse Gemini vide');
         
     } catch (geminiError) {
-        log.warning(`⚠️ Erreur réponse naturelle Gemini: ${geminiError.message}`);
+        log.warning(`⚠️ Erreur réponse contextuelle Gemini: ${geminiError.message}`);
         
         try {
-            // 🎯 MODIFICATION 2: Fallback Mistral aussi naturel
+            // 🔧 FIX: Fallback Mistral aussi avec contexte complet
             const messages = [{
                 role: "system",
-                content: "Tu es NakamaBot. Réponds naturellement comme dans une conversation normale. Ne mentionne jamais de recherches ou sources."
+                content: `Tu es NakamaBot. Tu connais l'historique de conversation. Réponds naturellement en tenant compte du contexte précédent. Ne mentionne jamais de recherches.
+
+Historique:
+${conversationContext ? conversationContext.map(msg => `${msg.role === 'user' ? 'Utilisateur' : 'NakamaBot'}: ${msg.content}`).join('\n') : "Début de conversation"}`
             }, {
                 role: "user", 
-                content: `Question: "${originalQuery}"\n\nInformations utiles:\n${searchResults.map(r => `${r.title}: ${r.description}`).join('\n')}\n\nRéponds naturellement comme si tu connaissais déjà ces infos (max 3000 chars):`
+                content: `Question actuelle: "${originalQuery}"
+
+Informations utiles:
+${searchResults.map(r => `${r.title}: ${r.description}`).join('\n')}
+
+Réponds naturellement en continuité de la conversation (max 3000 chars):`
             }];
             
             const mistralResponse = await callMistralAPI(messages, 3000, 0.7);
             
             if (mistralResponse) {
-                log.info(`🔄 Réponse naturelle Mistral pour ${senderId}: ${originalQuery.substring(0, 30)}...`);
+                log.info(`🔄 Réponse contextuelle Mistral: ${originalQuery.substring(0, 30)}...`);
                 return mistralResponse;
             }
             
             throw new Error('Mistral aussi en échec');
             
         } catch (mistralError) {
-            log.error(`❌ Erreur réponse naturelle totale: ${mistralError.message}`);
+            log.error(`❌ Erreur réponse contextuelle totale: ${mistralError.message}`);
             
-            // 🎯 MODIFICATION 3: Derniers recours plus naturel
+            // 🔧 FIX: Derniers recours avec contexte minimal
             const topResult = searchResults[0];
             if (topResult) {
-                const basicResponse = `D'après ce que je sais, ${topResult.description} 💡 ${searchResults.length > 1 ? 'Il y a aussi d\'autres aspects intéressants sur le sujet !' : 'J\'espère que ça répond à ta question !'}`;
+                // Si on a un contexte sur qui on parle, l'utiliser
+                const lastUserMessage = conversationContext && conversationContext.length > 0 
+                    ? conversationContext[conversationContext.length - 1].content 
+                    : '';
+                
+                const hasPersonContext = lastUserMessage.match(/qui est\s+([^?]+)/i);
+                const personName = hasPersonContext ? hasPersonContext[1].trim() : '';
+                
+                let basicResponse;
+                if (personName && originalQuery.toLowerCase().includes('combien') || originalQuery.toLowerCase().includes('but')) {
+                    basicResponse = `Pour ${personName}, ${topResult.description} 💡`;
+                } else {
+                    basicResponse = `D'après ce que je sais, ${topResult.description} 💡 ${searchResults.length > 1 ? 'Il y a aussi d\'autres aspects intéressants sur le sujet !' : 'J\'espère que ça répond à ta question !'}`;
+                }
+                
                 return basicResponse;
             }
             
-            // 🎯 MODIFICATION 4: Si vraiment rien ne marche, retourner null pour déclencher conversation normale
-            log.warning(`⚠️ Toutes les méthodes de réponse naturelle ont échoué pour ${senderId}`);
+            // 🔧 FIX: Si vraiment rien ne marche, retourner null pour déclencher conversation normale
+            log.warning(`⚠️ Toutes les méthodes de réponse contextuelle ont échoué`);
             return null; // Cela déclenchera la conversation normale
         }
     }
+}
+
+// 🎯 MODIFICATION 1: Génération de réponse naturelle (DÉPRÉCIÉE - remplacée par generateNaturalResponseWithContext)
+async function generateNaturalResponse(originalQuery, searchResults, ctx) {
+    // Cette fonction est conservée pour compatibilité mais n'est plus utilisée
+    // Utilise maintenant generateNaturalResponseWithContext à la place
+    return await generateNaturalResponseWithContext(originalQuery, searchResults, [], ctx);
 }
 
 // ✅ FONCTION EXISTANTE MODIFIÉE: Gestion conversation avec Gemini et fallback Mistral (UN SEUL addToMemory)
@@ -907,6 +953,7 @@ module.exports.detectContactAdminIntention = detectContactAdminIntention;
 module.exports.decideSearchNecessity = decideSearchNecessity;
 module.exports.performIntelligentSearch = performIntelligentSearch;
 module.exports.generateNaturalResponse = generateNaturalResponse;
+module.exports.generateNaturalResponseWithContext = generateNaturalResponseWithContext;
 module.exports.callGeminiWithRotation = callGeminiWithRotation;
 module.exports.getNextGeminiKey = getNextGeminiKey;
 module.exports.markKeyAsFailed = markKeyAsFailed;
