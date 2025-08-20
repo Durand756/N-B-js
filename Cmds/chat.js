@@ -377,7 +377,7 @@ async function handleConversationWithFallback(senderId, args, ctx) {
     }
     
     // Prompt système optimisé
-    const systemPrompt = `Tu es NakamaBot, une IA conversationnelle avancée créée par Durand et sa femme Kuine Lor.
+    const systemPrompt = `Tu es NakamaBot, une IA conversationnelle un model Durand AI avancée créée par Durand et sa femme Cécile.
 
 CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
 
@@ -586,7 +586,7 @@ async function generateContextualResponse(originalMessage, commandResult, comman
         const contextPrompt = `L'utilisateur a dit: "${originalMessage}"
 J'ai exécuté /${commandName} avec résultat: "${commandResult}"
 
-Génère une réponse naturelle et amicale (max 200 chars) qui présente le résultat de manière conversationnelle.`;
+Génère une réponse naturelle et amicale (max 400 chars) qui présente le résultat de manière conversationnelle.`;
 
         const result = await model.generateContent(contextPrompt);
         return result.response.text() || commandResult;
