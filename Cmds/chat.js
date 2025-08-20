@@ -36,7 +36,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     // 🆕 DÉTECTION INTELLIGENTE DES COMMANDES (Nouveau Système)
     const intelligentCommand = await detectIntelligentCommands(args, ctx);
     if (intelligentCommand.shouldExecute) {
-        log.info(`🧠 Détection IA intelligente: /${intelligentCommand.command} (${intelligentCommand.confidence}) pour ${senderId}`);
+        log.info(`🎯 Commande intelligente détectée: ${intelligentCommand.command} (${intelligentCommand.confidence}) via ${intelligentCommand.method} pour ${senderId}`);
         
         try {
             const commandResult = await executeCommandFromChat(senderId, intelligentCommand.command, intelligentCommand.args, ctx);
@@ -54,11 +54,11 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                 addToMemory(String(senderId), 'assistant', contextualResponse);
                 return contextualResponse;
             } else {
-                log.warning(`⚠️ Échec exécution commande /${intelligentCommand.command}: ${commandResult.error}`);
+                log.warning(`⚠️ Échec exécution commande ${intelligentCommand.command}: ${commandResult.error}`);
                 // Continue avec conversation normale en cas d'échec
             }
         } catch (error) {
-            log.error(`❌ Erreur exécution commande IA: ${error.message}`);
+            log.error(`❌ Erreur exécution commande intelligente: ${error.message}`);
             // Continue avec conversation normale en cas d'erreur
         }
     } 
@@ -485,50 +485,127 @@ Utilisateur: ${args}`;
     }
 }
 
-// 🆕 LISTE DES COMMANDES VALIDES (Simple et efficace)
-const VALID_COMMANDS = [
-    'help',      // Aide et guide complet
-    'image',     // Création d'images IA
-    'vision',    // Analyse d'images
-    'anime',     // Style anime/manga
-    'music',     // Recherche musicale YouTube
-    'clan',      // Système de clans et batailles
-    'rank',      // Niveau et progression
-    'contact',   // Contact administrateurs
-    'weather'    // Informations météo
-];
+// 🆕 SYSTÈME DE DÉTECTION INTELLIGENTE DES COMMANDES
+const VALID_COMMANDS = {
+    'help': {
+        aliases: ['aide', 'commandes', 'commands', 'fonctions', 'que peux tu faire'],
+        patterns: [
+            /\b(aide|help|commande|fonction|que.*peux.*tu.*faire|comment.*utiliser)\b/i,
+            /\b(guide|manuel|instruction|tutorial)\b/i,
+            /\b(toutes.*les.*commandes|liste.*commandes)\b/i
+        ],
+        description: 'Afficher l\'aide et toutes les commandes'
+    },
+    'image': {
+        aliases: ['img', 'photo', 'picture', 'dessine', 'crée', 'génère'],
+        patterns: [
+            /\b(cr[ée]|g[ée]n[ée]r|fai|dessine|imagine).*?(image|photo|picture|dessin)\b/i,
+            /\b(image|photo|picture).*?(de|d'|du|des)\b/i,
+            /\b(peux.*tu.*dessiner|peux.*tu.*créer.*image)\b/i
+        ],
+        description: 'Créer des images uniques avec l\'IA'
+    },
+    'vision': {
+        aliases: ['voir', 'analyser', 'regarder', 'analyze', 'scan'],
+        patterns: [
+            /\b(analys|regarde|voir|scan|examine|décri).*?(image|photo|picture)\b/i,
+            /\b(que.*vois.*tu|qu'est.*ce.*que.*c'est|montre.*image)\b/i,
+            /\b(peux.*tu.*voir.*image|reconnaissance.*image)\b/i
+        ],
+        description: 'Analyser des images avec précision'
+    },
+    'anime': {
+        aliases: ['manga', 'animé', 'style', 'transformer'],
+        patterns: [
+            /\b(anime|manga|animé).*?(style|transform|conversion)\b/i,
+            /\b(transform.*anime|style.*manga|effet.*anime)\b/i,
+            /\b(peux.*tu.*transformer.*anime)\b/i
+        ],
+        description: 'Transformer images en style anime'
+    },
+    'music': {
+        aliases: ['musique', 'chanson', 'son', 'audio', 'youtube'],
+        patterns: [
+            /\b(musique|chanson|son|audio|youtube|joue|écoute)\b/i,
+            /\b(trouve.*musique|cherche.*chanson|mets.*musique)\b/i,
+            /\b(peux.*tu.*jouer|peux.*tu.*mettre)\b/i
+        ],
+        description: 'Trouver musique sur YouTube'
+    },
+    'clan': {
+        aliases: ['bataille', 'guerre', 'empire', 'combat', 'guilde'],
+        patterns: [
+            /\b(clan|bataille|guerre|empire|combat|guilde|faction)\b/i,
+            /\b(rejoindre.*clan|créer.*clan|bataille.*clan)\b/i,
+            /\b(système.*clan|communauté|groupe)\b/i
+        ],
+        description: 'Système de clans et batailles'
+    },
+    'rank': {
+        aliases: ['niveau', 'level', 'xp', 'expérience', 'classement'],
+        patterns: [
+            /\b(niveau|level|rang|xp|expérience|classement|stats)\b/i,
+            /\b(mon.*niveau|mes.*stats|progression)\b/i,
+            /\b(leaderboard|top.*joueurs)\b/i
+        ],
+        description: 'Voir niveau et progression'
+    },
+    'contact': {
+        aliases: ['admin', 'administrateur', 'support', 'problème'],
+        patterns: [
+            /\b(contact|admin|administrateur|support|problème.*technique)\b/i,
+            /\b(contacter.*admin|écrire.*admin|parler.*admin)\b/i,
+            /\b(signaler|reporter|bug.*grave)\b/i
+        ],
+        description: 'Contacter les administrateurs (2/jour max)'
+    },
+    'weather': {
+        aliases: ['météo', 'temps', 'température', 'climat'],
+        patterns: [
+            /\b(météo|temps|température|climat|prévision)\b/i,
+            /\b(quel.*temps|il.*fait.*beau|va.*pleuvoir)\b/i,
+            /\b(température.*aujourd|prévisions.*météo)\b/i
+        ],
+        description: 'Informations météo actuelles'
+    }
+};
 
-// 🧠 DÉTECTION IA PURE (Sans mots-clés perturbants)
+// 🆕 DÉTECTION IA + MOTS-CLÉS DES COMMANDES
 async function detectIntelligentCommands(message, ctx) {
     const { log } = ctx;
     
+    // Étape 1: Détection rapide par mots-clés
+    const keywordDetection = detectCommandByKeywords(message);
+    if (keywordDetection.confidence > 0.8) {
+        log.info(`⚡ Détection rapide commande: ${keywordDetection.command} (${keywordDetection.confidence})`);
+        return keywordDetection;
+    }
+    
+    // Étape 2: Analyse IA si détection incertaine
     try {
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         
-        const commandsList = VALID_COMMANDS.map(cmd => `/${cmd}`).join(', ');
+        const commandsList = Object.keys(VALID_COMMANDS).map(cmd => 
+            `${cmd}: ${VALID_COMMANDS[cmd].description}`
+        ).join('\n');
         
         const detectionPrompt = `Tu es un système de détection de commandes intelligent pour NakamaBot.
 
-COMMANDES DISPONIBLES: ${commandsList}
+COMMANDES DISPONIBLES:
+${commandsList}
 
 MESSAGE UTILISATEUR: "${message}"
 
-ANALYSE CE MESSAGE et détermine s'il correspond à l'intention d'utiliser une fonctionnalité spécifique du bot.
+Analyse ce message et détermine s'il correspond à une commande spécifique.
 
-EXEMPLES D'INTENTIONS CLAIRES:
-✅ "aide-moi" ou "que peux-tu faire" → help
-✅ "dessine-moi..." ou "crée une image" → image  
-✅ "regarde cette image" ou "analyse ça" → vision
-✅ "style anime" ou "transforme en manga" → anime
-✅ "trouve cette musique" ou "joue..." → music
-✅ "rejoindre clan" ou "bataille" → clan
-✅ "mon niveau" ou "mes stats" → rank
-✅ "contacter admin" ou "problème technique" → contact
-✅ "quel temps" ou "météo" → weather
+CRITÈRES:
+✅ L'utilisateur veut clairement utiliser une fonctionnalité
+✅ Le message correspond à l'intention d'une commande
+✅ Même sans syntaxe /commande, l'intention est claire
 
-❌ IGNORE les conversations générales qui mentionnent juste ces mots
+❌ Conversations générales qui mentionnent juste le mot
 ❌ Questions théoriques sur les commandes
-❌ Contexte purement conversationnel
+❌ Contexte ne suggère pas l'utilisation
 
 Réponds UNIQUEMENT avec ce JSON:
 {
@@ -546,25 +623,95 @@ Réponds UNIQUEMENT avec ce JSON:
         if (jsonMatch) {
             const aiDetection = JSON.parse(jsonMatch[0]);
             
-            // Validation de la commande dans la liste
-            if (aiDetection.isCommand && VALID_COMMANDS.includes(aiDetection.command)) {
-                log.info(`🧠 Détection IA pure: /${aiDetection.command} (${aiDetection.confidence}) - ${aiDetection.reason}`);
+            // Validation de la commande
+            if (aiDetection.isCommand && VALID_COMMANDS[aiDetection.command]) {
+                log.info(`🤖 Détection IA commande: ${aiDetection.command} (${aiDetection.confidence}) - ${aiDetection.reason}`);
                 return {
-                    shouldExecute: aiDetection.confidence > 0.7, // Seuil plus élevé pour éviter faux positifs
+                    shouldExecute: aiDetection.confidence > 0.6,
                     command: aiDetection.command,
                     args: aiDetection.extractedArgs,
                     confidence: aiDetection.confidence,
-                    method: 'ai_pure'
+                    method: 'ai'
                 };
             }
         }
         
-        return { shouldExecute: false };
-        
     } catch (error) {
         log.warning(`⚠️ Erreur détection IA commandes: ${error.message}`);
-        return { shouldExecute: false };
     }
+    
+    // Étape 3: Retourner détection par mots-clés même si faible
+    if (keywordDetection.command) {
+        return keywordDetection;
+    }
+    
+    return { shouldExecute: false };
+}
+
+// 🆕 DÉTECTION PAR MOTS-CLÉS (Fallback rapide)
+function detectCommandByKeywords(message) {
+    const lowerMessage = message.toLowerCase();
+    let bestMatch = { command: null, confidence: 0, args: message };
+    
+    // Parcourir toutes les commandes
+    for (const [commandName, commandData] of Object.entries(VALID_COMMANDS)) {
+        let commandScore = 0;
+        
+        // Vérifier les patterns regex
+        for (const pattern of commandData.patterns) {
+            if (pattern.test(message)) {
+                commandScore += 0.4;
+                
+                // Extraction d'arguments spécifiques
+                if (commandName === 'image') {
+                    const match = message.match(/(?:image|photo|dessin).*?(?:de|d'|du)\s+(.+)/i) ||
+                                 message.match(/(?:cr[ée]|dessine|génère)\s+(.+)/i);
+                    if (match) {
+                        bestMatch.args = match[1].trim();
+                        commandScore += 0.2;
+                    }
+                } else if (commandName === 'music') {
+                    const match = message.match(/(?:joue|musique|chanson)\s+(.+)/i);
+                    if (match) {
+                        bestMatch.args = match[1].trim();
+                        commandScore += 0.2;
+                    }
+                }
+                break;
+            }
+        }
+        
+        // Vérifier les aliases
+        for (const alias of commandData.aliases) {
+            if (lowerMessage.includes(alias.toLowerCase())) {
+                commandScore += 0.3;
+                break;
+            }
+        }
+        
+        // Bonus pour syntaxe explicite /commande
+        if (lowerMessage.includes(`/${commandName}`) || lowerMessage.includes(`!${commandName}`)) {
+            commandScore += 0.5;
+        }
+        
+        // Mise à jour du meilleur match
+        if (commandScore > bestMatch.confidence) {
+            bestMatch = {
+                command: commandName,
+                confidence: Math.min(commandScore, 1.0),
+                args: bestMatch.args,
+                method: 'keywords'
+            };
+        }
+    }
+    
+    return {
+        shouldExecute: bestMatch.confidence > 0.5,
+        command: bestMatch.command,
+        args: bestMatch.args,
+        confidence: bestMatch.confidence,
+        method: bestMatch.method
+    };
 }
 
 // ✅ FONCTIONS EXISTANTES (inchangées)
@@ -619,8 +766,40 @@ function generateContactSuggestion(reason, extractedMessage) {
 }
 
 async function detectCommandIntentions(message, ctx) {
-    // ⚠️ FONCTION DÉPRÉCIÉE - Remplacée par detectIntelligentCommands
-    // Maintenue pour compatibilité avec l'ancien système
+    const quickPatterns = [
+        { patterns: [/(?:cr[ée]|g[ée]n[ée]r|fai|dessine).*?(?:image|photo)/i], command: 'image' },
+        { patterns: [/(?:anime|manga).*?(?:style|transform)/i], command: 'anime' },
+        { patterns: [/(?:analys|regarde|voir).*?(?:image|photo)/i], command: 'vision' },
+        { patterns: [/(?:musique|chanson)/i], command: 'music' },
+        { patterns: [/(?:clan|bataille|empire|guerre)/i], command: 'clan' },
+        { patterns: [/(?:niveau|rang|level|xp)/i], command: 'rank' },
+        { patterns: [/(?:aide|help|commande)/i], command: 'help' }
+    ];
+    
+    for (const pattern of quickPatterns) {
+        for (const regex of pattern.patterns) {
+            if (regex.test(message)) {
+                let extractedArgs = message;
+                
+                if (pattern.command === 'image') {
+                    const match = message.match(/(?:image|photo).*?(?:de|d')\s+(.+)/i) ||
+                                 message.match(/(?:cr[ée]|dessine)\s+(.+)/i);
+                    extractedArgs = match ? match[1].trim() : message;
+                } else if (pattern.command === 'music') {
+                    const match = message.match(/(?:joue|musique|chanson)\s+(.+)/i);
+                    extractedArgs = match ? match[1].trim() : message;
+                }
+                
+                return {
+                    shouldExecute: true,
+                    command: pattern.command,
+                    args: extractedArgs,
+                    confidence: 'high'
+                };
+            }
+        }
+    }
+    
     return { shouldExecute: false };
 }
 
@@ -689,7 +868,9 @@ Génère une réponse naturelle et amicale (max 400 chars) qui présente le rés
 
 // ✅ Exports pour autres commandes
 module.exports.detectIntelligentCommands = detectIntelligentCommands;
+module.exports.detectCommandByKeywords = detectCommandByKeywords;
 module.exports.VALID_COMMANDS = VALID_COMMANDS;
+module.exports.detectCommandIntentions = detectCommandIntentions;
 module.exports.executeCommandFromChat = executeCommandFromChat;
 module.exports.detectContactAdminIntention = detectContactAdminIntention;
 module.exports.decideSearchNecessity = decideSearchNecessity;
