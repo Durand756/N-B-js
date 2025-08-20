@@ -33,27 +33,33 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         return contactSuggestion;
     }
     
-    // ✅ Détection intelligente des intentions de commandes
-    const commandIntentions = await detectCommandIntentions(args, ctx);
-    if (commandIntentions.shouldExecute) {
-        log.info(`🤖 Auto-exécution détectée: ${commandIntentions.command} pour ${senderId}`);
+    // 🆕 DÉTECTION INTELLIGENTE DES COMMANDES (Nouveau Système)
+    const intelligentCommand = await detectIntelligentCommands(args, ctx);
+    if (intelligentCommand.shouldExecute) {
+        log.info(`🧠 Détection IA intelligente: /${intelligentCommand.command} (${intelligentCommand.confidence}) pour ${senderId}`);
         
         try {
-            const commandResult = await executeCommandFromChat(senderId, commandIntentions.command, commandIntentions.args, ctx);
+            const commandResult = await executeCommandFromChat(senderId, intelligentCommand.command, intelligentCommand.args, ctx);
             
             if (commandResult.success) {
+                // Gestion spéciale pour les images
                 if (typeof commandResult.result === 'object' && commandResult.result.type === 'image') {
+                    addToMemory(String(senderId), 'user', args);
                     return commandResult.result;
                 }
                 
-                const contextualResponse = await generateContextualResponse(args, commandResult.result, commandIntentions.command, ctx);
+                // Réponse contextuelle naturelle
+                const contextualResponse = await generateContextualResponse(args, commandResult.result, intelligentCommand.command, ctx);
+                addToMemory(String(senderId), 'user', args);
                 addToMemory(String(senderId), 'assistant', contextualResponse);
                 return contextualResponse;
             } else {
-                log.warning(`⚠️ Échec auto-exécution ${commandIntentions.command}: ${commandResult.error}`);
+                log.warning(`⚠️ Échec exécution commande /${intelligentCommand.command}: ${commandResult.error}`);
+                // Continue avec conversation normale en cas d'échec
             }
         } catch (error) {
-            log.error(`❌ Erreur auto-exécution: ${error.message}`);
+            log.error(`❌ Erreur exécution commande IA: ${error.message}`);
+            // Continue avec conversation normale en cas d'erreur
         }
     } 
     
@@ -411,14 +417,15 @@ INTELLIGENCE & PERSONNALITÉ:
 - Adaptable selon l'utilisateur et le contexte
 
 CAPACITÉS PRINCIPALES:
-🎨 /image [description] - Créer des images uniques
-👁️ /vision - Analyser des images avec précision
-🌸 /anime - Transformer images en style anime
-🎵 /music [titre] - Trouver musique sur YouTube
-🛡️ /clan - Système de clans et batailles
-📞 /contact [message] - Contacter les admins (2/jour max)
+🎨 Création d'images intelligente (dis "dessine-moi..." ou "crée une image de...")
+👁️ Analyse d'images avancée (dis "regarde cette image" ou "que vois-tu ?")
+🌸 Transformation anime/manga (dis "transforme en anime" ou "style manga")
+🎵 Recherche musicale YouTube (dis "joue..." ou "trouve la musique...")
+🛡️ Système de clans et batailles (dis "clan" ou "bataille")
+📊 Progression et niveau (dis "mon niveau" ou "mes stats")
+📞 Contact admin (dis "contacter admin" ou utilise /contact)
 🔍 Recherche intelligente automatique pour infos récentes
-🆘 /help - Toutes les commandes disponibles
+🆘 Guide complet (dis "aide" ou "que peux-tu faire ?")
 
 DIRECTIVES:
 - Parle en fonction de la langue utilisée par l'utilisateur et du contexte garde en memoire que nous somme le ${dateTime}
@@ -478,6 +485,88 @@ Utilisateur: ${args}`;
     }
 }
 
+// 🆕 LISTE DES COMMANDES VALIDES (Simple et efficace)
+const VALID_COMMANDS = [
+    'help',      // Aide et guide complet
+    'image',     // Création d'images IA
+    'vision',    // Analyse d'images
+    'anime',     // Style anime/manga
+    'music',     // Recherche musicale YouTube
+    'clan',      // Système de clans et batailles
+    'rank',      // Niveau et progression
+    'contact',   // Contact administrateurs
+    'weather'    // Informations météo
+];
+
+// 🧠 DÉTECTION IA PURE (Sans mots-clés perturbants)
+async function detectIntelligentCommands(message, ctx) {
+    const { log } = ctx;
+    
+    try {
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        
+        const commandsList = VALID_COMMANDS.map(cmd => `/${cmd}`).join(', ');
+        
+        const detectionPrompt = `Tu es un système de détection de commandes intelligent pour NakamaBot.
+
+COMMANDES DISPONIBLES: ${commandsList}
+
+MESSAGE UTILISATEUR: "${message}"
+
+ANALYSE CE MESSAGE et détermine s'il correspond à l'intention d'utiliser une fonctionnalité spécifique du bot.
+
+EXEMPLES D'INTENTIONS CLAIRES:
+✅ "aide-moi" ou "que peux-tu faire" → help
+✅ "dessine-moi..." ou "crée une image" → image  
+✅ "regarde cette image" ou "analyse ça" → vision
+✅ "style anime" ou "transforme en manga" → anime
+✅ "trouve cette musique" ou "joue..." → music
+✅ "rejoindre clan" ou "bataille" → clan
+✅ "mon niveau" ou "mes stats" → rank
+✅ "contacter admin" ou "problème technique" → contact
+✅ "quel temps" ou "météo" → weather
+
+❌ IGNORE les conversations générales qui mentionnent juste ces mots
+❌ Questions théoriques sur les commandes
+❌ Contexte purement conversationnel
+
+Réponds UNIQUEMENT avec ce JSON:
+{
+  "isCommand": true/false,
+  "command": "nom_commande_ou_null",
+  "confidence": 0.0-1.0,
+  "extractedArgs": "arguments_extraits_ou_message_complet",
+  "reason": "explication_courte"
+}`;
+
+        const result = await model.generateContent(detectionPrompt);
+        const response = result.response.text();
+        
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            const aiDetection = JSON.parse(jsonMatch[0]);
+            
+            // Validation de la commande dans la liste
+            if (aiDetection.isCommand && VALID_COMMANDS.includes(aiDetection.command)) {
+                log.info(`🧠 Détection IA pure: /${aiDetection.command} (${aiDetection.confidence}) - ${aiDetection.reason}`);
+                return {
+                    shouldExecute: aiDetection.confidence > 0.7, // Seuil plus élevé pour éviter faux positifs
+                    command: aiDetection.command,
+                    args: aiDetection.extractedArgs,
+                    confidence: aiDetection.confidence,
+                    method: 'ai_pure'
+                };
+            }
+        }
+        
+        return { shouldExecute: false };
+        
+    } catch (error) {
+        log.warning(`⚠️ Erreur détection IA commandes: ${error.message}`);
+        return { shouldExecute: false };
+    }
+}
+
 // ✅ FONCTIONS EXISTANTES (inchangées)
 
 function detectContactAdminIntention(message) {
@@ -530,40 +619,8 @@ function generateContactSuggestion(reason, extractedMessage) {
 }
 
 async function detectCommandIntentions(message, ctx) {
-    const quickPatterns = [
-        { patterns: [/(?:cr[ée]|g[ée]n[ée]r|fai|dessine).*?(?:image|photo)/i], command: 'image' },
-        { patterns: [/(?:anime|manga).*?(?:style|transform)/i], command: 'anime' },
-        { patterns: [/(?:analys|regarde|voir).*?(?:image|photo)/i], command: 'vision' },
-        { patterns: [/(?:musique|chanson)/i], command: 'music' },
-        { patterns: [/(?:clan|bataille|empire|guerre)/i], command: 'clan' },
-        { patterns: [/(?:niveau|rang|level|xp)/i], command: 'rank' },
-        { patterns: [/(?:aide|help|commande)/i], command: 'help' }
-    ];
-    
-    for (const pattern of quickPatterns) {
-        for (const regex of pattern.patterns) {
-            if (regex.test(message)) {
-                let extractedArgs = message;
-                
-                if (pattern.command === 'image') {
-                    const match = message.match(/(?:image|photo).*?(?:de|d')\s+(.+)/i) ||
-                                 message.match(/(?:cr[ée]|dessine)\s+(.+)/i);
-                    extractedArgs = match ? match[1].trim() : message;
-                } else if (pattern.command === 'music') {
-                    const match = message.match(/(?:joue|musique|chanson)\s+(.+)/i);
-                    extractedArgs = match ? match[1].trim() : message;
-                }
-                
-                return {
-                    shouldExecute: true,
-                    command: pattern.command,
-                    args: extractedArgs,
-                    confidence: 'high'
-                };
-            }
-        }
-    }
-    
+    // ⚠️ FONCTION DÉPRÉCIÉE - Remplacée par detectIntelligentCommands
+    // Maintenue pour compatibilité avec l'ancien système
     return { shouldExecute: false };
 }
 
@@ -631,7 +688,8 @@ Génère une réponse naturelle et amicale (max 400 chars) qui présente le rés
 }
 
 // ✅ Exports pour autres commandes
-module.exports.detectCommandIntentions = detectCommandIntentions;
+module.exports.detectIntelligentCommands = detectIntelligentCommands;
+module.exports.VALID_COMMANDS = VALID_COMMANDS;
 module.exports.executeCommandFromChat = executeCommandFromChat;
 module.exports.detectContactAdminIntention = detectContactAdminIntention;
 module.exports.decideSearchNecessity = decideSearchNecessity;
