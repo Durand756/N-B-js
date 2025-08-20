@@ -27,6 +27,7 @@ const ADMIN_IDS = new Set(
 const userMemory = new Map();
 const userList = new Set();
 const userLastImage = new Map();
+const userNames = new Map(); // Stockage des noms d'utilisateurs
 const clanData = new Map(); // Stockage des données spécifiques aux commandes
 
 // ✅ NOUVEAU: Référence vers la commande rank pour le système d'expérience
