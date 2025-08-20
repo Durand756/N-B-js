@@ -61,7 +61,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     const searchDecision = await decideSearchNecessity(args, senderId, ctx);
     
     if (searchDecision.needsExternalSearch) {
-        log.info(`🔍 Recherche externe nécessaire pour ${senderId}: ${searchDecision.reason}`);
+        log.info(`🔍 Recherche externe nécessaire pour 2025-2026 ${senderId}: ${searchDecision.reason}`);
         
         try {
             const searchResults = await performIntelligentSearch(searchDecision.searchQuery, ctx);
@@ -95,7 +95,7 @@ Analyse ce message utilisateur et décide s'il nécessite une recherche web exte
 
 CRITÈRES POUR RECHERCHE EXTERNE:
 ✅ OUI si:
-- Informations récentes (actualités, événements 2024-2025)
+- Informations récentes (actualités, événements 2025-2026)
 - Données factuelles spécifiques (prix actuels, statistiques, dates précises)
 - Informations locales/géographiques spécifiques
 - Recherche de produits/services/entreprises précis
