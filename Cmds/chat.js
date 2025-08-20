@@ -1,6 +1,6 @@
 /**
  * NakamaBot - Commande /chat avec recherche intelligente intégrée et rotation des clés Gemini
- * VERSION CORRIGÉE: Protection anti-doublons et gestion des appels concurrents
+ * VERSION CORRIGEE: Protection anti-doublons et gestion des appels concurrents
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
@@ -511,13 +511,13 @@ async function callGeminiWithRotation(prompt, maxRetries = Math.min(GEMINI_API_K
 module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log } = ctx;
     
-    // 🆕 PROTECTION 1: Vérifier si une requête est déjà en cours pour cet utilisateur
+        // 🆕 PROTECTION 1: Vérifier si une requête est déjà en cours pour cet utilisateur
     if (isRequestActive(senderId)) {
         log.warning(`⚠️ Requête déjà en cours pour ${senderId}, ignorée: ${args}`);
         return null; // Pas de réponse pour éviter le doublon
     }
     
-    // 🆕 PROTECTION 2: Marquer cette requête comme active
+        // 🆕 PROTECTION 2: Marquer cette requête comme active
     if (!markRequestActive(senderId, args)) {
         log.warning(`⚠️ Impossible de marquer la requête active pour ${senderId}`);
         return null;
@@ -539,7 +539,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             return contactSuggestion;
         }
         
-        // 🆕 DÉTECTION INTELLIGENTE DES COMMANDES (Amélioré avec protection)
+            // 🆕 DÉTECTION INTELLIGENTE DES COMMANDES (Amélioré avec protection)
         const intelligentCommand = await detectIntelligentCommands(args, ctx);
         if (intelligentCommand.shouldExecute) {
             log.info(`🧠 Détection IA intelligente: /${intelligentCommand.command} (${intelligentCommand.confidence}) pour ${senderId}`);
@@ -566,7 +566,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             }
         } 
         
-        // 🆕 NOUVELLE FONCTIONNALITÉ: Décision intelligente pour recherche externe
+            // 🆕 NOUVELLE FONCTIONNALITÉ: Décision intelligente pour recherche externe
         const searchDecision = await decideSearchNecessity(args, senderId, ctx);
         
         if (searchDecision.needsExternalSearch) {
