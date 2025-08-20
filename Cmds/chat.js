@@ -67,15 +67,17 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             const searchResults = await performIntelligentSearch(searchDecision.searchQuery, ctx);
             
             if (searchResults && searchResults.length > 0) {
-                const synthesizedResponse = await synthesizeSearchResults(args, searchResults, ctx);
+                const naturalResponse = await generateNaturalResponse(args, searchResults, ctx);
                 addToMemory(String(senderId), 'user', args);
-                addToMemory(String(senderId), 'assistant', synthesizedResponse);
-                return synthesizedResponse;
+                addToMemory(String(senderId), 'assistant', naturalResponse);
+                return naturalResponse;
             } else {
                 log.warning(`⚠️ Aucun résultat de recherche pour: ${searchDecision.searchQuery}`);
+                // Continue avec conversation normale si pas de résultats
             }
         } catch (searchError) {
             log.error(`❌ Erreur recherche intelligente: ${searchError.message}`);
+            // Continue avec conversation normale en cas d'erreur
         }
     }
     
@@ -264,7 +266,7 @@ async function fallbackWebSearch(query, ctx) {
         const result = await webSearch(query);
         if (result) {
             return [{
-                title: 'Résultat de recherche',
+                title: 'Information récente',
                 link: 'N/A',
                 description: result,
                 source: 'internal'
@@ -277,73 +279,94 @@ async function fallbackWebSearch(query, ctx) {
     return [];
 }
 
-// 🆕 SYNTHÈSE IA: Traiter les résultats de recherche avec Gemini
-async function synthesizeSearchResults(originalQuery, searchResults, ctx) {
+// 🎯 MODIFICATION 1: Génération de réponse naturelle (sans mention de recherche)
+async function generateNaturalResponse(originalQuery, searchResults, ctx) {
     const { log, callMistralAPI } = ctx;
+    
+    // Date et heure actuelles
+    const now = new Date();
+    const dateTime = now.toLocaleString('fr-FR', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'Europe/Paris'
+    });
     
     try {
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         
         const resultsText = searchResults.map((result, index) => 
-            `${index + 1}. **${result.title}**\n   ${result.description}\n   Source: ${result.link}`
-        ).join('\n\n');
+            `${result.title}: ${result.description}`
+        ).join('\n');
         
-        const synthesisPrompt = `Tu es NakamaBot, une IA conversationnelle empathique et créative.
+        // 🎯 MODIFICATION: Prompt complètement naturel
+        const naturalPrompt = `Tu es NakamaBot, une IA conversationnelle empathique et créative.
 
-QUESTION UTILISATEUR: "${originalQuery}"
+CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
 
-RÉSULTATS DE RECHERCHE Nous sommes le ${dateTime}:
+L'utilisateur te demande: "${originalQuery}"
+
+Voici des informations actuelles pertinentes:
 ${resultsText}
 
-INSTRUCTIONS:
-- Synthétise ces informations de manière naturelle et conversationnelle
-- Réponds directement à la question de l'utilisateur
-- Utilise un ton amical avec quelques emojis
+INSTRUCTIONS IMPORTANTES:
+- Réponds comme si tu connaissais naturellement ces informations
+- Adopte un ton conversationnel et amical avec quelques emojis
 - Maximum 3000 caractères
-- Cite les sources les plus pertinentes
-- Si les résultats ne répondent pas à la question, dis-le honnêtement
+- Ne mentionne JAMAIS que tu as fait une recherche
+- Ne dis jamais "d'après mes recherches" ou "selon les sources"
+- Réponds comme dans une conversation normale entre amis
+- Si l'information n'est pas complète, reste naturel et honnête
 
-RÉPONSE:`;
+RÉPONSE NATURELLE:`;
 
-        const result = await model.generateContent(synthesisPrompt);
+        const result = await model.generateContent(naturalPrompt);
         const response = result.response.text();
         
         if (response && response.trim()) {
-            log.info(`🔍 Synthèse Gemini réussie pour: ${originalQuery.substring(0, 30)}...`);
+            log.info(`🎭 Réponse naturelle Gemini pour: ${originalQuery.substring(0, 30)}...`);
             return response;
         }
         
         throw new Error('Réponse Gemini vide');
         
     } catch (geminiError) {
-        log.warning(`⚠️ Erreur synthèse Gemini: ${geminiError.message}`);
+        log.warning(`⚠️ Erreur réponse naturelle Gemini: ${geminiError.message}`);
         
         try {
-            // Fallback Mistral
+            // 🎯 MODIFICATION 2: Fallback Mistral aussi naturel
             const messages = [{
                 role: "system",
-                content: "Tu es NakamaBot. Synthétise les résultats de recherche de manière naturelle et conversationnelle."
+                content: "Tu es NakamaBot. Réponds naturellement comme dans une conversation normale. Ne mentionne jamais de recherches ou sources."
             }, {
                 role: "user", 
-                content: `Question: "${originalQuery}"\n\nRésultats:\n${searchResults.map(r => `- ${r.title}: ${r.description}`).join('\n')}\n\nRéponds naturellement (max 3000 chars):`
+                content: `Question: "${originalQuery}"\n\nInformations utiles:\n${searchResults.map(r => `${r.title}: ${r.description}`).join('\n')}\n\nRéponds naturellement comme si tu connaissais déjà ces infos (max 3000 chars):`
             }];
             
             const mistralResponse = await callMistralAPI(messages, 3000, 0.7);
             
             if (mistralResponse) {
-                log.info(`🔄 Synthèse Mistral fallback pour: ${originalQuery.substring(0, 30)}...`);
+                log.info(`🔄 Réponse naturelle Mistral pour: ${originalQuery.substring(0, 30)}...`);
                 return mistralResponse;
             }
             
             throw new Error('Mistral aussi en échec');
             
         } catch (mistralError) {
-            log.error(`❌ Erreur synthèse totale: ${mistralError.message}`);
+            log.error(`❌ Erreur réponse naturelle totale: ${mistralError.message}`);
             
-            // Derniers recours: réponse basique
-            const basicSynthesis = `🔍 **Résultats de recherche pour:** "${originalQuery}"\n\n${searchResults.slice(0, 3).map((result, i) => `${i + 1}. **${result.title}**\n${result.description}\n🔗 ${result.link}`).join('\n\n')}\n\n💡 J'ai trouvé ces informations qui pourraient t'intéresser !`;
+            // 🎯 MODIFICATION 3: Derniers recours plus naturel
+            const topResult = searchResults[0];
+            if (topResult) {
+                const basicResponse = `D'après ce que je sais, ${topResult.description} 💡 ${searchResults.length > 1 ? 'Il y a aussi d\'autres aspects intéressants sur le sujet !' : 'J\'espère que ça répond à ta question !'}`;
+                return basicResponse;
+            }
             
-            return basicSynthesis;
+            // 🎯 MODIFICATION 4: Si vraiment rien ne marche, continue normalement
+            return null; // Cela déclenchera la conversation normale
         }
     }
 }
@@ -613,4 +636,4 @@ module.exports.executeCommandFromChat = executeCommandFromChat;
 module.exports.detectContactAdminIntention = detectContactAdminIntention;
 module.exports.decideSearchNecessity = decideSearchNecessity;
 module.exports.performIntelligentSearch = performIntelligentSearch;
-module.exports.synthesizeSearchResults = synthesizeSearchResults;
+module.exports.generateNaturalResponse = generateNaturalResponse;
