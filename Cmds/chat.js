@@ -569,35 +569,42 @@ const VALID_COMMANDS = [
     'weather'    // Informations météo
 ];
 
-// 🧠 DÉTECTION IA PURE (Sans mots-clés perturbants) avec rotation des clés
+// 🧠 DÉTECTION IA CONTEXTUELLE AVANCÉE (Évite les faux positifs) avec rotation des clés
 async function detectIntelligentCommands(message, ctx) {
     const { log } = ctx;
     
     try {
         const commandsList = VALID_COMMANDS.map(cmd => `/${cmd}`).join(', ');
         
-        const detectionPrompt = `Tu es un système de détection de commandes intelligent pour NakamaBot.
+        const detectionPrompt = `Tu es un système de détection de commandes ultra-précis pour NakamaBot. Tu dois ÉVITER les faux positifs.
 
 COMMANDES DISPONIBLES: ${commandsList}
 
 MESSAGE UTILISATEUR: "${message}"
 
-ANALYSE CE MESSAGE et détermine s'il correspond à l'intention d'utiliser une fonctionnalité spécifique du bot.
+RÈGLES STRICTES POUR DÉTECTER UNE VRAIE INTENTION DE COMMANDE:
 
-EXEMPLES D'INTENTIONS CLAIRES:
-✅ "aide-moi" ou "que peux-tu faire" → help
-✅ "dessine-moi..." ou "crée une image" → image  
-✅ "regarde cette image" ou "analyse ça" → vision
-✅ "style anime" ou "transforme en manga" → anime
-✅ "trouve cette musique" ou "joue..." → music
-✅ "rejoindre clan" ou "bataille" → clan
-✅ "mon niveau" ou "mes stats" → rank
-✅ "contacter admin" ou "problème technique" → contact
-✅ "quel temps" ou "météo" → weather
+🎯 VRAIS INTENTIONS (CONFIDENCE 0.8-1.0):
+✅ help: "aide", "help", "que peux-tu faire", "guide", "fonctions disponibles", "comment utiliser"
+✅ image: "dessine", "crée une image", "génère", "illustre", "fais un dessin", "artwork"
+✅ vision: "regarde cette image", "analyse cette photo", "que vois-tu", "décris l'image", "examine"
+✅ anime: "transforme en anime", "style anime", "version manga", "art anime", "dessine en anime"
+✅ music: "joue cette musique", "trouve sur YouTube", "cherche cette chanson", "lance la musique", "play"
+✅ clan: "rejoindre clan", "créer clan", "bataille de clan", "défier", "mon clan", "guerre"
+✅ rank: "mon niveau", "mes stats", "ma progression", "mon rang", "mes points"
+✅ contact: "contacter admin", "signaler problème", "message administrateur", "support technique"
+✅ weather: "météo", "quel temps", "température", "prévisions", "temps qu'il fait"
 
-❌ IGNORE les conversations générales qui mentionnent juste ces mots
-❌ Questions théoriques sur les commandes
-❌ Contexte purement conversationnel
+❌ FAUSSES DÉTECTIONS À ÉVITER (CONFIDENCE 0.0-0.3):
+❌ Questions générales mentionnant un mot: "quel chanteur a chanté TIA" ≠ commande music
+❌ Conversations: "j'aime la musique", "le temps passe vite", "aide mon ami"
+❌ Descriptions: "cette image est belle", "il fait chaud", "niveau débutant"
+❌ Contexte informatif: "la météo change", "les clans vikings", "mon aide-mémoire"
+
+ANALYSE CONTEXTUELLE OBLIGATOIRE:
+- L'utilisateur veut-il UTILISER une fonctionnalité du bot OU juste parler d'un sujet ?
+- Y a-t-il un VERBE D'ACTION dirigé vers le bot ?
+- Le message est-il une DEMANDE DIRECTE ou une conversation générale ?
 
 Réponds UNIQUEMENT avec ce JSON:
 {
@@ -605,7 +612,8 @@ Réponds UNIQUEMENT avec ce JSON:
   "command": "nom_commande_ou_null",
   "confidence": 0.0-1.0,
   "extractedArgs": "arguments_extraits_ou_message_complet",
-  "reason": "explication_courte"
+  "reason": "explication_détaillée_de_la_décision",
+  "contextAnalysis": "vraie_intention_ou_conversation_generale"
 }`;
 
         const response = await callGeminiWithRotation(detectionPrompt);
@@ -614,16 +622,27 @@ Réponds UNIQUEMENT avec ce JSON:
         if (jsonMatch) {
             const aiDetection = JSON.parse(jsonMatch[0]);
             
-            // Validation de la commande dans la liste
-            if (aiDetection.isCommand && VALID_COMMANDS.includes(aiDetection.command)) {
-                log.info(`🧠 Détection IA pure: /${aiDetection.command} (${aiDetection.confidence}) - ${aiDetection.reason}`);
+            // Validation stricte avec seuil élevé
+            const isValidCommand = aiDetection.isCommand && 
+                                 VALID_COMMANDS.includes(aiDetection.command) && 
+                                 aiDetection.confidence >= 0.8; // Seuil très élevé pour éviter faux positifs
+            
+            if (isValidCommand) {
+                log.info(`🎯 Commande détectée: /${aiDetection.command} (${aiDetection.confidence}) - ${aiDetection.reason}`);
+                log.info(`🔍 Analyse contextuelle: ${aiDetection.contextAnalysis}`);
+                
                 return {
-                    shouldExecute: aiDetection.confidence > 0.7, // Seuil plus élevé pour éviter faux positifs
+                    shouldExecute: true,
                     command: aiDetection.command,
                     args: aiDetection.extractedArgs,
                     confidence: aiDetection.confidence,
-                    method: 'ai_pure'
+                    method: 'ai_contextual'
                 };
+            } else {
+                // Log des rejets pour debugging
+                if (aiDetection.confidence < 0.8 && aiDetection.confidence > 0.3) {
+                    log.info(`🚫 Rejet commande (confidence trop basse): ${aiDetection.command} (${aiDetection.confidence}) - ${aiDetection.reason}`);
+                }
             }
         }
         
@@ -631,8 +650,74 @@ Réponds UNIQUEMENT avec ce JSON:
         
     } catch (error) {
         log.warning(`⚠️ Erreur détection IA commandes: ${error.message}`);
-        return { shouldExecute: false };
+        
+        // Fallback ultra-conservateur par mots-clés stricts
+        return await fallbackStrictKeywordDetection(message, log);
     }
+}
+
+// 🛡️ FALLBACK CONSERVATEUR: Détection par mots-clés stricts uniquement
+async function fallbackStrictKeywordDetection(message, log) {
+    const lowerMessage = message.toLowerCase().trim();
+    
+    // Patterns ultra-stricts pour éviter les faux positifs
+    const strictPatterns = [
+        { command: 'help', patterns: [
+            /^(aide|help|guide)$/,
+            /^(que peux-tu faire|fonctions|commandes disponibles)$/,
+            /^(comment ça marche|utilisation)$/
+        ]},
+        { command: 'image', patterns: [
+            /^dessine(-moi)?\s+/,
+            /^(crée|génère|fais)\s+(une\s+)?(image|dessin|illustration)/,
+            /^(illustre|artwork)/
+        ]},
+        { command: 'vision', patterns: [
+            /^regarde\s+(cette\s+)?(image|photo)/,
+            /^(analyse|décris|examine)\s+(cette\s+)?(image|photo)/,
+            /^que vois-tu/
+        ]},
+        { command: 'music', patterns: [
+            /^(joue|lance|play)\s+/,
+            /^(trouve|cherche)\s+(sur\s+youtube\s+)?cette\s+(musique|chanson)/,
+            /^(cherche|trouve)\s+la\s+(musique|chanson)\s+/
+        ]},
+        { command: 'clan', patterns: [
+            /^(rejoindre|créer|mon)\s+clan/,
+            /^bataille\s+de\s+clan/,
+            /^(défier|guerre)\s+/
+        ]},
+        { command: 'rank', patterns: [
+            /^(mon\s+)?(niveau|rang|stats|progression)/,
+            /^mes\s+(stats|points)/
+        ]},
+        { command: 'contact', patterns: [
+            /^contacter\s+(admin|administrateur)/,
+            /^signaler\s+problème/,
+            /^support\s+technique/
+        ]},
+        { command: 'weather', patterns: [
+            /^(météo|quel\s+temps|température|prévisions)/,
+            /^temps\s+qu.il\s+fait/
+        ]}
+    ];
+    
+    for (const { command, patterns } of strictPatterns) {
+        for (const pattern of patterns) {
+            if (pattern.test(lowerMessage)) {
+                log.info(`🔑 Fallback keyword strict: /${command} détecté par pattern`);
+                return {
+                    shouldExecute: true,
+                    command: command,
+                    args: message,
+                    confidence: 0.9,
+                    method: 'fallback_strict'
+                };
+            }
+        }
+    }
+    
+    return { shouldExecute: false };
 }
 
 // ✅ FONCTIONS EXISTANTES (inchangées)
