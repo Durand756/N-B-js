@@ -16,10 +16,6 @@ const GOOGLE_SEARCH_ENGINE_ID = process.env.GOOGLE_SEARCH_ENGINE_ID;
 // Fallback: SerpAPI si Google Custom Search n'est pas disponible
 const SERPAPI_KEY = process.env.SERPAPI_KEY;
 
-// ⚡ CACHE INTELLIGENT: Évite les appels IA redondants
-const decisionCache = new Map(); // Cache des décisions de recherche
-const responseCache = new Map(); // Cache des réponses récentes
-
 // État global pour la rotation des clés
 let currentGeminiKeyIndex = 0;
 const failedKeys = new Set();
@@ -131,12 +127,10 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     activeRequests.set(senderId, requestKey);
     recentMessages.set(messageSignature, currentTime);
     
-    // 🧹 NETTOYAGE OPTIMISÉ: Supprimer les anciens messages du cache (plus de 2 minutes)
-    if (recentMessages.size > 50 || currentTime % 30000 < 1000) { // Nettoyage par batch ou tous les 30s
-        for (const [signature, timestamp] of recentMessages.entries()) {
-            if (currentTime - timestamp > 120000) { // 2 minutes
-                recentMessages.delete(signature);
-            }
+    // 🧹 NETTOYAGE: Supprimer les anciens messages du cache (plus de 2 minutes)
+    for (const [signature, timestamp] of recentMessages.entries()) {
+        if (currentTime - timestamp > 120000) { // 2 minutes
+            recentMessages.delete(signature);
         }
     }
     
@@ -193,8 +187,8 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             }
         } 
         
-        // 🆕 DÉCISION INTELLIGENTE CACHÉE: pour recherche externe
-        const searchDecision = await decideSearchNecessityOptimized(args, senderId, ctx);
+        // 🆕 NOUVELLE FONCTIONNALITÉ: Décision intelligente pour recherche externe
+        const searchDecision = await decideSearchNecessity(args, senderId, ctx);
         
         if (searchDecision.needsExternalSearch) {
             log.info(`🔍 Recherche externe nécessaire pour ${senderId}: ${searchDecision.reason}`);
@@ -232,183 +226,137 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     }
 };
 
-// ⚡ DÉCISION IA OPTIMISÉE: Cache + timeout réduit + fallback rapide
-async function decideSearchNecessityOptimized(userMessage, senderId, ctx) {
+// 🆕 DÉCISION IA: Déterminer si une recherche externe est nécessaire (avec rotation des clés)
+async function decideSearchNecessity(userMessage, senderId, ctx) {
     const { log } = ctx;
     
-    // 🚀 CACHE: Vérifier si cette décision a déjà été prise récemment
-    const cacheKey = userMessage.toLowerCase().trim().substring(0, 50);
-    if (decisionCache.has(cacheKey)) {
-        const cached = decisionCache.get(cacheKey);
-        if (Date.now() - cached.timestamp < 300000) { // 5 minutes
-            log.info(`⚡ Décision cachée utilisée: ${cached.decision.needsExternalSearch ? 'OUI' : 'NON'}`);
-            return cached.decision;
-        } else {
-            decisionCache.delete(cacheKey);
-        }
-    }
-    
-    // 🎯 DÉTECTION RAPIDE PAR MOTS-CLÉS EN PREMIER
-    const quickKeywords = detectSearchKeywords(userMessage);
-    if (quickKeywords.confidence > 0.9) {
-        const decision = {
-            needsExternalSearch: quickKeywords.needs,
-            confidence: quickKeywords.confidence,
-            reason: 'keywords_high_confidence',
-            searchQuery: quickKeywords.query
-        };
-        
-        decisionCache.set(cacheKey, { decision, timestamp: Date.now() });
-        log.info(`🚀 Décision rapide mots-clés: ${decision.needsExternalSearch ? 'OUI' : 'NON'} (${decision.confidence})`);
-        return decision;
-    }
-    
     try {
-        // ⚡ PROMPT OPTIMISÉ + COURT pour réduire le temps
-        const decisionPrompt = `Analyse rapide: ce message nécessite-t-il une recherche web externe ?
+        const decisionPrompt = `Tu es un système de décision intelligent pour un chatbot. 
+Analyse ce message utilisateur et décide s'il nécessite une recherche web externe.
 
-MESSAGE: "${userMessage}"
+CRITÈRES POUR RECHERCHE EXTERNE:
+✅ OUI si:
+- Informations récentes (actualités, événements 2025-2026)
+- Données factuelles spécifiques (prix actuels, statistiques, dates précises)
+- Informations locales/géographiques spécifiques
+- Recherche de produits/services/entreprises précis
+- Questions sur des personnes publiques récentes
+- Données météo, cours de bourse, résultats sportifs
 
-RECHERCHE EXTERNE OUI si: actualités 2025-2026, prix actuels, météo, stats récentes, infos locales.
-RECHERCHE EXTERNE NON si: conversation générale, conseils, créativité, concepts généraux.
+❌ NON si:
+- Conversations générales/philosophiques
+- Conseils/opinions personnelles
+- Questions sur le bot lui-même
+- Créativité (histoires, poèmes)
+- Explications de concepts généraux
+- Calculs/logique
+- Questions existantes dans ma base de connaissances
 
-JSON uniquement:
+MESSAGE UTILISATEUR: "${userMessage}"
+
+Réponds UNIQUEMENT avec ce format JSON:
 {
   "needsExternalSearch": true/false,
   "confidence": 0.0-1.0,
-  "reason": "court",
-  "searchQuery": "simple"
+  "reason": "explication courte",
+  "searchQuery": "requête de recherche optimisée si nécessaire"
 }`;
 
-        // ⚡ TIMEOUT RÉDUIT pour éviter les blocages
-        const response = await Promise.race([
-            callGeminiWithRotation(decisionPrompt),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), MISTRAL_FALLBACK_DELAY))
-        ]);
+        const response = await callGeminiWithRotation(decisionPrompt);
         
+        // Extraire le JSON de la réponse
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             const decision = JSON.parse(jsonMatch[0]);
-            
-            // 💾 MISE EN CACHE
-            decisionCache.set(cacheKey, { decision, timestamp: Date.now() });
-            log.info(`🤖 Décision IA rapide: ${decision.needsExternalSearch ? 'OUI' : 'NON'} (${decision.confidence})`);
+            log.info(`🤖 Décision recherche: ${decision.needsExternalSearch ? 'OUI' : 'NON'} (${decision.confidence}) - ${decision.reason}`);
             return decision;
         }
         
-        throw new Error('Format invalide');
+        throw new Error('Format de réponse invalide');
         
     } catch (error) {
-        log.warning(`⚡ Fallback rapide décision: ${error.message}`);
+        log.warning(`⚠️ Erreur décision recherche: ${error.message}`);
         
-        // 🚀 FALLBACK ULTRA-RAPIDE: mots-clés avec confiance moyenne
-        const decision = {
-            needsExternalSearch: quickKeywords.needs,
-            confidence: Math.min(quickKeywords.confidence + 0.2, 1.0),
-            reason: 'fallback_rapide',
-            searchQuery: quickKeywords.query
+        // Fallback: détection par mots-clés
+        const keywordSearch = detectSearchKeywords(userMessage);
+        return {
+            needsExternalSearch: keywordSearch.needs,
+            confidence: 0.6,
+            reason: 'fallback_keywords',
+            searchQuery: keywordSearch.query
         };
-        
-        decisionCache.set(cacheKey, { decision, timestamp: Date.now() });
-        return decision;
     }
 }
 
-// 🆕 FALLBACK OPTIMISÉ: Détection par mots-clés avec patterns avancés
+// 🆕 FALLBACK: Détection par mots-clés si l'IA échoue
 function detectSearchKeywords(message) {
     const lowerMessage = message.toLowerCase();
     
-    // ⚡ PATTERNS OPTIMISÉS avec weights ajustés
     const searchIndicators = [
-        { patterns: [/\b(202[4-6]|actualité|récent|nouveau|maintenant|aujourd|news|info|dernièr)\b/], weight: 0.95 },
-        { patterns: [/\b(prix|coût|combien|tarif)\b.*\b(euros?|dollars?|€|\$|fcfa|franc)\b/], weight: 0.9 },
-        { patterns: [/\b(météo|temps|température|pluie|soleil)\b/], weight: 0.9 },
-        { patterns: [/\b(où|address|lieu|localisation|carte|géolocalisation)\b/], weight: 0.85 },
-        { patterns: [/\b(qui est|biographie|âge|né)\b.*\b([A-Z][a-z]+\s[A-Z][a-z]+|[A-Z][a-z]{3,})\b/], weight: 0.8 },
-        { patterns: [/\b(résultats?|score|match|compétition|champion|victoire)\b.*\b(sport|foot|tennis|basket|rugby)\b/], weight: 0.9 },
-        { patterns: [/\b(cours|bourse|action|crypto|bitcoin|euro|dollar)\b/], weight: 0.85 },
-        { patterns: [/\b(horaire|ouvert|fermé|contact|téléphone)\b.*\b(magasin|boutique|restaurant|hôtel)\b/], weight: 0.8 }
+        { patterns: [/\b(202[4-5]|actualité|récent|nouveau|maintenant|aujourd|news|info)\b/], weight: 0.9 },
+        { patterns: [/\b(prix|coût|combien|tarif)\b.*\b(euros?|dollars?|€|\$)\b/], weight: 0.8 },
+        { patterns: [/\b(météo|temps|température)\b.*\b(aujourd|demain|cette semaine)\b/], weight: 0.9 },
+        { patterns: [/\b(où|address|lieu|localisation|carte)\b/], weight: 0.7 },
+        { patterns: [/\b(qui est|biographie|âge)\b.*\b[A-Z][a-z]+\s[A-Z][a-z]+/], weight: 0.8 },
+        { patterns: [/\b(résultats?|score|match|compétition)\b.*\b(sport|foot|tennis|basket)\b/], weight: 0.8 }
     ];
     
     let totalWeight = 0;
-    let matchedPatterns = 0;
-    
     for (const indicator of searchIndicators) {
         for (const pattern of indicator.patterns) {
             if (pattern.test(lowerMessage)) {
                 totalWeight += indicator.weight;
-                matchedPatterns++;
                 break;
             }
         }
     }
     
-    // 🎯 BONUS: Multiple patterns = plus de confiance
-    const bonusMultiplier = matchedPatterns > 1 ? 1.2 : 1.0;
-    const finalConfidence = Math.min(totalWeight * bonusMultiplier, 1.0);
-    
     return {
-        needs: finalConfidence > 0.6,
+        needs: totalWeight > 0.6,
         query: message,
-        confidence: finalConfidence
+        confidence: Math.min(totalWeight, 1.0)
     };
 }
 
-// 🆕 RECHERCHE INTELLIGENTE OPTIMISÉE: Timeout réduit + parallélisation
+// 🆕 RECHERCHE INTELLIGENTE: Utilise Google Custom Search ou SerpAPI
 async function performIntelligentSearch(query, ctx) {
     const { log } = ctx;
     
     try {
-        // ⚡ RECHERCHE AVEC TIMEOUT pour éviter les blocages
-        const searchPromise = (async () => {
-            // Priorité 1: Google Custom Search API
-            if (GOOGLE_SEARCH_API_KEY && GOOGLE_SEARCH_ENGINE_ID) {
-                return await googleCustomSearchOptimized(query, log);
-            }
-            
-            // Priorité 2: SerpAPI (fallback)
-            if (SERPAPI_KEY) {
-                return await serpApiSearchOptimized(query, log);
-            }
-            
-            // Priorité 3: Recherche existante du bot (fallback)
-            log.warning('⚠️ Aucune API de recherche configurée, utilisation webSearch existant');
-            return await fallbackWebSearch(query, ctx);
-        })();
+        // Priorité 1: Google Custom Search API
+        if (GOOGLE_SEARCH_API_KEY && GOOGLE_SEARCH_ENGINE_ID) {
+            return await googleCustomSearch(query, log);
+        }
         
-        // ⚡ TIMEOUT DE 6 SECONDES MAX
-        const results = await Promise.race([
-            searchPromise,
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Recherche timeout')), SEARCH_TIMEOUT)
-            )
-        ]);
+        // Priorité 2: SerpAPI (fallback)
+        if (SERPAPI_KEY) {
+            return await serpApiSearch(query, log);
+        }
         
-        return results;
+        // Priorité 3: Recherche existante du bot (fallback)
+        log.warning('⚠️ Aucune API de recherche configurée, utilisation webSearch existant');
+        return await fallbackWebSearch(query, ctx);
         
     } catch (error) {
-        log.error(`❌ Erreur recherche optimisée: ${error.message}`);
+        log.error(`❌ Erreur recherche: ${error.message}`);
         throw error;
     }
 }
 
-// 🆕 Google Custom Search API OPTIMISÉE
-async function googleCustomSearchOptimized(query, log) {
+// 🆕 Google Custom Search API
+async function googleCustomSearch(query, log) {
     const url = `https://www.googleapis.com/customsearch/v1`;
     const params = {
         key: GOOGLE_SEARCH_API_KEY,
         cx: GOOGLE_SEARCH_ENGINE_ID,
         q: query,
-        num: 3, // ⚡ RÉDUIT: 3 résultats au lieu de 5 pour plus de rapidité
+        num: 5,
         safe: 'active',
         lr: 'lang_fr',
         hl: 'fr'
     };
     
-    const response = await axios.get(url, { 
-        params, 
-        timeout: SEARCH_TIMEOUT - 1000 // 1 seconde de marge
-    });
+    const response = await axios.get(url, { params, timeout: 10000 });
     
     if (response.data.items) {
         return response.data.items.map(item => ({
@@ -422,22 +370,19 @@ async function googleCustomSearchOptimized(query, log) {
     return [];
 }
 
-// 🆕 SerpAPI OPTIMISÉE (alternative gratuite)
-async function serpApiSearchOptimized(query, log) {
+// 🆕 SerpAPI (alternative gratuite)
+async function serpApiSearch(query, log) {
     const url = `https://serpapi.com/search`;
     const params = {
         api_key: SERPAPI_KEY,
         engine: 'google',
         q: query,
-        num: 3, // ⚡ RÉDUIT pour plus de rapidité
+        num: 5,
         hl: 'fr',
         gl: 'fr'
     };
     
-    const response = await axios.get(url, { 
-        params, 
-        timeout: SEARCH_TIMEOUT - 1000
-    });
+    const response = await axios.get(url, { params, timeout: 10000 });
     
     if (response.data.organic_results) {
         return response.data.organic_results.map(item => ({
