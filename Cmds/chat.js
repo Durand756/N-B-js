@@ -1,5 +1,5 @@
 /**
- * NakamaBot - Commande /chat avec recherche intelligente intégrée
+ * NakamaBot - Commande /chat avec recherche intelligente intégrée et rotation des clés Gemini
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
@@ -8,13 +8,92 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
 
-// Configuration APIs
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Configuration APIs avec rotation des clés Gemini
+const GEMINI_API_KEYS = process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.split(',').map(key => key.trim()) : [];
 const GOOGLE_SEARCH_API_KEY = process.env.GOOGLE_SEARCH_API_KEY;
 const GOOGLE_SEARCH_ENGINE_ID = process.env.GOOGLE_SEARCH_ENGINE_ID;
 
 // Fallback: SerpAPI si Google Custom Search n'est pas disponible
 const SERPAPI_KEY = process.env.SERPAPI_KEY;
+
+// État global pour la rotation des clés
+let currentGeminiKeyIndex = 0;
+const failedKeys = new Set();
+
+// Fonction pour obtenir la prochaine clé Gemini disponible
+function getNextGeminiKey() {
+    if (GEMINI_API_KEYS.length === 0) {
+        throw new Error('Aucune clé Gemini configurée');
+    }
+    
+    // Si toutes les clés ont échoué, on reset
+    if (failedKeys.size >= GEMINI_API_KEYS.length) {
+        failedKeys.clear();
+        currentGeminiKeyIndex = 0;
+    }
+    
+    // Trouver la prochaine clé non défaillante
+    let attempts = 0;
+    while (attempts < GEMINI_API_KEYS.length) {
+        const key = GEMINI_API_KEYS[currentGeminiKeyIndex];
+        currentGeminiKeyIndex = (currentGeminiKeyIndex + 1) % GEMINI_API_KEYS.length;
+        
+        if (!failedKeys.has(key)) {
+            return key;
+        }
+        attempts++;
+    }
+    
+    // Si toutes les clés sont marquées comme défaillantes, prendre la première quand même
+    failedKeys.clear();
+    currentGeminiKeyIndex = 0;
+    return GEMINI_API_KEYS[0];
+}
+
+// Fonction pour marquer une clé comme défaillante
+function markKeyAsFailed(apiKey) {
+    failedKeys.add(apiKey);
+}
+
+// Fonction pour appeler Gemini avec rotation automatique des clés
+async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.length) {
+    let lastError = null;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const apiKey = getNextGeminiKey();
+            const genAI = new GoogleGenerativeAI(apiKey);
+            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            
+            const result = await model.generateContent(prompt);
+            const response = result.response.text();
+            
+            if (response && response.trim()) {
+                // Succès - retirer la clé des clés défaillantes si elle y était
+                failedKeys.delete(apiKey);
+                return response;
+            }
+            
+            throw new Error('Réponse Gemini vide');
+            
+        } catch (error) {
+            lastError = error;
+            
+            // Marquer la clé actuelle comme défaillante si c'est une erreur d'API
+            if (error.message.includes('API_KEY') || error.message.includes('quota') || error.message.includes('limit')) {
+                const currentKey = GEMINI_API_KEYS[(currentGeminiKeyIndex - 1 + GEMINI_API_KEYS.length) % GEMINI_API_KEYS.length];
+                markKeyAsFailed(currentKey);
+            }
+            
+            // Si c'est la dernière tentative, on lance l'erreur
+            if (attempt === maxRetries - 1) {
+                throw lastError;
+            }
+        }
+    }
+    
+    throw lastError || new Error('Toutes les clés Gemini ont échoué');
+}
 
 module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log } = ctx;
@@ -91,13 +170,11 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     return await handleConversationWithFallback(senderId, args, ctx);
 };
 
-// 🆕 DÉCISION IA: Déterminer si une recherche externe est nécessaire
+// 🆕 DÉCISION IA: Déterminer si une recherche externe est nécessaire (avec rotation des clés)
 async function decideSearchNecessity(userMessage, senderId, ctx) {
     const { log } = ctx;
     
     try {
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        
         const decisionPrompt = `Tu es un système de décision intelligent pour un chatbot. 
 Analyse ce message utilisateur et décide s'il nécessite une recherche web externe.
 
@@ -129,8 +206,7 @@ Réponds UNIQUEMENT avec ce format JSON:
   "searchQuery": "requête de recherche optimisée si nécessaire"
 }`;
 
-        const result = await model.generateContent(decisionPrompt);
-        const response = result.response.text();
+        const response = await callGeminiWithRotation(decisionPrompt);
         
         // Extraire le JSON de la réponse
         const jsonMatch = response.match(/\{[\s\S]*\}/);
@@ -285,7 +361,7 @@ async function fallbackWebSearch(query, ctx) {
     return [];
 }
 
-// 🎯 MODIFICATION 1: Génération de réponse naturelle (sans mention de recherche)
+// 🎯 MODIFICATION 1: Génération de réponse naturelle (sans mention de recherche) avec rotation des clés
 async function generateNaturalResponse(originalQuery, searchResults, ctx) {
     const { log, callMistralAPI } = ctx;
     
@@ -302,8 +378,6 @@ async function generateNaturalResponse(originalQuery, searchResults, ctx) {
     });
     
     try {
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        
         const resultsText = searchResults.map((result, index) => 
             `${result.title}: ${result.description}`
         ).join('\n');
@@ -329,8 +403,7 @@ INSTRUCTIONS IMPORTANTES:
 
 RÉPONSE NATURELLE:`;
 
-        const result = await model.generateContent(naturalPrompt);
-        const response = result.response.text();
+        const response = await callGeminiWithRotation(naturalPrompt);
         
         if (response && response.trim()) {
             log.info(`🎭 Réponse naturelle Gemini pour: ${originalQuery.substring(0, 30)}...`);
@@ -377,7 +450,7 @@ RÉPONSE NATURELLE:`;
     }
 }
 
-// ✅ FONCTION EXISTANTE: Gestion conversation avec Gemini et fallback Mistral
+// ✅ FONCTION EXISTANTE: Gestion conversation avec Gemini et fallback Mistral (avec rotation des clés)
 async function handleConversationWithFallback(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, log } = ctx;
     
@@ -441,10 +514,8 @@ ${conversationHistory ? `Historique:\n${conversationHistory}` : ''}
 Utilisateur: ${args}`;
 
     try {
-        // ✅ PRIORITÉ: Essayer d'abord avec Gemini
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        const result = await model.generateContent(systemPrompt);
-        const geminiResponse = result.response.text();
+        // ✅ PRIORITÉ: Essayer d'abord avec Gemini (avec rotation des clés)
+        const geminiResponse = await callGeminiWithRotation(systemPrompt);
         
         if (geminiResponse && geminiResponse.trim()) {
             addToMemory(String(senderId), 'user', args);
@@ -498,13 +569,11 @@ const VALID_COMMANDS = [
     'weather'    // Informations météo
 ];
 
-// 🧠 DÉTECTION IA PURE (Sans mots-clés perturbants)
+// 🧠 DÉTECTION IA PURE (Sans mots-clés perturbants) avec rotation des clés
 async function detectIntelligentCommands(message, ctx) {
     const { log } = ctx;
     
     try {
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        
         const commandsList = VALID_COMMANDS.map(cmd => `/${cmd}`).join(', ');
         
         const detectionPrompt = `Tu es un système de détection de commandes intelligent pour NakamaBot.
@@ -539,8 +608,7 @@ Réponds UNIQUEMENT avec ce JSON:
   "reason": "explication_courte"
 }`;
 
-        const result = await model.generateContent(detectionPrompt);
-        const response = result.response.text();
+        const response = await callGeminiWithRotation(detectionPrompt);
         
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
@@ -661,15 +729,14 @@ async function generateContextualResponse(originalMessage, commandResult, comman
     }
     
     try {
-        // Essayer d'abord avec Gemini
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        // Essayer d'abord avec Gemini (avec rotation des clés)
         const contextPrompt = `L'utilisateur a dit: "${originalMessage}"
 J'ai exécuté /${commandName} avec résultat: "${commandResult}"
 
 Génère une réponse naturelle et amicale (max 400 chars) qui présente le résultat de manière conversationnelle.`;
 
-        const result = await model.generateContent(contextPrompt);
-        return result.response.text() || commandResult;
+        const response = await callGeminiWithRotation(contextPrompt);
+        return response || commandResult;
         
     } catch (error) {
         // Fallback sur Mistral si besoin
@@ -695,3 +762,6 @@ module.exports.detectContactAdminIntention = detectContactAdminIntention;
 module.exports.decideSearchNecessity = decideSearchNecessity;
 module.exports.performIntelligentSearch = performIntelligentSearch;
 module.exports.generateNaturalResponse = generateNaturalResponse;
+module.exports.callGeminiWithRotation = callGeminiWithRotation;
+module.exports.getNextGeminiKey = getNextGeminiKey;
+module.exports.markKeyAsFailed = markKeyAsFailed;
