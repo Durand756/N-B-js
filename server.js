@@ -8,7 +8,7 @@ const path = require('path');
 const app = express();
 app.use(bodyParser.json());
 
-// Configuration
+// Configuration 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "nakamaverifytoken";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "";
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || "";
@@ -923,10 +923,10 @@ app.post('/webhook', async (req, res) => {
                                 log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} !`);
                                 
                                 // Envoyer un message de félicitation après la réponse
-                                setTimeout(async () => {
+                                /*setTimeout(async () => {
                                     const levelUpMsg = `🎉 Félicitations ! Tu viens d'atteindre le niveau ${expResult.newLevel} ! ✨\n\nTape /rank pour voir ta carte de rang ! 🏆`;
                                     await sendMessage(senderId, levelUpMsg);
-                                }, 1000);
+                                }, 1000);*/
                             }
                             
                             // Sauvegarder les données mises à jour
