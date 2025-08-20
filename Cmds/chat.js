@@ -16,9 +16,17 @@ const GOOGLE_SEARCH_ENGINE_ID = process.env.GOOGLE_SEARCH_ENGINE_ID;
 // Fallback: SerpAPI si Google Custom Search n'est pas disponible
 const SERPAPI_KEY = process.env.SERPAPI_KEY;
 
+// 🆕 Configuration Facebook pour récupérer les noms
+const FACEBOOK_PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com";
+
 // État global pour la rotation des clés
 let currentGeminiKeyIndex = 0;
 const failedKeys = new Set();
+
+// 🆕 Cache des noms d'utilisateurs pour éviter les appels répétés
+const userNamesCache = new Map();
+const CACHE_EXPIRY_TIME = 24 * 60 * 60 * 1000; // 24 heures
 
 // Fonction pour obtenir la prochaine clé Gemini disponible
 function getNextGeminiKey() {
@@ -53,6 +61,77 @@ function getNextGeminiKey() {
 // Fonction pour marquer une clé comme défaillante
 function markKeyAsFailed(apiKey) {
     failedKeys.add(apiKey);
+}
+
+// 🆕 FONCTION: Récupérer le nom d'un utilisateur Facebook
+async function getUserName(senderId, log) {
+    try {
+        // Vérifier le cache d'abord
+        const cachedData = userNamesCache.get(senderId);
+        if (cachedData && (Date.now() - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
+            return cachedData.name;
+        }
+
+        // Si pas de token Facebook, retourner null
+        if (!FACEBOOK_PAGE_ACCESS_TOKEN) {
+            log.warning('⚠️ Token Facebook non configuré pour récupérer les noms');
+            return null;
+        }
+
+        // Appel à l'API Graph Facebook
+        const url = `${FACEBOOK_GRAPH_API_URL}/${senderId}`;
+        const response = await axios.get(url, {
+            params: {
+                fields: 'first_name,last_name,profile_pic',
+                access_token: FACEBOOK_PAGE_ACCESS_TOKEN
+            },
+            timeout: 5000
+        });
+
+        if (response.data && response.data.first_name) {
+            const firstName = response.data.first_name;
+            const lastName = response.data.last_name || '';
+            const fullName = `${firstName} ${lastName}`.trim();
+            
+            // Mettre en cache
+            userNamesCache.set(senderId, {
+                name: fullName,
+                firstName: firstName,
+                lastName: lastName,
+                profilePic: response.data.profile_pic,
+                timestamp: Date.now()
+            });
+            
+            log.info(`👤 Nom récupéré pour ${senderId}: ${fullName}`);
+            return fullName;
+        }
+
+        return null;
+
+    } catch (error) {
+        log.warning(`⚠️ Erreur récupération nom Facebook ${senderId}: ${error.message}`);
+        return null;
+    }
+}
+
+// 🆕 FONCTION: Obtenir le prénom uniquement
+async function getUserFirstName(senderId, log) {
+    try {
+        const cachedData = userNamesCache.get(senderId);
+        if (cachedData && (Date.now() - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
+            return cachedData.firstName;
+        }
+
+        // Si pas en cache, récupérer le nom complet
+        await getUserName(senderId, log);
+        
+        const updatedCache = userNamesCache.get(senderId);
+        return updatedCache ? updatedCache.firstName : null;
+
+    } catch (error) {
+        log.warning(`⚠️ Erreur récupération prénom ${senderId}: ${error.message}`);
+        return null;
+    }
 }
 
 // Fonction pour appeler Gemini avec rotation automatique des clés
@@ -98,15 +177,22 @@ async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.lengt
 module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log } = ctx;
     
+    // 🆕 Récupérer le nom de l'utilisateur dès le début
+    const userName = await getUserName(senderId, log);
+    const userFirstName = await getUserFirstName(senderId, log);
+    
     if (!args.trim()) {
-        return "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
+        const welcomeMessage = userName 
+            ? `💬 Salut ${userFirstName} ! Je suis NakamaBot ! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨`
+            : "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
+        return welcomeMessage;
     }
     
     // ✅ Détection des demandes de contact admin
     const contactIntention = detectContactAdminIntention(args);
     if (contactIntention.shouldContact) {
         log.info(`📞 Intention contact admin détectée pour ${senderId}: ${contactIntention.reason}`);
-        const contactSuggestion = generateContactSuggestion(contactIntention.reason, contactIntention.extractedMessage);
+        const contactSuggestion = generateContactSuggestion(contactIntention.reason, contactIntention.extractedMessage, userName);
         addToMemory(String(senderId), 'user', args);
         addToMemory(String(senderId), 'assistant', contactSuggestion);
         return contactSuggestion;
@@ -127,8 +213,8 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                     return commandResult.result;
                 }
                 
-                // Réponse contextuelle naturelle
-                const contextualResponse = await generateContextualResponse(args, commandResult.result, intelligentCommand.command, ctx);
+                // Réponse contextuelle naturelle avec nom
+                const contextualResponse = await generateContextualResponse(args, commandResult.result, intelligentCommand.command, ctx, userName);
                 addToMemory(String(senderId), 'user', args);
                 addToMemory(String(senderId), 'assistant', contextualResponse);
                 return contextualResponse;
@@ -152,7 +238,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             const searchResults = await performIntelligentSearch(searchDecision.searchQuery, ctx);
             
             if (searchResults && searchResults.length > 0) {
-                const naturalResponse = await generateNaturalResponse(args, searchResults, ctx);
+                const naturalResponse = await generateNaturalResponse(args, searchResults, ctx, userName);
                 addToMemory(String(senderId), 'user', args);
                 addToMemory(String(senderId), 'assistant', naturalResponse);
                 return naturalResponse;
@@ -167,7 +253,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     }
     
     // ✅ Conversation classique avec Gemini (Mistral en fallback)
-    return await handleConversationWithFallback(senderId, args, ctx);
+    return await handleConversationWithFallback(senderId, args, ctx, userName);
 };
 
 // 🆕 DÉCISION IA: Déterminer si une recherche externe est nécessaire (avec rotation des clés)
@@ -361,8 +447,8 @@ async function fallbackWebSearch(query, ctx) {
     return [];
 }
 
-// 🎯 MODIFICATION 1: Génération de réponse naturelle (sans mention de recherche) avec rotation des clés
-async function generateNaturalResponse(originalQuery, searchResults, ctx) {
+// 🎯 MODIFICATION 1: Génération de réponse naturelle (sans mention de recherche) avec rotation des clés et nom utilisateur
+async function generateNaturalResponse(originalQuery, searchResults, ctx, userName = null) {
     const { log, callMistralAPI } = ctx;
     
     // Date et heure actuelles
@@ -382,10 +468,12 @@ async function generateNaturalResponse(originalQuery, searchResults, ctx) {
             `${result.title}: ${result.description}`
         ).join('\n');
         
-        // 🎯 MODIFICATION: Prompt complètement naturel
+        // 🎯 MODIFICATION: Prompt complètement naturel avec nom utilisateur
+        const userGreeting = userName ? `${userName.split(' ')[0]}` : '';
         const naturalPrompt = `Tu es NakamaBot, une IA conversationnelle empathique et créative.
 
 CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
+${userName ? `UTILISATEUR: Tu parles avec ${userName}` : ''}
 
 L'utilisateur te demande: "${originalQuery}"
 
@@ -395,6 +483,7 @@ ${resultsText}
 INSTRUCTIONS IMPORTANTES:
 - Réponds comme si tu connaissais naturellement ces informations
 - Adopte un ton conversationnel et amical avec quelques emojis
+- ${userName ? `Tu peux utiliser le prénom ${userGreeting} occasionnellement de manière naturelle` : ''}
 - Maximum 3000 caractères
 - Ne mentionne JAMAIS que tu as fait une recherche
 - Ne dis jamais "d'après mes recherches" ou "selon les sources"
@@ -416,10 +505,11 @@ RÉPONSE NATURELLE:`;
         log.warning(`⚠️ Erreur réponse naturelle Gemini: ${geminiError.message}`);
         
         try {
-            // 🎯 MODIFICATION 2: Fallback Mistral aussi naturel
+            // 🎯 MODIFICATION 2: Fallback Mistral aussi naturel avec nom
+            const userContext = userName ? `Tu parles avec ${userName}. ` : '';
             const messages = [{
                 role: "system",
-                content: "Tu es NakamaBot. Réponds naturellement comme dans une conversation normale. Ne mentionne jamais de recherches ou sources."
+                content: `Tu es NakamaBot. ${userContext}Réponds naturellement comme dans une conversation normale. Ne mentionne jamais de recherches ou sources.`
             }, {
                 role: "user", 
                 content: `Question: "${originalQuery}"\n\nInformations utiles:\n${searchResults.map(r => `${r.title}: ${r.description}`).join('\n')}\n\nRéponds naturellement comme si tu connaissais déjà ces infos (max 3000 chars):`
@@ -437,10 +527,11 @@ RÉPONSE NATURELLE:`;
         } catch (mistralError) {
             log.error(`❌ Erreur réponse naturelle totale: ${mistralError.message}`);
             
-            // 🎯 MODIFICATION 3: Derniers recours plus naturel
+            // 🎯 MODIFICATION 3: Derniers recours plus naturel avec nom
             const topResult = searchResults[0];
             if (topResult) {
-                const basicResponse = `D'après ce que je sais, ${topResult.description} 💡 ${searchResults.length > 1 ? 'Il y a aussi d\'autres aspects intéressants sur le sujet !' : 'J\'espère que ça répond à ta question !'}`;
+                const greeting = userName ? `${userName.split(' ')[0]}, d` : 'D';
+                const basicResponse = `${greeting}'après ce que je sais, ${topResult.description} 💡 ${searchResults.length > 1 ? 'Il y a aussi d\'autres aspects intéressants sur le sujet !' : 'J\'espère que ça répond à ta question !'}`;
                 return basicResponse;
             }
             
@@ -450,8 +541,8 @@ RÉPONSE NATURELLE:`;
     }
 }
 
-// ✅ FONCTION EXISTANTE: Gestion conversation avec Gemini et fallback Mistral (avec rotation des clés)
-async function handleConversationWithFallback(senderId, args, ctx) {
+// ✅ FONCTION EXISTANTE: Gestion conversation avec Gemini et fallback Mistral (avec rotation des clés et nom utilisateur)
+async function handleConversationWithFallback(senderId, args, ctx, userName = null) {
     const { addToMemory, getMemoryContext, callMistralAPI, log } = ctx;
     
     // Récupération du contexte (derniers 8 messages pour optimiser)
@@ -478,16 +569,22 @@ async function handleConversationWithFallback(senderId, args, ctx) {
         ).join('\n') + '\n';
     }
     
-    // Prompt système optimisé
+    // 🆕 Information utilisateur pour le prompt
+    const userInfo = userName ? `UTILISATEUR: Tu parles avec ${userName}` : '';
+    const userGreeting = userName ? `${userName.split(' ')[0]}` : '';
+    
+    // Prompt système optimisé avec nom utilisateur
     const systemPrompt = `Tu es NakamaBot, une IA conversationnelle un model Durand AI avancée créée par Durand et sa femme Cécile.
 
 CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
+${userInfo}
 
 INTELLIGENCE & PERSONNALITÉ:
 - Empathique, créative et intuitive
 - Tu comprends les émotions et intentions sous-jacentes  
 - Pédagogue naturelle qui explique clairement
 - Adaptable selon l'utilisateur et le contexte
+${userName ? `- Tu peux utiliser le prénom ${userGreeting} occasionnellement de manière naturelle` : ''}
 
 CAPACITÉS PRINCIPALES:
 🎨 Création d'images intelligente (dis "dessine-moi..." ou "crée une image de...")
@@ -549,7 +646,8 @@ Utilisateur: ${args}`;
         } catch (mistralError) {
             log.error(`❌ Erreur totale conversation ${senderId}: Gemini(${geminiError.message}) + Mistral(${mistralError.message})`);
             
-            const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? 💫";
+            const greeting = userName ? `${userGreeting}, j` : 'J';
+            const errorResponse = `🤔 ${greeting}'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? 💫`;
             addToMemory(String(senderId), 'assistant', errorResponse);
             return errorResponse;
         }
@@ -720,7 +818,7 @@ async function fallbackStrictKeywordDetection(message, log) {
     return { shouldExecute: false };
 }
 
-// ✅ FONCTIONS EXISTANTES (inchangées)
+// ✅ FONCTIONS EXISTANTES (modifiées pour inclure le nom utilisateur)
 
 function detectContactAdminIntention(message) {
     const lowerMessage = message.toLowerCase();
@@ -752,7 +850,8 @@ function detectContactAdminIntention(message) {
     return { shouldContact: false };
 }
 
-function generateContactSuggestion(reason, extractedMessage) {
+// 🆕 FONCTION MODIFIÉE: Génération suggestion contact avec nom utilisateur
+function generateContactSuggestion(reason, extractedMessage, userName = null) {
     const reasonMessages = {
         'contact_direct': { title: "💌 **Contact Admin**", message: "Je vois que tu veux contacter les administrateurs !" },
         'probleme_technique': { title: "🔧 **Problème Technique**", message: "Problème technique détecté !" },
@@ -767,8 +866,9 @@ function generateContactSuggestion(reason, extractedMessage) {
     };
     
     const preview = extractedMessage.length > 60 ? extractedMessage.substring(0, 60) + "..." : extractedMessage;
+    const greeting = userName ? `${userName.split(' ')[0]}, tu` : 'Tu';
     
-    return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** Utilise \`/contact [ton message]\` pour les contacter directement.\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 Tu recevras une réponse personnalisée !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
+    return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** Utilise \`/contact [ton message]\` pour les contacter directement.\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 ${greeting} recevras une réponse personnalisée !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
 }
 
 async function detectCommandIntentions(message, ctx) {
@@ -808,16 +908,19 @@ async function executeCommandFromChat(senderId, commandName, args, ctx) {
     }
 }
 
-async function generateContextualResponse(originalMessage, commandResult, commandName, ctx) {
+// 🆕 FONCTION MODIFIÉE: Réponse contextuelle avec nom utilisateur
+async function generateContextualResponse(originalMessage, commandResult, commandName, ctx, userName = null) {
     if (typeof commandResult === 'object' && commandResult.type === 'image') {
         return commandResult;
     }
     
     try {
         // Essayer d'abord avec Gemini (avec rotation des clés)
-        const contextPrompt = `L'utilisateur a dit: "${originalMessage}"
+        const userGreeting = userName ? `${userName.split(' ')[0]}` : '';
+        const contextPrompt = `L'utilisateur ${userName ? userName : 'anonyme'} a dit: "${originalMessage}"
 J'ai exécuté /${commandName} avec résultat: "${commandResult}"
 
+${userName ? `Tu peux utiliser le prénom ${userGreeting} occasionnellement de manière naturelle.` : ''}
 Génère une réponse naturelle et amicale (max 400 chars) qui présente le résultat de manière conversationnelle.`;
 
         const response = await callGeminiWithRotation(contextPrompt);
@@ -827,8 +930,9 @@ Génère une réponse naturelle et amicale (max 400 chars) qui présente le rés
         // Fallback sur Mistral si besoin
         const { callMistralAPI } = ctx;
         try {
+            const userContext = userName ? `L'utilisateur s'appelle ${userName}. ` : '';
             const response = await callMistralAPI([
-                { role: "system", content: "Réponds naturellement et amicalement." },
+                { role: "system", content: `${userContext}Réponds naturellement et amicalement.` },
                 { role: "user", content: `Utilisateur: "${originalMessage}"\nRésultat: "${commandResult}"\nPrésente ce résultat naturellement (max 200 chars)` }
             ], 200, 0.7);
             
@@ -850,3 +954,6 @@ module.exports.generateNaturalResponse = generateNaturalResponse;
 module.exports.callGeminiWithRotation = callGeminiWithRotation;
 module.exports.getNextGeminiKey = getNextGeminiKey;
 module.exports.markKeyAsFailed = markKeyAsFailed;
+// 🆕 Exports pour les fonctionnalités Facebook
+module.exports.getUserName = getUserName;
+module.exports.getUserFirstName = getUserFirstName;
