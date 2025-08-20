@@ -1,5 +1,5 @@
 /**
- * NakamaBot - Commande /chat avec IA pure pour détection intelligente
+ * NakamaBot - Commande /chat avec recherche intelligente intégrée
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
@@ -8,35 +8,23 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
 
-// Configuration APIs - Support de clés multiples pour Gemini
-const GEMINI_API_KEYS = process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.split(',').map(key => key.trim()) : [];
+// Configuration APIs
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const GOOGLE_SEARCH_API_KEY = process.env.GOOGLE_SEARCH_API_KEY;
 const GOOGLE_SEARCH_ENGINE_ID = process.env.GOOGLE_SEARCH_ENGINE_ID;
+
+// Fallback: SerpAPI si Google Custom Search n'est pas disponible
 const SERPAPI_KEY = process.env.SERPAPI_KEY;
 
-// Gestion rotation des clés Gemini
-let currentGeminiKeyIndex = 0;
-
-function getNextGeminiAPI() {
-    if (GEMINI_API_KEYS.length === 0) {
-        throw new Error('Aucune clé Gemini configurée');
-    }
-    
-    const apiKey = GEMINI_API_KEYS[currentGeminiKeyIndex];
-    currentGeminiKeyIndex = (currentGeminiKeyIndex + 1) % GEMINI_API_KEYS.length;
-    
-    return new GoogleGenerativeAI(apiKey);
-}
-
 module.exports = async function cmdChat(senderId, args, ctx) {
-    const { addToMemory, getMemoryContext, callMistralAPI, log } = ctx;
+    const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log } = ctx;
     
     if (!args.trim()) {
         return "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
     }
     
-    // ✅ Détection contact admin (conservée car spécifique)
-    const contactIntention = await detectContactAdminIntention(args, ctx);
+    // ✅ Détection des demandes de contact admin
+    const contactIntention = detectContactAdminIntention(args);
     if (contactIntention.shouldContact) {
         log.info(`📞 Intention contact admin détectée pour ${senderId}: ${contactIntention.reason}`);
         const contactSuggestion = generateContactSuggestion(contactIntention.reason, contactIntention.extractedMessage);
@@ -45,15 +33,13 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         return contactSuggestion;
     }
     
-    // 🤖 ANALYSE IA COMPLÈTE DU MESSAGE
-    const aiAnalysis = await performCompleteAIAnalysis(args, senderId, ctx);
-    
-    // 🎯 Exécution de commande détectée
-    if (aiAnalysis.commandDetected && aiAnalysis.shouldExecuteCommand) {
-        log.info(`🎯 Commande IA détectée: ${aiAnalysis.detectedCommand} (confiance: ${aiAnalysis.commandConfidence}) pour ${senderId}`);
+    // 🆕 DÉTECTION INTELLIGENTE DES COMMANDES (Nouveau Système)
+    const intelligentCommand = await detectIntelligentCommands(args, ctx);
+    if (intelligentCommand.shouldExecute) {
+        log.info(`🧠 Détection IA intelligente: /${intelligentCommand.command} (${intelligentCommand.confidence}) pour ${senderId}`);
         
         try {
-            const commandResult = await executeCommandFromChat(senderId, aiAnalysis.detectedCommand, aiAnalysis.extractedArgs, ctx);
+            const commandResult = await executeCommandFromChat(senderId, intelligentCommand.command, intelligentCommand.args, ctx);
             
             if (commandResult.success) {
                 // Gestion spéciale pour les images
@@ -63,158 +49,144 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                 }
                 
                 // Réponse contextuelle naturelle
-                const contextualResponse = await generateContextualResponse(args, commandResult.result, aiAnalysis.detectedCommand, ctx);
+                const contextualResponse = await generateContextualResponse(args, commandResult.result, intelligentCommand.command, ctx);
                 addToMemory(String(senderId), 'user', args);
                 addToMemory(String(senderId), 'assistant', contextualResponse);
                 return contextualResponse;
             } else {
-                log.warning(`⚠️ Échec exécution commande ${aiAnalysis.detectedCommand}: ${commandResult.error}`);
+                log.warning(`⚠️ Échec exécution commande /${intelligentCommand.command}: ${commandResult.error}`);
+                // Continue avec conversation normale en cas d'échec
             }
         } catch (error) {
-            log.error(`❌ Erreur exécution commande intelligente: ${error.message}`);
+            log.error(`❌ Erreur exécution commande IA: ${error.message}`);
+            // Continue avec conversation normale en cas d'erreur
         }
-    }
+    } 
     
-    // 🔍 Recherche externe si nécessaire
-    if (aiAnalysis.needsExternalSearch && aiAnalysis.shouldPerformSearch) {
-        log.info(`🔍 Recherche externe IA requise pour ${senderId}: ${aiAnalysis.searchReason}`);
+    // 🆕 NOUVELLE FONCTIONNALITÉ: Décision intelligente pour recherche externe
+    const searchDecision = await decideSearchNecessity(args, senderId, ctx);
+    
+    if (searchDecision.needsExternalSearch) {
+        log.info(`🔍 Recherche externe nécessaire pour 2025-2026 ${senderId}: ${searchDecision.reason}`);
         
         try {
-            const searchResults = await performIntelligentSearch(aiAnalysis.optimizedSearchQuery, ctx);
+            const searchResults = await performIntelligentSearch(searchDecision.searchQuery, ctx);
             
             if (searchResults && searchResults.length > 0) {
                 const naturalResponse = await generateNaturalResponse(args, searchResults, ctx);
-                if (naturalResponse) {
-                    addToMemory(String(senderId), 'user', args);
-                    addToMemory(String(senderId), 'assistant', naturalResponse);
-                    return naturalResponse;
-                }
+                addToMemory(String(senderId), 'user', args);
+                addToMemory(String(senderId), 'assistant', naturalResponse);
+                return naturalResponse;
             } else {
-                log.warning(`⚠️ Aucun résultat de recherche pour: ${aiAnalysis.optimizedSearchQuery}`);
+                log.warning(`⚠️ Aucun résultat de recherche pour: ${searchDecision.searchQuery}`);
+                // Continue avec conversation normale si pas de résultats
             }
         } catch (searchError) {
             log.error(`❌ Erreur recherche intelligente: ${searchError.message}`);
+            // Continue avec conversation normale en cas d'erreur
         }
     }
     
-    // 💬 Conversation classique avec Gemini (Mistral en fallback)
+    // ✅ Conversation classique avec Gemini (Mistral en fallback)
     return await handleConversationWithFallback(senderId, args, ctx);
 };
 
-// 🧠 ANALYSE IA COMPLÈTE - Tout en une seule passe
-async function performCompleteAIAnalysis(userMessage, senderId, ctx) {
+// 🆕 DÉCISION IA: Déterminer si une recherche externe est nécessaire
+async function decideSearchNecessity(userMessage, senderId, ctx) {
     const { log } = ctx;
     
     try {
-        const genAI = getNextGeminiAPI();
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         
-        const now = new Date();
-        const dateTime = now.toLocaleString('fr-FR', { 
-            weekday: 'long', 
-            year: 'numeric', 
-            month: 'long', 
-            day: 'numeric', 
-            hour: '2-digit', 
-            minute: '2-digit',
-            timeZone: 'Europe/Paris'
-        });
-        
-        const analysisPrompt = `Tu es le système d'analyse intelligent de NakamaBot. Analyse ce message utilisateur pour déterminer les actions nécessaires.
+        const decisionPrompt = `Tu es un système de décision intelligent pour un chatbot. 
+Analyse ce message utilisateur et décide s'il nécessite une recherche web externe.
 
-CONTEXTE TEMPOREL: ${dateTime}
+CRITÈRES POUR RECHERCHE EXTERNE:
+✅ OUI si:
+- Informations récentes (actualités, événements 2025-2026)
+- Données factuelles spécifiques (prix actuels, statistiques, dates précises)
+- Informations locales/géographiques spécifiques
+- Recherche de produits/services/entreprises précis
+- Questions sur des personnes publiques récentes
+- Données météo, cours de bourse, résultats sportifs
 
-COMMANDES DISPONIBLES:
-- help: Afficher l'aide et toutes les commandes
-- image: Créer des images uniques avec l'IA
-- vision: Analyser des images avec précision  
-- anime: Transformer images en style anime/manga
-- music: Trouver musique sur YouTube
-- clan: Système de clans et batailles
-- rank: Voir niveau et progression
-- contact: Contacter les administrateurs
-- weather: Informations météo actuelles
+❌ NON si:
+- Conversations générales/philosophiques
+- Conseils/opinions personnelles
+- Questions sur le bot lui-même
+- Créativité (histoires, poèmes)
+- Explications de concepts généraux
+- Calculs/logique
+- Questions existantes dans ma base de connaissances
 
 MESSAGE UTILISATEUR: "${userMessage}"
 
-ANALYSE REQUISE:
-
-1. DÉTECTION DE COMMANDE:
-   - L'utilisateur veut-il utiliser une fonctionnalité spécifique ?
-   - Quelle commande correspond à son intention ?
-   - Quels sont les arguments à extraire ?
-
-2. NÉCESSITÉ DE RECHERCHE EXTERNE:
-   - Le message nécessite-t-il des informations récentes/actuelles ?
-   - S'agit-il de données factuelles spécifiques non connues ?
-   - Quelle requête de recherche serait optimale ?
-
-3. TYPE DE RÉPONSE ATTENDUE:
-   - Conversation générale
-   - Exécution de commande
-   - Recherche d'informations
-   - Aide/support
-
-Réponds UNIQUEMENT avec ce JSON structuré:
+Réponds UNIQUEMENT avec ce format JSON:
 {
-  "analysisType": "command|search|conversation|help",
-  "commandDetected": true/false,
-  "detectedCommand": "nom_commande_ou_null",
-  "commandConfidence": 0.0-1.0,
-  "shouldExecuteCommand": true/false,
-  "extractedArgs": "arguments_extraits_ou_message_complet",
   "needsExternalSearch": true/false,
-  "shouldPerformSearch": true/false,
-  "searchConfidence": 0.0-1.0,
-  "searchReason": "pourquoi_recherche_necessaire",
-  "optimizedSearchQuery": "requete_optimisee",
-  "conversationType": "general|technical|creative|support",
-  "userIntent": "description_intention_utilisateur",
-  "reasoning": "explication_courte_du_raisonnement"
+  "confidence": 0.0-1.0,
+  "reason": "explication courte",
+  "searchQuery": "requête de recherche optimisée si nécessaire"
 }`;
 
-        const result = await model.generateContent(analysisPrompt);
+        const result = await model.generateContent(decisionPrompt);
         const response = result.response.text();
         
         // Extraire le JSON de la réponse
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-            const analysis = JSON.parse(jsonMatch[0]);
-            
-            log.info(`🧠 Analyse IA complète: ${analysis.analysisType} | Commande: ${analysis.detectedCommand || 'aucune'} | Recherche: ${analysis.needsExternalSearch ? 'oui' : 'non'}`);
-            
-            return {
-                ...analysis,
-                // Valeurs par défaut pour éviter les erreurs
-                commandDetected: analysis.commandDetected || false,
-                shouldExecuteCommand: analysis.shouldExecuteCommand || false,
-                needsExternalSearch: analysis.needsExternalSearch || false,
-                shouldPerformSearch: analysis.shouldPerformSearch || false,
-                commandConfidence: analysis.commandConfidence || 0,
-                searchConfidence: analysis.searchConfidence || 0
-            };
+            const decision = JSON.parse(jsonMatch[0]);
+            log.info(`🤖 Décision recherche: ${decision.needsExternalSearch ? 'OUI' : 'NON'} (${decision.confidence}) - ${decision.reason}`);
+            return decision;
         }
         
-        throw new Error('Format JSON invalide');
+        throw new Error('Format de réponse invalide');
         
     } catch (error) {
-        log.warning(`⚠️ Erreur analyse IA complète: ${error.message}`);
+        log.warning(`⚠️ Erreur décision recherche: ${error.message}`);
         
-        // Fallback minimal
+        // Fallback: détection par mots-clés
+        const keywordSearch = detectSearchKeywords(userMessage);
         return {
-            analysisType: 'conversation',
-            commandDetected: false,
-            shouldExecuteCommand: false,
-            needsExternalSearch: false,
-            shouldPerformSearch: false,
-            conversationType: 'general',
-            userIntent: 'conversation_generale',
-            reasoning: 'fallback_error'
+            needsExternalSearch: keywordSearch.needs,
+            confidence: 0.6,
+            reason: 'fallback_keywords',
+            searchQuery: keywordSearch.query
         };
     }
 }
 
-// 🔍 RECHERCHE INTELLIGENTE - Inchangée mais simplifiée
+// 🆕 FALLBACK: Détection par mots-clés si l'IA échoue
+function detectSearchKeywords(message) {
+    const lowerMessage = message.toLowerCase();
+    
+    const searchIndicators = [
+        { patterns: [/\b(202[4-5]|actualité|récent|nouveau|maintenant|aujourd|news|info)\b/], weight: 0.9 },
+        { patterns: [/\b(prix|coût|combien|tarif)\b.*\b(euros?|dollars?|€|\$)\b/], weight: 0.8 },
+        { patterns: [/\b(météo|temps|température)\b.*\b(aujourd|demain|cette semaine)\b/], weight: 0.9 },
+        { patterns: [/\b(où|address|lieu|localisation|carte)\b/], weight: 0.7 },
+        { patterns: [/\b(qui est|biographie|âge)\b.*\b[A-Z][a-z]+\s[A-Z][a-z]+/], weight: 0.8 },
+        { patterns: [/\b(résultats?|score|match|compétition)\b.*\b(sport|foot|tennis|basket)\b/], weight: 0.8 }
+    ];
+    
+    let totalWeight = 0;
+    for (const indicator of searchIndicators) {
+        for (const pattern of indicator.patterns) {
+            if (pattern.test(lowerMessage)) {
+                totalWeight += indicator.weight;
+                break;
+            }
+        }
+    }
+    
+    return {
+        needs: totalWeight > 0.6,
+        query: message,
+        confidence: Math.min(totalWeight, 1.0)
+    };
+}
+
+// 🆕 RECHERCHE INTELLIGENTE: Utilise Google Custom Search ou SerpAPI
 async function performIntelligentSearch(query, ctx) {
     const { log } = ctx;
     
@@ -229,16 +201,17 @@ async function performIntelligentSearch(query, ctx) {
             return await serpApiSearch(query, log);
         }
         
-        log.warning('⚠️ Aucune API de recherche configurée');
-        return [];
+        // Priorité 3: Recherche existante du bot (fallback)
+        log.warning('⚠️ Aucune API de recherche configurée, utilisation webSearch existant');
+        return await fallbackWebSearch(query, ctx);
         
     } catch (error) {
         log.error(`❌ Erreur recherche: ${error.message}`);
-        return [];
+        throw error;
     }
 }
 
-// Google Custom Search API
+// 🆕 Google Custom Search API
 async function googleCustomSearch(query, log) {
     const url = `https://www.googleapis.com/customsearch/v1`;
     const params = {
@@ -265,7 +238,7 @@ async function googleCustomSearch(query, log) {
     return [];
 }
 
-// SerpAPI (alternative)
+// 🆕 SerpAPI (alternative gratuite)
 async function serpApiSearch(query, log) {
     const url = `https://serpapi.com/search`;
     const params = {
@@ -291,10 +264,32 @@ async function serpApiSearch(query, log) {
     return [];
 }
 
-// 🎭 GÉNÉRATION DE RÉPONSE NATURELLE (avec recherche)
+// 🆕 Fallback sur la recherche existante
+async function fallbackWebSearch(query, ctx) {
+    const { webSearch } = ctx;
+    
+    try {
+        const result = await webSearch(query);
+        if (result) {
+            return [{
+                title: 'Information récente',
+                link: 'N/A',
+                description: result,
+                source: 'internal'
+            }];
+        }
+    } catch (error) {
+        // Ignore silencieusement
+    }
+    
+    return [];
+}
+
+// 🎯 MODIFICATION 1: Génération de réponse naturelle (sans mention de recherche)
 async function generateNaturalResponse(originalQuery, searchResults, ctx) {
     const { log, callMistralAPI } = ctx;
     
+    // Date et heure actuelles
     const now = new Date();
     const dateTime = now.toLocaleString('fr-FR', { 
         weekday: 'long', 
@@ -307,28 +302,28 @@ async function generateNaturalResponse(originalQuery, searchResults, ctx) {
     });
     
     try {
-        const genAI = getNextGeminiAPI();
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         
         const resultsText = searchResults.map((result, index) => 
             `${result.title}: ${result.description}`
         ).join('\n');
         
+        // 🎯 MODIFICATION: Prompt complètement naturel
         const naturalPrompt = `Tu es NakamaBot, une IA conversationnelle empathique et créative.
 
-CONTEXTE TEMPOREL: ${dateTime}
+CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
 
 L'utilisateur te demande: "${originalQuery}"
 
-Informations actuelles pertinentes:
+Voici des informations actuelles pertinentes:
 ${resultsText}
 
-INSTRUCTIONS:
+INSTRUCTIONS IMPORTANTES:
 - Réponds comme si tu connaissais naturellement ces informations
-- Ton conversationnel et amical avec quelques emojis
-- Maximum 2500 caractères
+- Adopte un ton conversationnel et amical avec quelques emojis
+- Maximum 3000 caractères
 - Ne mentionne JAMAIS que tu as fait une recherche
-- Ne dis jamais "d'après mes recherches" ou "selon les sources"  
+- Ne dis jamais "d'après mes recherches" ou "selon les sources"
 - Réponds comme dans une conversation normale entre amis
 - Si l'information n'est pas complète, reste naturel et honnête
 
@@ -338,7 +333,7 @@ RÉPONSE NATURELLE:`;
         const response = result.response.text();
         
         if (response && response.trim()) {
-            log.info(`🎭 Réponse naturelle Gemini générée`);
+            log.info(`🎭 Réponse naturelle Gemini pour: ${originalQuery.substring(0, 30)}...`);
             return response;
         }
         
@@ -348,19 +343,19 @@ RÉPONSE NATURELLE:`;
         log.warning(`⚠️ Erreur réponse naturelle Gemini: ${geminiError.message}`);
         
         try {
-            // Fallback Mistral
+            // 🎯 MODIFICATION 2: Fallback Mistral aussi naturel
             const messages = [{
                 role: "system",
                 content: "Tu es NakamaBot. Réponds naturellement comme dans une conversation normale. Ne mentionne jamais de recherches ou sources."
             }, {
                 role: "user", 
-                content: `Question: "${originalQuery}"\n\nInformations utiles:\n${searchResults.map(r => `${r.title}: ${r.description}`).join('\n')}\n\nRéponds naturellement comme si tu connaissais déjà ces infos (max 2500 chars):`
+                content: `Question: "${originalQuery}"\n\nInformations utiles:\n${searchResults.map(r => `${r.title}: ${r.description}`).join('\n')}\n\nRéponds naturellement comme si tu connaissais déjà ces infos (max 3000 chars):`
             }];
             
-            const mistralResponse = await callMistralAPI(messages, 2500, 0.7);
+            const mistralResponse = await callMistralAPI(messages, 3000, 0.7);
             
             if (mistralResponse) {
-                log.info(`🔄 Réponse naturelle Mistral générée`);
+                log.info(`🔄 Réponse naturelle Mistral pour: ${originalQuery.substring(0, 30)}...`);
                 return mistralResponse;
             }
             
@@ -369,25 +364,28 @@ RÉPONSE NATURELLE:`;
         } catch (mistralError) {
             log.error(`❌ Erreur réponse naturelle totale: ${mistralError.message}`);
             
-            // Derniers recours
+            // 🎯 MODIFICATION 3: Derniers recours plus naturel
             const topResult = searchResults[0];
             if (topResult) {
-                return `D'après ce que je sais, ${topResult.description} 💡 ${searchResults.length > 1 ? 'Il y a aussi d\'autres aspects intéressants sur le sujet !' : 'J\'espère que ça répond à ta question !'}`;
+                const basicResponse = `D'après ce que je sais, ${topResult.description} 💡 ${searchResults.length > 1 ? 'Il y a aussi d\'autres aspects intéressants sur le sujet !' : 'J\'espère que ça répond à ta question !'}`;
+                return basicResponse;
             }
             
-            return null;
+            // 🎯 MODIFICATION 4: Si vraiment rien ne marche, continue normalement
+            return null; // Cela déclenchera la conversation normale
         }
     }
 }
 
-// 💬 CONVERSATION NORMALE (avec rotation Gemini)
+// ✅ FONCTION EXISTANTE: Gestion conversation avec Gemini et fallback Mistral
 async function handleConversationWithFallback(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, log } = ctx;
     
-    // Contexte optimisé (8 derniers messages)
+    // Récupération du contexte (derniers 8 messages pour optimiser)
     const context = getMemoryContext(String(senderId)).slice(-8);
     const messageCount = context.filter(msg => msg.role === 'user').length;
     
+    // Date et heure actuelles
     const now = new Date();
     const dateTime = now.toLocaleString('fr-FR', { 
         weekday: 'long', 
@@ -399,7 +397,7 @@ async function handleConversationWithFallback(senderId, args, ctx) {
         timeZone: 'Europe/Paris'
     });
     
-    // Construction historique conversation
+    // Construction de l'historique de conversation
     let conversationHistory = "";
     if (context.length > 0) {
         conversationHistory = context.map(msg => 
@@ -408,13 +406,13 @@ async function handleConversationWithFallback(senderId, args, ctx) {
     }
     
     // Prompt système optimisé
-    const systemPrompt = `Tu es NakamaBot, une IA conversationnelle avancée créée par Durand et Cécile.
+    const systemPrompt = `Tu es NakamaBot, une IA conversationnelle un model Durand AI avancée créée par Durand et sa femme Cécile.
 
-CONTEXTE TEMPOREL: ${dateTime}
+CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
 
 INTELLIGENCE & PERSONNALITÉ:
 - Empathique, créative et intuitive
-- Comprends les émotions et intentions sous-jacentes  
+- Tu comprends les émotions et intentions sous-jacentes  
 - Pédagogue naturelle qui explique clairement
 - Adaptable selon l'utilisateur et le contexte
 
@@ -430,21 +428,20 @@ CAPACITÉS PRINCIPALES:
 🆘 Guide complet (dis "aide" ou "que peux-tu faire ?")
 
 DIRECTIVES:
-- Parle en fonction de la langue utilisée par l'utilisateur
+- Parle en fonction de la langue utilisée par l'utilisateur et du contexte garde en memoire que nous somme le ${dateTime}
 - Maximum 3000 caractères par réponse
 - Utilise quelques emojis avec parcimonie
 - Évite les répétitions et formules toutes faites
-- ${messageCount >= 5 ? 'Suggère /help si pertinent' : ''}
-- Pour questions techniques: "Demande à Durand ou Cécile, ils connaissent tous mes secrets !"
-- Recommande /contact pour problèmes techniques graves
+- ${messageCount >= 5 ? 'Suggère /help si pertinent pour débloquer l\'utilisateur' : ''}
+- Pour questions techniques sur ta création: "Demande à Durand ou Kuine, ils connaissent tous mes secrets !"
+- Recommande discrètement /contact pour problèmes techniques graves
 
 ${conversationHistory ? `Historique:\n${conversationHistory}` : ''}
 
 Utilisateur: ${args}`;
 
     try {
-        // Essayer avec Gemini (rotation automatique)
-        const genAI = getNextGeminiAPI();
+        // ✅ PRIORITÉ: Essayer d'abord avec Gemini
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const result = await model.generateContent(systemPrompt);
         const geminiResponse = result.response.text();
@@ -452,17 +449,17 @@ Utilisateur: ${args}`;
         if (geminiResponse && geminiResponse.trim()) {
             addToMemory(String(senderId), 'user', args);
             addToMemory(String(senderId), 'assistant', geminiResponse);
-            log.info(`💎 Gemini réponse (clé ${currentGeminiKeyIndex}) pour ${senderId}`);
+            log.info(`💎 Gemini réponse pour ${senderId}: ${args.substring(0, 30)}...`);
             return geminiResponse;
         }
         
         throw new Error('Réponse Gemini vide');
         
     } catch (geminiError) {
-        log.warning(`⚠️ Gemini échec (clé ${currentGeminiKeyIndex}) pour ${senderId}: ${geminiError.message}`);
+        log.warning(`⚠️ Gemini échec pour ${senderId}: ${geminiError.message}`);
         
         try {
-            // Fallback Mistral
+            // ✅ FALLBACK: Utiliser Mistral en cas d'échec Gemini
             const messages = [{ role: "system", content: systemPrompt }];
             messages.push(...context);
             messages.push({ role: "user", content: args });
@@ -472,14 +469,14 @@ Utilisateur: ${args}`;
             if (mistralResponse) {
                 addToMemory(String(senderId), 'user', args);
                 addToMemory(String(senderId), 'assistant', mistralResponse);
-                log.info(`🔄 Mistral fallback pour ${senderId}`);
+                log.info(`🔄 Mistral fallback pour ${senderId}: ${args.substring(0, 30)}...`);
                 return mistralResponse;
             }
             
             throw new Error('Mistral aussi en échec');
             
         } catch (mistralError) {
-            log.error(`❌ Erreur totale conversation ${senderId}: Gemini + Mistral`);
+            log.error(`❌ Erreur totale conversation ${senderId}: Gemini(${geminiError.message}) + Mistral(${mistralError.message})`);
             
             const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? 💫";
             addToMemory(String(senderId), 'assistant', errorResponse);
@@ -488,52 +485,115 @@ Utilisateur: ${args}`;
     }
 }
 
-// ✅ FONCTIONS UTILITAIRES (conservées et simplifiées)
+// 🆕 LISTE DES COMMANDES VALIDES (Simple et efficace)
+const VALID_COMMANDS = [
+    'help',      // Aide et guide complet
+    'image',     // Création d'images IA
+    'vision',    // Analyse d'images
+    'anime',     // Style anime/manga
+    'music',     // Recherche musicale YouTube
+    'clan',      // Système de clans et batailles
+    'rank',      // Niveau et progression
+    'contact',   // Contact administrateurs
+    'weather'    // Informations météo
+];
 
-async function detectContactAdminIntention(message, ctx) {
+// 🧠 DÉTECTION IA PURE (Sans mots-clés perturbants)
+async function detectIntelligentCommands(message, ctx) {
     const { log } = ctx;
     
     try {
-        const genAI = getNextGeminiAPI();
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         
-        const contactPrompt = `Analyse ce message pour déterminer si l'utilisateur veut contacter les administrateurs.
+        const commandsList = VALID_COMMANDS.map(cmd => `/${cmd}`).join(', ');
+        
+        const detectionPrompt = `Tu es un système de détection de commandes intelligent pour NakamaBot.
 
-MESSAGE: "${message}"
+COMMANDES DISPONIBLES: ${commandsList}
 
-CRITÈRES CONTACT ADMIN:
-✅ Demande explicite de contact admin/créateurs
-✅ Problème technique grave/urgent  
-✅ Signalement important
-✅ Suggestion d'amélioration
-✅ Réclamation/plainte
+MESSAGE UTILISATEUR: "${message}"
 
-❌ Questions générales sur le bot
-❌ Conversation normale
-❌ Questions sur création (géré par IA)
+ANALYSE CE MESSAGE et détermine s'il correspond à l'intention d'utiliser une fonctionnalité spécifique du bot.
 
-Réponds UNIQUEMENT:
+EXEMPLES D'INTENTIONS CLAIRES:
+✅ "aide-moi" ou "que peux-tu faire" → help
+✅ "dessine-moi..." ou "crée une image" → image  
+✅ "regarde cette image" ou "analyse ça" → vision
+✅ "style anime" ou "transforme en manga" → anime
+✅ "trouve cette musique" ou "joue..." → music
+✅ "rejoindre clan" ou "bataille" → clan
+✅ "mon niveau" ou "mes stats" → rank
+✅ "contacter admin" ou "problème technique" → contact
+✅ "quel temps" ou "météo" → weather
+
+❌ IGNORE les conversations générales qui mentionnent juste ces mots
+❌ Questions théoriques sur les commandes
+❌ Contexte purement conversationnel
+
+Réponds UNIQUEMENT avec ce JSON:
 {
-  "shouldContact": true/false,
-  "reason": "contact_direct|probleme_technique|signalement|suggestion|plainte|aucun",
-  "extractedMessage": "message_original"
+  "isCommand": true/false,
+  "command": "nom_commande_ou_null",
+  "confidence": 0.0-1.0,
+  "extractedArgs": "arguments_extraits_ou_message_complet",
+  "reason": "explication_courte"
 }`;
 
-        const result = await model.generateContent(contactPrompt);
+        const result = await model.generateContent(detectionPrompt);
         const response = result.response.text();
         
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-            const analysis = JSON.parse(jsonMatch[0]);
-            return {
-                shouldContact: analysis.shouldContact || false,
-                reason: analysis.reason || 'aucun',
-                extractedMessage: analysis.extractedMessage || message
-            };
+            const aiDetection = JSON.parse(jsonMatch[0]);
+            
+            // Validation de la commande dans la liste
+            if (aiDetection.isCommand && VALID_COMMANDS.includes(aiDetection.command)) {
+                log.info(`🧠 Détection IA pure: /${aiDetection.command} (${aiDetection.confidence}) - ${aiDetection.reason}`);
+                return {
+                    shouldExecute: aiDetection.confidence > 0.7, // Seuil plus élevé pour éviter faux positifs
+                    command: aiDetection.command,
+                    args: aiDetection.extractedArgs,
+                    confidence: aiDetection.confidence,
+                    method: 'ai_pure'
+                };
+            }
         }
         
+        return { shouldExecute: false };
+        
     } catch (error) {
-        log.warning(`⚠️ Erreur détection contact admin: ${error.message}`);
+        log.warning(`⚠️ Erreur détection IA commandes: ${error.message}`);
+        return { shouldExecute: false };
+    }
+}
+
+// ✅ FONCTIONS EXISTANTES (inchangées)
+
+function detectContactAdminIntention(message) {
+    const lowerMessage = message.toLowerCase();
+    
+    const contactPatterns = [
+        { patterns: [/(?:contacter|parler|écrire).*?(?:admin|administrateur|créateur|durand)/i], reason: 'contact_direct' },
+        { patterns: [/(?:problème|bug|erreur).*?(?:grave|urgent|important)/i], reason: 'probleme_technique' },
+        { patterns: [/(?:signaler|reporter|dénoncer)/i], reason: 'signalement' },
+        { patterns: [/(?:suggestion|propose|idée).*?(?:amélioration|nouvelle)/i], reason: 'suggestion' },
+        { patterns: [/(?:qui a créé|créateur|développeur).*?(?:bot|nakamabot)/i], reason: 'question_creation' },
+        { patterns: [/(?:plainte|réclamation|pas content|mécontent)/i], reason: 'plainte' }
+    ];
+    
+    for (const category of contactPatterns) {
+        for (const pattern of category.patterns) {
+            if (pattern.test(message)) {
+                if (category.reason === 'question_creation') {
+                    return { shouldContact: false }; // Géré par l'IA
+                }
+                return {
+                    shouldContact: true,
+                    reason: category.reason,
+                    extractedMessage: message
+                };
+            }
+        }
     }
     
     return { shouldContact: false };
@@ -556,6 +616,12 @@ function generateContactSuggestion(reason, extractedMessage) {
     const preview = extractedMessage.length > 60 ? extractedMessage.substring(0, 60) + "..." : extractedMessage;
     
     return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** Utilise \`/contact [ton message]\` pour les contacter directement.\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 Tu recevras une réponse personnalisée !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
+}
+
+async function detectCommandIntentions(message, ctx) {
+    // ⚠️ FONCTION DÉPRÉCIÉE - Remplacée par detectIntelligentCommands
+    // Maintenue pour compatibilité avec l'ancien système
+    return { shouldExecute: false };
 }
 
 async function executeCommandFromChat(senderId, commandName, args, ctx) {
@@ -595,9 +661,8 @@ async function generateContextualResponse(originalMessage, commandResult, comman
     }
     
     try {
-        const genAI = getNextGeminiAPI();
+        // Essayer d'abord avec Gemini
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        
         const contextPrompt = `L'utilisateur a dit: "${originalMessage}"
 J'ai exécuté /${commandName} avec résultat: "${commandResult}"
 
@@ -607,6 +672,7 @@ Génère une réponse naturelle et amicale (max 400 chars) qui présente le rés
         return result.response.text() || commandResult;
         
     } catch (error) {
+        // Fallback sur Mistral si besoin
         const { callMistralAPI } = ctx;
         try {
             const response = await callMistralAPI([
@@ -620,3 +686,12 @@ Génère une réponse naturelle et amicale (max 400 chars) qui présente le rés
         }
     }
 }
+
+// ✅ Exports pour autres commandes
+module.exports.detectIntelligentCommands = detectIntelligentCommands;
+module.exports.VALID_COMMANDS = VALID_COMMANDS;
+module.exports.executeCommandFromChat = executeCommandFromChat;
+module.exports.detectContactAdminIntention = detectContactAdminIntention;
+module.exports.decideSearchNecessity = decideSearchNecessity;
+module.exports.performIntelligentSearch = performIntelligentSearch;
+module.exports.generateNaturalResponse = generateNaturalResponse;
