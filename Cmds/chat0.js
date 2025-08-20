@@ -1,4 +1,4 @@
-/**
+/** 
  * NakamaBot - Commande /chat avec recherche intelligente intégrée et rotation des clés Gemini
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
