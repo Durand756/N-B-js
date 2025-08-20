@@ -20,8 +20,9 @@ const SERPAPI_KEY = process.env.SERPAPI_KEY;
 let currentGeminiKeyIndex = 0;
 const failedKeys = new Set();
 
-// 🛡️ PROTECTION ANTI-DOUBLONS: Map pour tracker les demandes en cours
+// 🛡️ PROTECTION ANTI-DOUBLONS RENFORCÉE: Map pour tracker les demandes en cours
 const activeRequests = new Map();
+const recentMessages = new Map(); // Cache des messages récents pour éviter les doublons
 
 // Fonction pour obtenir la prochaine clé Gemini disponible
 function getNextGeminiKey() {
@@ -98,19 +99,40 @@ async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.lengt
     throw lastError || new Error('Toutes les clés Gemini ont échoué');
 }
 
-// 🛡️ FONCTION PRINCIPALE AVEC PROTECTION ANTI-DOUBLONS
+// 🛡️ FONCTION PRINCIPALE AVEC PROTECTION ANTI-DOUBLONS RENFORCÉE
 module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log } = ctx;
     
-    // 🛡️ PROTECTION 1: Vérifier si une demande est déjà en cours pour cet utilisateur
-    const requestKey = `${senderId}_${Date.now()}`;
+    // 🛡️ PROTECTION 1: Créer une signature unique du message
+    const messageSignature = `${senderId}_${args.trim().toLowerCase()}`;
+    const currentTime = Date.now();
+    
+    // 🛡️ PROTECTION 2: Vérifier si ce message exact a été traité récemment (dernières 30 secondes)
+    if (recentMessages.has(messageSignature)) {
+        const lastProcessed = recentMessages.get(messageSignature);
+        if (currentTime - lastProcessed < 30000) { // 30 secondes
+            log.warning(`🚫 Message dupliqué ignoré pour ${senderId}: "${args.substring(0, 30)}..."`);
+            return; // Ignore silencieusement les messages dupliqués récents
+        }
+    }
+    
+    // 🛡️ PROTECTION 3: Vérifier si une demande est déjà en cours pour cet utilisateur
     if (activeRequests.has(senderId)) {
         log.warning(`🚫 Demande en cours ignorée pour ${senderId}`);
         return; // Ignore silencieusement les demandes multiples
     }
     
-    // 🛡️ PROTECTION 2: Marquer la demande comme active
+    // 🛡️ PROTECTION 4: Marquer la demande comme active et enregistrer le message
+    const requestKey = `${senderId}_${currentTime}`;
     activeRequests.set(senderId, requestKey);
+    recentMessages.set(messageSignature, currentTime);
+    
+    // 🧹 NETTOYAGE: Supprimer les anciens messages du cache (plus de 2 minutes)
+    for (const [signature, timestamp] of recentMessages.entries()) {
+        if (currentTime - timestamp > 120000) { // 2 minutes
+            recentMessages.delete(signature);
+        }
+    }
     
     try {
         if (!args.trim()) {
@@ -169,7 +191,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         const searchDecision = await decideSearchNecessity(args, senderId, ctx);
         
         if (searchDecision.needsExternalSearch) {
-            log.info(`🔍 Recherche externe nécessaire pour 2025-2026 ${senderId}: ${searchDecision.reason}`);
+            log.info(`🔍 Recherche externe nécessaire pour ${senderId}: ${searchDecision.reason}`);
             
             try {
                 const searchResults = await performIntelligentSearch(searchDecision.searchQuery, ctx);
@@ -177,16 +199,19 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                 if (searchResults && searchResults.length > 0) {
                     const naturalResponse = await generateNaturalResponse(args, searchResults, ctx);
                     
-                    // ✅ UN SEUL APPEL groupé
-                    addToMemory(String(senderId), 'user', args);
-                    addToMemory(String(senderId), 'assistant', naturalResponse);
-                    return naturalResponse;
+                    if (naturalResponse) {
+                        // ✅ UN SEUL APPEL groupé pour recherche
+                        addToMemory(String(senderId), 'user', args);
+                        addToMemory(String(senderId), 'assistant', naturalResponse);
+                        log.info(`🔍✅ Recherche terminée avec succès pour ${senderId}`);
+                        return naturalResponse;
+                    }
                 } else {
                     log.warning(`⚠️ Aucun résultat de recherche pour: ${searchDecision.searchQuery}`);
                     // Continue avec conversation normale si pas de résultats
                 }
             } catch (searchError) {
-                log.error(`❌ Erreur recherche intelligente: ${searchError.message}`);
+                log.error(`❌ Erreur recherche intelligente pour ${senderId}: ${searchError.message}`);
                 // Continue avec conversation normale en cas d'erreur
             }
         }
@@ -195,8 +220,9 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         return await handleConversationWithFallback(senderId, args, ctx);
         
     } finally {
-        // 🛡️ PROTECTION 3: Libérer la demande à la fin (TOUJOURS exécuté)
+        // 🛡️ PROTECTION 5: Libérer la demande à la fin (TOUJOURS exécuté)
         activeRequests.delete(senderId);
+        log.debug(`🔓 Demande libérée pour ${senderId}`);
     }
 };
 
@@ -458,7 +484,7 @@ RÉPONSE NATURELLE:`;
             const mistralResponse = await callMistralAPI(messages, 3000, 0.7);
             
             if (mistralResponse) {
-                log.info(`🔄 Réponse naturelle Mistral pour: ${originalQuery.substring(0, 30)}...`);
+                log.info(`🔄 Réponse naturelle Mistral pour ${senderId}: ${originalQuery.substring(0, 30)}...`);
                 return mistralResponse;
             }
             
