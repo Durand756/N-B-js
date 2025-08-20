@@ -292,7 +292,7 @@ async function synthesizeSearchResults(originalQuery, searchResults, ctx) {
 
 QUESTION UTILISATEUR: "${originalQuery}"
 
-RÉSULTATS DE RECHERCHE:
+RÉSULTATS DE RECHERCHE Nous sommes le ${dateTime}:
 ${resultsText}
 
 INSTRUCTIONS:
@@ -398,7 +398,7 @@ CAPACITÉS PRINCIPALES:
 🆘 /help - Toutes les commandes disponibles
 
 DIRECTIVES:
-- Parle en fonction de la langue utilisée par l'utilisateur et du contexte
+- Parle en fonction de la langue utilisée par l'utilisateur et du contexte garde en memoire que nous somme le ${dateTime}
 - Maximum 3000 caractères par réponse
 - Utilise quelques emojis avec parcimonie
 - Évite les répétitions et formules toutes faites
