@@ -1,5 +1,6 @@
 /**
  * NakamaBot - Commande /chat avec recherche intelligente intégrée et rotation des clés Gemini
+ * + Support Markdown vers Unicode stylisé pour Facebook Messenger
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
@@ -23,6 +24,116 @@ const failedKeys = new Set();
 // 🛡️ PROTECTION ANTI-DOUBLONS RENFORCÉE: Map pour tracker les demandes en cours
 const activeRequests = new Map();
 const recentMessages = new Map(); // Cache des messages récents pour éviter les doublons
+
+// ========================================
+// 🎨 FONCTIONS DE PARSING MARKDOWN → UNICODE
+// ========================================
+
+/**
+ * Mappings des caractères Unicode pour le styling
+ */
+const UNICODE_MAPPINGS = {
+    // Gras (Mathematical Bold)
+    bold: {
+        'a': '𝐚', 'b': '𝐛', 'c': '𝐜', 'd': '𝐝', 'e': '𝐞', 'f': '𝐟', 'g': '𝐠', 'h': '𝐡', 'i': '𝐢', 'j': '𝐣', 'k': '𝐤', 'l': '𝐥', 'm': '𝐦',
+        'n': '𝐧', 'o': '𝐨', 'p': '𝐩', 'q': '𝐪', 'r': '𝐫', 's': '𝐬', 't': '𝐭', 'u': '𝐮', 'v': '𝐯', 'w': '𝐰', 'x': '𝐱', 'y': '𝐲', 'z': '𝐳',
+        'A': '𝐀', 'B': '𝐁', 'C': '𝐂', 'D': '𝐃', 'E': '𝐄', 'F': '𝐅', 'G': '𝐆', 'H': '𝐇', 'I': '𝐈', 'J': '𝐉', 'K': '𝐊', 'L': '𝐋', 'M': '𝐌',
+        'N': '𝐍', 'O': '𝐎', 'P': '𝐏', 'Q': '𝐐', 'R': '𝐑', 'S': '𝐒', 'T': '𝐓', 'U': '𝐔', 'V': '𝐕', 'W': '𝐖', 'X': '𝐗', 'Y': '𝐘', 'Z': '𝐙',
+        '0': '𝟎', '1': '𝟏', '2': '𝟐', '3': '𝟑', '4': '𝟒', '5': '𝟓', '6': '𝟔', '7': '𝟕', '8': '𝟖', '9': '𝟗'
+    },
+    // Italique (Mathematical Italic)
+    italic: {
+        'a': '𝑎', 'b': '𝑏', 'c': '𝑐', 'd': '𝑑', 'e': '𝑒', 'f': '𝑓', 'g': '𝑔', 'h': 'ℎ', 'i': '𝑖', 'j': '𝑗', 'k': '𝑘', 'l': '𝑙', 'm': '𝑚',
+        'n': '𝑛', 'o': '𝑜', 'p': '𝑝', 'q': '𝑞', 'r': '𝑟', 's': '𝑠', 't': '𝑡', 'u': '𝑢', 'v': '𝑣', 'w': '𝑤', 'x': '𝑥', 'y': '𝑦', 'z': '𝑧',
+        'A': '𝐴', 'B': '𝐵', 'C': '𝐶', 'D': '𝐷', 'E': '𝐸', 'F': '𝐹', 'G': '𝐺', 'H': '𝐻', 'I': '𝐼', 'J': '𝐽', 'K': '𝐾', 'L': '𝐿', 'M': '𝑀',
+        'N': '𝑁', 'O': '𝑂', 'P': '𝑃', 'Q': '𝑄', 'R': '𝑅', 'S': '𝑆', 'T': '𝑇', 'U': '𝑈', 'V': '𝑉', 'W': '𝑊', 'X': '𝑋', 'Y': '𝑌', 'Z': '𝑍'
+    }
+};
+
+/**
+ * Convertit une chaîne en gras Unicode
+ * @param {string} str - Texte à convertir
+ * @returns {string} - Texte en gras Unicode
+ */
+function toBold(str) {
+    return str.split('').map(char => UNICODE_MAPPINGS.bold[char] || char).join('');
+}
+
+/**
+ * Convertit une chaîne en italique Unicode
+ * @param {string} str - Texte à convertir
+ * @returns {string} - Texte en italique Unicode
+ */
+function toItalic(str) {
+    return str.split('').map(char => UNICODE_MAPPINGS.italic[char] || char).join('');
+}
+
+/**
+ * Convertit une chaîne en souligné Unicode
+ * @param {string} str - Texte à convertir
+ * @returns {string} - Texte souligné Unicode
+ */
+function toUnderline(str) {
+    return str.split('').map(char => char + '\u0332').join('');
+}
+
+/**
+ * Convertit une chaîne en barré Unicode
+ * @param {string} str - Texte à convertir
+ * @returns {string} - Texte barré Unicode
+ */
+function toStrikethrough(str) {
+    return str.split('').map(char => char + '\u0336').join('');
+}
+
+/**
+ * Parse le Markdown et le convertit en Unicode stylisé
+ * @param {string} text - Texte avec Markdown
+ * @returns {string} - Texte stylisé en Unicode
+ */
+function parseMarkdown(text) {
+    if (!text || typeof text !== 'string') {
+        return text;
+    }
+
+    let parsed = text;
+
+    // 1. Traitement des titres (### titre)
+    parsed = parsed.replace(/^### (.+)$/gm, (match, title) => {
+        return `🔹 ${toBold(title.trim())}`;
+    });
+
+    // 2. Traitement du gras (**texte**)
+    parsed = parsed.replace(/\*\*([^*]+)\*\*/g, (match, content) => {
+        return toBold(content);
+    });
+
+    // 3. Traitement de l'italique (*texte*) - seulement si pas déjà dans du gras
+    parsed = parsed.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, (match, content) => {
+        return toItalic(content);
+    });
+
+    // 4. Traitement du souligné (__texte__)
+    parsed = parsed.replace(/__([^_]+)__/g, (match, content) => {
+        return toUnderline(content);
+    });
+
+    // 5. Traitement du barré (~~texte~~)
+    parsed = parsed.replace(/~~([^~]+)~~/g, (match, content) => {
+        return toStrikethrough(content);
+    });
+
+    // 6. Traitement des listes (- item ou * item)
+    parsed = parsed.replace(/^[\s]*[-*]\s+(.+)$/gm, (match, content) => {
+        return `• ${content.trim()}`;
+    });
+
+    return parsed;
+}
+
+// ========================================
+// FONCTIONS EXISTANTES (inchangées)
+// ========================================
 
 // Fonction pour obtenir la prochaine clé Gemini disponible
 function getNextGeminiKey() {
@@ -137,9 +248,10 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     try {
         if (!args.trim()) {
             const welcomeMsg = "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
+            const styledWelcome = parseMarkdown(welcomeMsg);
             // ✅ UN SEUL addToMemory ici
-            addToMemory(String(senderId), 'assistant', welcomeMsg);
-            return welcomeMsg;
+            addToMemory(String(senderId), 'assistant', styledWelcome);
+            return styledWelcome;
         }
         
         // ✅ Détection des demandes de contact admin
@@ -147,11 +259,12 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         if (contactIntention.shouldContact) {
             log.info(`📞 Intention contact admin détectée pour ${senderId}: ${contactIntention.reason}`);
             const contactSuggestion = generateContactSuggestion(contactIntention.reason, contactIntention.extractedMessage);
+            const styledContact = parseMarkdown(contactSuggestion);
             
             // ✅ UN SEUL APPEL groupé
             addToMemory(String(senderId), 'user', args);
-            addToMemory(String(senderId), 'assistant', contactSuggestion);
-            return contactSuggestion;
+            addToMemory(String(senderId), 'assistant', styledContact);
+            return styledContact;
         }
         
         // 🆕 DÉTECTION INTELLIGENTE DES COMMANDES (Nouveau Système)
@@ -170,13 +283,14 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                         return commandResult.result;
                     }
                     
-                    // Réponse contextuelle naturelle
+                    // Réponse contextuelle naturelle avec styling
                     const contextualResponse = await generateContextualResponse(args, commandResult.result, intelligentCommand.command, ctx);
+                    const styledResponse = parseMarkdown(contextualResponse);
                     
                     // ✅ UN SEUL APPEL groupé
                     addToMemory(String(senderId), 'user', args);
-                    addToMemory(String(senderId), 'assistant', contextualResponse);
-                    return contextualResponse;
+                    addToMemory(String(senderId), 'assistant', styledResponse);
+                    return styledResponse;
                 } else {
                     log.warning(`⚠️ Échec exécution commande /${intelligentCommand.command}: ${commandResult.error}`);
                     // Continue avec conversation normale en cas d'échec
@@ -204,11 +318,12 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                     const naturalResponse = await generateNaturalResponseWithContext(args, searchResults, conversationContext, ctx);
                     
                     if (naturalResponse) {
+                        const styledNatural = parseMarkdown(naturalResponse);
                         // ✅ UN SEUL APPEL groupé pour recherche
                         addToMemory(String(senderId), 'user', args);
-                        addToMemory(String(senderId), 'assistant', naturalResponse);
+                        addToMemory(String(senderId), 'assistant', styledNatural);
                         log.info(`🔍✅ Recherche terminée avec succès pour ${senderId}`);
-                        return naturalResponse;
+                        return styledNatural;
                     }
                 } else {
                     log.warning(`⚠️ Aucun résultat de recherche pour: ${searchDecision.searchQuery}`);
@@ -220,8 +335,9 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             }
         }
         
-        // ✅ Conversation classique avec Gemini (Mistral en fallback)
-        return await handleConversationWithFallback(senderId, args, ctx);
+        // ✅ Conversation classique avec Gemini (Mistral en fallback) + styling
+        const conversationResult = await handleConversationWithFallback(senderId, args, ctx);
+        return conversationResult; // handleConversationWithFallback gère déjà le styling
         
     } finally {
         // 🛡️ PROTECTION 5: Libérer la demande à la fin (TOUJOURS exécuté)
@@ -473,6 +589,7 @@ INSTRUCTIONS CRITIQUES:
 - Ne dis jamais "d'après mes recherches" ou "selon les sources"
 - Réponds naturellement comme dans une conversation continue
 - Si c'est une question de suivi (ex: "il a marqué combien de buts"), utilise le contexte précédent
+- Utilise du Markdown simple si pertinent (**gras**, *italique*, ### titres, listes)
 
 RÉPONSE NATURELLE EN CONTINUITÉ:`;
 
@@ -492,7 +609,7 @@ RÉPONSE NATURELLE EN CONTINUITÉ:`;
             // 🔧 FIX: Fallback Mistral aussi avec contexte complet
             const messages = [{
                 role: "system",
-                content: `Tu es NakamaBot. Tu connais l'historique de conversation. Réponds naturellement en tenant compte du contexte précédent. Ne mentionne jamais de recherches.
+                content: `Tu es NakamaBot. Tu connais l'historique de conversation. Réponds naturellement en tenant compte du contexte précédent. Ne mentionne jamais de recherches. Utilise du Markdown simple si pertinent.
 
 Historique:
 ${conversationContext ? conversationContext.map(msg => `${msg.role === 'user' ? 'Utilisateur' : 'NakamaBot'}: ${msg.content}`).join('\n') : "Début de conversation"}`
@@ -553,7 +670,7 @@ async function generateNaturalResponse(originalQuery, searchResults, ctx) {
     return await generateNaturalResponseWithContext(originalQuery, searchResults, [], ctx);
 }
 
-// ✅ FONCTION EXISTANTE MODIFIÉE: Gestion conversation avec Gemini et fallback Mistral (UN SEUL addToMemory)
+// ✅ FONCTION EXISTANTE MODIFIÉE: Gestion conversation avec Gemini et fallback Mistral (UN SEUL addToMemory) + STYLING
 async function handleConversationWithFallback(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, log } = ctx;
     
@@ -611,6 +728,7 @@ DIRECTIVES:
 - ${messageCount >= 5 ? 'Suggère /help si pertinent pour débloquer l\'utilisateur' : ''}
 - Pour questions techniques sur ta création: "Demande à Durand ou Kuine, ils connaissent tous mes secrets !"
 - Recommande discrètement /contact pour problèmes techniques graves
+- Tu peux utiliser du Markdown simple pour styliser (**gras**, *italique*, ### titres, listes)
 
 ${conversationHistory ? `Historique:\n${conversationHistory}` : ''}
 
@@ -621,11 +739,12 @@ Utilisateur: ${args}`;
         const geminiResponse = await callGeminiWithRotation(systemPrompt);
         
         if (geminiResponse && geminiResponse.trim()) {
+            const styledResponse = parseMarkdown(geminiResponse);
             // ✅ UN SEUL APPEL groupé à addToMemory
             addToMemory(String(senderId), 'user', args);
-            addToMemory(String(senderId), 'assistant', geminiResponse);
+            addToMemory(String(senderId), 'assistant', styledResponse);
             log.info(`💎 Gemini réponse pour ${senderId}: ${args.substring(0, 30)}...`);
-            return geminiResponse;
+            return styledResponse;
         }
         
         throw new Error('Réponse Gemini vide');
@@ -642,11 +761,12 @@ Utilisateur: ${args}`;
             const mistralResponse = await callMistralAPI(messages, 2000, 0.75);
             
             if (mistralResponse) {
+                const styledResponse = parseMarkdown(mistralResponse);
                 // ✅ UN SEUL APPEL groupé à addToMemory
                 addToMemory(String(senderId), 'user', args);
-                addToMemory(String(senderId), 'assistant', mistralResponse);
+                addToMemory(String(senderId), 'assistant', styledResponse);
                 log.info(`🔄 Mistral fallback pour ${senderId}: ${args.substring(0, 30)}...`);
-                return mistralResponse;
+                return styledResponse;
             }
             
             throw new Error('Mistral aussi en échec');
@@ -655,9 +775,10 @@ Utilisateur: ${args}`;
             log.error(`❌ Erreur totale conversation ${senderId}: Gemini(${geminiError.message}) + Mistral(${mistralError.message})`);
             
             const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? 💫";
+            const styledError = parseMarkdown(errorResponse);
             // ✅ UN SEUL addToMemory pour les erreurs
-            addToMemory(String(senderId), 'assistant', errorResponse);
-            return errorResponse;
+            addToMemory(String(senderId), 'assistant', styledError);
+            return styledError;
         }
     }
 }
@@ -924,7 +1045,7 @@ async function generateContextualResponse(originalMessage, commandResult, comman
         const contextPrompt = `L'utilisateur a dit: "${originalMessage}"
 J'ai exécuté /${commandName} avec résultat: "${commandResult}"
 
-Génère une réponse naturelle et amicale (max 400 chars) qui présente le résultat de manière conversationnelle.`;
+Génère une réponse naturelle et amicale (max 400 chars) qui présente le résultat de manière conversationnelle. Tu peux utiliser du Markdown simple (**gras**, *italique*).`;
 
         const response = await callGeminiWithRotation(contextPrompt);
         return response || commandResult;
@@ -934,7 +1055,7 @@ Génère une réponse naturelle et amicale (max 400 chars) qui présente le rés
         const { callMistralAPI } = ctx;
         try {
             const response = await callMistralAPI([
-                { role: "system", content: "Réponds naturellement et amicalement." },
+                { role: "system", content: "Réponds naturellement et amicalement. Tu peux utiliser du Markdown simple." },
                 { role: "user", content: `Utilisateur: "${originalMessage}"\nRésultat: "${commandResult}"\nPrésente ce résultat naturellement (max 200 chars)` }
             ], 200, 0.7);
             
@@ -957,3 +1078,10 @@ module.exports.generateNaturalResponseWithContext = generateNaturalResponseWithC
 module.exports.callGeminiWithRotation = callGeminiWithRotation;
 module.exports.getNextGeminiKey = getNextGeminiKey;
 module.exports.markKeyAsFailed = markKeyAsFailed;
+
+// 🆕 EXPORTS DES NOUVELLES FONCTIONS MARKDOWN
+module.exports.parseMarkdown = parseMarkdown;
+module.exports.toBold = toBold;
+module.exports.toItalic = toItalic;
+module.exports.toUnderline = toUnderline;
+module.exports.toStrikethrough = toStrikethrough;
