@@ -25,7 +25,91 @@ const failedKeys = new Set();
 const activeRequests = new Map();
 const recentMessages = new Map(); // Cache des messages récents pour éviter les doublons
 
-// ========================================
+// 📝 GESTION DES MESSAGES TRONQUÉS: Cache des messages incomplets
+const truncatedMessages = new Map(); // senderId -> { fullMessage, lastSentPart }
+
+/**
+ * Divise un message en chunks de taille appropriée pour Messenger
+ * @param {string} text - Texte complet
+ * @param {number} maxLength - Taille maximale par chunk (défaut: 2000)
+ * @returns {Array} - Array des chunks
+ */
+function splitMessageIntoChunks(text, maxLength = 2000) {
+    if (!text || text.length <= maxLength) {
+        return [text];
+    }
+    
+    const chunks = [];
+    let currentChunk = '';
+    const lines = text.split('\n');
+    
+    for (const line of lines) {
+        // Si ajouter cette ligne dépasse la limite
+        if (currentChunk.length + line.length + 1 > maxLength) {
+            // Si le chunk actuel n'est pas vide, le sauvegarder
+            if (currentChunk.trim()) {
+                chunks.push(currentChunk.trim());
+                currentChunk = '';
+            }
+            
+            // Si la ligne elle-même est trop longue, la couper
+            if (line.length > maxLength) {
+                const words = line.split(' ');
+                let currentLine = '';
+                
+                for (const word of words) {
+                    if (currentLine.length + word.length + 1 > maxLength) {
+                        if (currentLine.trim()) {
+                            chunks.push(currentLine.trim());
+                            currentLine = word;
+                        } else {
+                            // Mot unique trop long, le couper brutalement
+                            chunks.push(word.substring(0, maxLength - 3) + '...');
+                            currentLine = word.substring(maxLength - 3);
+                        }
+                    } else {
+                        currentLine += (currentLine ? ' ' : '') + word;
+                    }
+                }
+                
+                if (currentLine.trim()) {
+                    currentChunk = currentLine;
+                }
+            } else {
+                currentChunk = line;
+            }
+        } else {
+            currentChunk += (currentChunk ? '\n' : '') + line;
+        }
+    }
+    
+    // Ajouter le dernier chunk s'il n'est pas vide
+    if (currentChunk.trim()) {
+        chunks.push(currentChunk.trim());
+    }
+    
+    return chunks.length > 0 ? chunks : [text];
+}
+
+/**
+ * Détecte si l'utilisateur demande la suite d'un message tronqué
+ * @param {string} message - Message de l'utilisateur
+ * @returns {boolean} - True si c'est une demande de continuation
+ */
+function isContinuationRequest(message) {
+    const lowerMessage = message.toLowerCase().trim();
+    const continuationPatterns = [
+        /^(continue|continuer?)$/,
+        /^(suite|la suite)$/,
+        /^(après|ensuite)$/,
+        /^(plus|encore)$/,
+        /^(next|suivant)$/,
+        /^\.\.\.$/,
+        /^(termine|fini[sr]?)$/
+    ];
+    
+    return continuationPatterns.some(pattern => pattern.test(lowerMessage));
+}
 // 🎨 FONCTIONS DE PARSING MARKDOWN → UNICODE
 // ========================================
 
@@ -92,8 +176,8 @@ function parseMarkdown(text) {
 
     let parsed = text;
 
-    // 1. Traitement des titres (### titre)
-    parsed = parsed.replace(/^### (.+)$/gm, (match, title) => {
+    // 1. Traitement des titres (### titre) - FIX: Regex corrigée
+    parsed = parsed.replace(/^###\s+(.+)$/gm, (match, title) => {
         return `🔹 ${toBold(title.trim())}`;
     });
 
@@ -244,6 +328,56 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             // ✅ UN SEUL addToMemory ici
             addToMemory(String(senderId), 'assistant', styledWelcome);
             return styledWelcome;
+        }
+        
+        // 🆕 GESTION DES DEMANDES DE CONTINUATION
+        if (isContinuationRequest(args)) {
+            const truncatedData = truncatedMessages.get(senderId);
+            if (truncatedData) {
+                const { fullMessage, lastSentPart } = truncatedData;
+                
+                // Trouver où on s'était arrêté
+                const lastSentIndex = fullMessage.indexOf(lastSentPart) + lastSentPart.length;
+                const remainingMessage = fullMessage.substring(lastSentIndex);
+                
+                if (remainingMessage.trim()) {
+                    const chunks = splitMessageIntoChunks(remainingMessage, 2000);
+                    const nextChunk = parseMarkdown(chunks[0]);
+                    
+                    // Mettre à jour le cache avec la nouvelle partie envoyée
+                    if (chunks.length > 1) {
+                        truncatedMessages.set(senderId, {
+                            fullMessage: fullMessage,
+                            lastSentPart: lastSentPart + chunks[0]
+                        });
+                        
+                        // Ajouter un indicateur de continuation
+                        const continuationMsg = nextChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
+                        addToMemory(String(senderId), 'user', args);
+                        addToMemory(String(senderId), 'assistant', continuationMsg);
+                        return continuationMsg;
+                    } else {
+                        // Message terminé
+                        truncatedMessages.delete(senderId);
+                        addToMemory(String(senderId), 'user', args);
+                        addToMemory(String(senderId), 'assistant', nextChunk);
+                        return nextChunk;
+                    }
+                } else {
+                    // Plus rien à envoyer
+                    truncatedMessages.delete(senderId);
+                    const endMsg = "✅ C'est tout ! Y a-t-il autre chose que je puisse faire pour toi ? 💫";
+                    addToMemory(String(senderId), 'user', args);
+                    addToMemory(String(senderId), 'assistant', endMsg);
+                    return endMsg;
+                }
+            } else {
+                // Pas de message tronqué en cours
+                const noTruncMsg = "🤔 Il n'y a pas de message en cours à continuer. Pose-moi une nouvelle question ! 💡";
+                addToMemory(String(senderId), 'user', args);
+                addToMemory(String(senderId), 'assistant', noTruncMsg);
+                return noTruncMsg;
+            }
         }
         
         // ✅ Détection des demandes de contact admin
