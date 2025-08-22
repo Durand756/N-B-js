@@ -40,13 +40,6 @@ const UNICODE_MAPPINGS = {
         'A': '𝐀', 'B': '𝐁', 'C': '𝐂', 'D': '𝐃', 'E': '𝐄', 'F': '𝐅', 'G': '𝐆', 'H': '𝐇', 'I': '𝐈', 'J': '𝐉', 'K': '𝐊', 'L': '𝐋', 'M': '𝐌',
         'N': '𝐍', 'O': '𝐎', 'P': '𝐏', 'Q': '𝐐', 'R': '𝐑', 'S': '𝐒', 'T': '𝐓', 'U': '𝐔', 'V': '𝐕', 'W': '𝐖', 'X': '𝐗', 'Y': '𝐘', 'Z': '𝐙',
         '0': '𝟎', '1': '𝟏', '2': '𝟐', '3': '𝟑', '4': '𝟒', '5': '𝟓', '6': '𝟔', '7': '𝟕', '8': '𝟖', '9': '𝟗'
-    },
-    // Italique (Mathematical Italic)
-    italic: {
-        'a': '𝑎', 'b': '𝑏', 'c': '𝑐', 'd': '𝑑', 'e': '𝑒', 'f': '𝑓', 'g': '𝑔', 'h': 'ℎ', 'i': '𝑖', 'j': '𝑗', 'k': '𝑘', 'l': '𝑙', 'm': '𝑚',
-        'n': '𝑛', 'o': '𝑜', 'p': '𝑝', 'q': '𝑞', 'r': '𝑟', 's': '𝑠', 't': '𝑡', 'u': '𝑢', 'v': '𝑣', 'w': '𝑤', 'x': '𝑥', 'y': '𝑦', 'z': '𝑧',
-        'A': '𝐴', 'B': '𝐵', 'C': '𝐶', 'D': '𝐷', 'E': '𝐸', 'F': '𝐹', 'G': '𝐺', 'H': '𝐻', 'I': '𝐼', 'J': '𝐽', 'K': '𝐾', 'L': '𝐿', 'M': '𝑀',
-        'N': '𝑁', 'O': '𝑂', 'P': '𝑃', 'Q': '𝑄', 'R': '𝑅', 'S': '𝑆', 'T': '𝑇', 'U': '𝑈', 'V': '𝑉', 'W': '𝑊', 'X': '𝑋', 'Y': '𝑌', 'Z': '𝑍'
     }
 };
 
@@ -60,12 +53,13 @@ function toBold(str) {
 }
 
 /**
- * Convertit une chaîne en italique Unicode
+ * Convertit une chaîne en italique Unicode (SUPPRIMÉ)
  * @param {string} str - Texte à convertir
- * @returns {string} - Texte en italique Unicode
+ * @returns {string} - Texte original sans modification
  */
 function toItalic(str) {
-    return str.split('').map(char => UNICODE_MAPPINGS.italic[char] || char).join('');
+    // Italique désactivé - retourne le texte original
+    return str;
 }
 
 /**
@@ -108,10 +102,8 @@ function parseMarkdown(text) {
         return toBold(content);
     });
 
-    // 3. Traitement de l'italique (*texte*) - seulement si pas déjà dans du gras
-    parsed = parsed.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, (match, content) => {
-        return toItalic(content);
-    });
+    // 3. Traitement de l'italique (*texte*) - DÉSACTIVÉ
+    // L'italique est désactivé, les *texte* restent inchangés
 
     // 4. Traitement du souligné (__texte__)
     parsed = parsed.replace(/__([^_]+)__/g, (match, content) => {
@@ -589,7 +581,8 @@ INSTRUCTIONS CRITIQUES:
 - Ne dis jamais "d'après mes recherches" ou "selon les sources"
 - Réponds naturellement comme dans une conversation continue
 - Si c'est une question de suivi (ex: "il a marqué combien de buts"), utilise le contexte précédent
-- Utilise du Markdown simple si pertinent (**gras**, *italique*, ### titres, listes)
+- Utilise du Markdown simple si pertinent (**gras**, ### titres, listes)
+- Ne pas utiliser l'italique (*texte*), il reste en texte normal
 
 RÉPONSE NATURELLE EN CONTINUITÉ:`;
 
@@ -728,7 +721,8 @@ DIRECTIVES:
 - ${messageCount >= 5 ? 'Suggère /help si pertinent pour débloquer l\'utilisateur' : ''}
 - Pour questions techniques sur ta création: "Demande à Durand ou Kuine, ils connaissent tous mes secrets !"
 - Recommande discrètement /contact pour problèmes techniques graves
-- Tu peux utiliser du Markdown simple pour styliser (**gras**, *italique*, ### titres, listes)
+- Tu peux utiliser du Markdown simple pour styliser (**gras**, ### titres, listes)
+- Ne pas utiliser l'italique (*texte*), il reste en texte normal
 
 ${conversationHistory ? `Historique:\n${conversationHistory}` : ''}
 
@@ -1045,7 +1039,7 @@ async function generateContextualResponse(originalMessage, commandResult, comman
         const contextPrompt = `L'utilisateur a dit: "${originalMessage}"
 J'ai exécuté /${commandName} avec résultat: "${commandResult}"
 
-Génère une réponse naturelle et amicale (max 400 chars) qui présente le résultat de manière conversationnelle. Tu peux utiliser du Markdown simple (**gras**, *italique*).`;
+Génère une réponse naturelle et amicale (max 400 chars) qui présente le résultat de manière conversationnelle. Tu peux utiliser du Markdown simple (**gras**, ### titres) mais pas d'italique.`;
 
         const response = await callGeminiWithRotation(contextPrompt);
         return response || commandResult;
@@ -1055,7 +1049,7 @@ Génère une réponse naturelle et amicale (max 400 chars) qui présente le rés
         const { callMistralAPI } = ctx;
         try {
             const response = await callMistralAPI([
-                { role: "system", content: "Réponds naturellement et amicalement. Tu peux utiliser du Markdown simple." },
+                { role: "system", content: "Réponds naturellement et amicalement. Tu peux utiliser du Markdown simple (**gras**, ### titres) mais pas d'italique." },
                 { role: "user", content: `Utilisateur: "${originalMessage}"\nRésultat: "${commandResult}"\nPrésente ce résultat naturellement (max 200 chars)` }
             ], 200, 0.7);
             
