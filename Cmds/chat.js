@@ -1,6 +1,7 @@
 /**
  * NakamaBot - Commande /chat avec recherche intelligente intégrée et rotation des clés Gemini
  * + Support Markdown vers Unicode stylisé pour Facebook Messenger
+ * + Système de troncature synchronisé avec le serveur principal
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
@@ -25,91 +26,6 @@ const failedKeys = new Set();
 const activeRequests = new Map();
 const recentMessages = new Map(); // Cache des messages récents pour éviter les doublons
 
-// 📝 GESTION DES MESSAGES TRONQUÉS: Cache des messages incomplets
-const truncatedMessages = new Map(); // senderId -> { fullMessage, lastSentPart }
-
-/**
- * Divise un message en chunks de taille appropriée pour Messenger
- * @param {string} text - Texte complet
- * @param {number} maxLength - Taille maximale par chunk (défaut: 2000)
- * @returns {Array} - Array des chunks
- */
-function splitMessageIntoChunks(text, maxLength = 2000) {
-    if (!text || text.length <= maxLength) {
-        return [text];
-    }
-    
-    const chunks = [];
-    let currentChunk = '';
-    const lines = text.split('\n');
-    
-    for (const line of lines) {
-        // Si ajouter cette ligne dépasse la limite
-        if (currentChunk.length + line.length + 1 > maxLength) {
-            // Si le chunk actuel n'est pas vide, le sauvegarder
-            if (currentChunk.trim()) {
-                chunks.push(currentChunk.trim());
-                currentChunk = '';
-            }
-            
-            // Si la ligne elle-même est trop longue, la couper
-            if (line.length > maxLength) {
-                const words = line.split(' ');
-                let currentLine = '';
-                
-                for (const word of words) {
-                    if (currentLine.length + word.length + 1 > maxLength) {
-                        if (currentLine.trim()) {
-                            chunks.push(currentLine.trim());
-                            currentLine = word;
-                        } else {
-                            // Mot unique trop long, le couper brutalement
-                            chunks.push(word.substring(0, maxLength - 3) + '...');
-                            currentLine = word.substring(maxLength - 3);
-                        }
-                    } else {
-                        currentLine += (currentLine ? ' ' : '') + word;
-                    }
-                }
-                
-                if (currentLine.trim()) {
-                    currentChunk = currentLine;
-                }
-            } else {
-                currentChunk = line;
-            }
-        } else {
-            currentChunk += (currentChunk ? '\n' : '') + line;
-        }
-    }
-    
-    // Ajouter le dernier chunk s'il n'est pas vide
-    if (currentChunk.trim()) {
-        chunks.push(currentChunk.trim());
-    }
-    
-    return chunks.length > 0 ? chunks : [text];
-}
-
-/**
- * Détecte si l'utilisateur demande la suite d'un message tronqué
- * @param {string} message - Message de l'utilisateur
- * @returns {boolean} - True si c'est une demande de continuation
- */
-function isContinuationRequest(message) {
-    const lowerMessage = message.toLowerCase().trim();
-    const continuationPatterns = [
-        /^(continue|continuer?)$/,
-        /^(suite|la suite)$/,
-        /^(après|ensuite)$/,
-        /^(plus|encore)$/,
-        /^(next|suivant)$/,
-        /^\.\.\.$/,
-        /^(termine|fini[sr]?)$/
-    ];
-    
-    return continuationPatterns.some(pattern => pattern.test(lowerMessage));
-}
 // 🎨 FONCTIONS DE PARSING MARKDOWN → UNICODE
 // ========================================
 
@@ -286,9 +202,10 @@ async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.lengt
     throw lastError || new Error('Toutes les clés Gemini ont échoué');
 }
 
-// 🛡️ FONCTION PRINCIPALE AVEC PROTECTION ANTI-DOUBLONS RENFORCÉE
+// 🛡️ FONCTION PRINCIPALE AVEC PROTECTION ANTI-DOUBLONS ET TRONCATURE SYNCHRONISÉE
 module.exports = async function cmdChat(senderId, args, ctx) {
-    const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log } = ctx;
+    const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log, 
+            truncatedMessages, splitMessageIntoChunks, isContinuationRequest } = ctx;
     
     // 🛡️ PROTECTION 1: Créer une signature unique du message
     const messageSignature = `${senderId}_${args.trim().toLowerCase()}`;
@@ -330,9 +247,10 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             return styledWelcome;
         }
         
-        // 🆕 GESTION DES DEMANDES DE CONTINUATION
+        // 🆕 GESTION SYNCHRONISÉE DES DEMANDES DE CONTINUATION
+        const senderIdStr = String(senderId);
         if (isContinuationRequest(args)) {
-            const truncatedData = truncatedMessages.get(senderId);
+            const truncatedData = truncatedMessages.get(senderIdStr);
             if (truncatedData) {
                 const { fullMessage, lastSentPart } = truncatedData;
                 
@@ -346,36 +264,37 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                     
                     // Mettre à jour le cache avec la nouvelle partie envoyée
                     if (chunks.length > 1) {
-                        truncatedMessages.set(senderId, {
+                        truncatedMessages.set(senderIdStr, {
                             fullMessage: fullMessage,
-                            lastSentPart: lastSentPart + chunks[0]
+                            lastSentPart: lastSentPart + chunks[0],
+                            timestamp: new Date().toISOString()
                         });
                         
                         // Ajouter un indicateur de continuation
                         const continuationMsg = nextChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
-                        addToMemory(String(senderId), 'user', args);
-                        addToMemory(String(senderId), 'assistant', continuationMsg);
+                        addToMemory(senderIdStr, 'user', args);
+                        addToMemory(senderIdStr, 'assistant', continuationMsg);
                         return continuationMsg;
                     } else {
                         // Message terminé
-                        truncatedMessages.delete(senderId);
-                        addToMemory(String(senderId), 'user', args);
-                        addToMemory(String(senderId), 'assistant', nextChunk);
+                        truncatedMessages.delete(senderIdStr);
+                        addToMemory(senderIdStr, 'user', args);
+                        addToMemory(senderIdStr, 'assistant', nextChunk);
                         return nextChunk;
                     }
                 } else {
                     // Plus rien à envoyer
-                    truncatedMessages.delete(senderId);
+                    truncatedMessages.delete(senderIdStr);
                     const endMsg = "✅ C'est tout ! Y a-t-il autre chose que je puisse faire pour toi ? 💫";
-                    addToMemory(String(senderId), 'user', args);
-                    addToMemory(String(senderId), 'assistant', endMsg);
+                    addToMemory(senderIdStr, 'user', args);
+                    addToMemory(senderIdStr, 'assistant', endMsg);
                     return endMsg;
                 }
             } else {
                 // Pas de message tronqué en cours
                 const noTruncMsg = "🤔 Il n'y a pas de message en cours à continuer. Pose-moi une nouvelle question ! 💡";
-                addToMemory(String(senderId), 'user', args);
-                addToMemory(String(senderId), 'assistant', noTruncMsg);
+                addToMemory(senderIdStr, 'user', args);
+                addToMemory(senderIdStr, 'assistant', noTruncMsg);
                 return noTruncMsg;
             }
         }
@@ -444,8 +363,33 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                     const naturalResponse = await generateNaturalResponseWithContext(args, searchResults, conversationContext, ctx);
                     
                     if (naturalResponse) {
+                        // ✅ GESTION SYNCHRONISÉE DES MESSAGES LONGS
                         const styledNatural = parseMarkdown(naturalResponse);
-                        // ✅ UN SEUL APPEL groupé pour recherche
+                        
+                        // Vérifier si le message est trop long et gérer la troncature
+                        if (styledNatural.length > 2000) {
+                            log.info(`📏 Message de recherche long détecté (${styledNatural.length} chars) - Gestion troncature`);
+                            
+                            const chunks = splitMessageIntoChunks(styledNatural, 2000);
+                            const firstChunk = chunks[0];
+                            
+                            if (chunks.length > 1) {
+                                // Sauvegarder l'état de troncature
+                                truncatedMessages.set(senderIdStr, {
+                                    fullMessage: styledNatural,
+                                    lastSentPart: firstChunk,
+                                    timestamp: new Date().toISOString()
+                                });
+                                
+                                const truncatedResponse = firstChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
+                                addToMemory(String(senderId), 'user', args);
+                                addToMemory(String(senderId), 'assistant', truncatedResponse);
+                                log.info(`🔍✅ Recherche terminée avec troncature pour ${senderId}`);
+                                return truncatedResponse;
+                            }
+                        }
+                        
+                        // ✅ UN SEUL APPEL groupé pour recherche normale
                         addToMemory(String(senderId), 'user', args);
                         addToMemory(String(senderId), 'assistant', styledNatural);
                         log.info(`🔍✅ Recherche terminée avec succès pour ${senderId}`);
@@ -461,9 +405,9 @@ module.exports = async function cmdChat(senderId, args, ctx) {
             }
         }
         
-        // ✅ Conversation classique avec Gemini (Mistral en fallback) + styling
+        // ✅ Conversation classique avec Gemini (Mistral en fallback) + styling et troncature
         const conversationResult = await handleConversationWithFallback(senderId, args, ctx);
-        return conversationResult; // handleConversationWithFallback gère déjà le styling
+        return conversationResult; // handleConversationWithFallback gère déjà le styling et la troncature
         
     } finally {
         // 🛡️ PROTECTION 5: Libérer la demande à la fin (TOUJOURS exécuté)
@@ -663,9 +607,9 @@ async function fallbackWebSearch(query, ctx) {
     return [];
 }
 
-// 🔧 FIX PRINCIPAL: Génération de réponse naturelle avec contexte de conversation
+// 🔧 FIX PRINCIPAL: Génération de réponse naturelle avec contexte de conversation ET TRONCATURE
 async function generateNaturalResponseWithContext(originalQuery, searchResults, conversationContext, ctx) {
-    const { log, callMistralAPI } = ctx;
+    const { log, callMistralAPI, splitMessageIntoChunks } = ctx;
     
     // Date et heure actuelles
     const now = new Date();
@@ -797,9 +741,10 @@ async function generateNaturalResponse(originalQuery, searchResults, ctx) {
     return await generateNaturalResponseWithContext(originalQuery, searchResults, [], ctx);
 }
 
-// ✅ FONCTION EXISTANTE MODIFIÉE: Gestion conversation avec Gemini et fallback Mistral (UN SEUL addToMemory) + STYLING
+// ✅ FONCTION EXISTANTE MODIFIÉE: Gestion conversation avec Gemini et fallback Mistral + STYLING + TRONCATURE SYNCHRONISÉE
 async function handleConversationWithFallback(senderId, args, ctx) {
-    const { addToMemory, getMemoryContext, callMistralAPI, log } = ctx;
+    const { addToMemory, getMemoryContext, callMistralAPI, log, 
+            splitMessageIntoChunks, truncatedMessages } = ctx;
     
     // Récupération du contexte (derniers 8 messages pour optimiser)
     const context = getMemoryContext(String(senderId)).slice(-8);
@@ -862,15 +807,42 @@ ${conversationHistory ? `Historique:\n${conversationHistory}` : ''}
 
 Utilisateur: ${args}`;
 
+    const senderIdStr = String(senderId);
+
     try {
         // ✅ PRIORITÉ: Essayer d'abord avec Gemini (avec rotation des clés)
         const geminiResponse = await callGeminiWithRotation(systemPrompt);
         
         if (geminiResponse && geminiResponse.trim()) {
             const styledResponse = parseMarkdown(geminiResponse);
-            // ✅ UN SEUL APPEL groupé à addToMemory
-            addToMemory(String(senderId), 'user', args);
-            addToMemory(String(senderId), 'assistant', styledResponse);
+            
+            // ✅ GESTION SYNCHRONISÉE DE LA TRONCATURE
+            if (styledResponse.length > 2000) {
+                log.info(`📏 Réponse Gemini longue détectée (${styledResponse.length} chars) - Gestion troncature`);
+                
+                const chunks = splitMessageIntoChunks(styledResponse, 2000);
+                const firstChunk = chunks[0];
+                
+                if (chunks.length > 1) {
+                    // Sauvegarder l'état de troncature
+                    truncatedMessages.set(senderIdStr, {
+                        fullMessage: styledResponse,
+                        lastSentPart: firstChunk,
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    const truncatedResponse = firstChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
+                    // ✅ UN SEUL APPEL groupé à addToMemory
+                    addToMemory(senderIdStr, 'user', args);
+                    addToMemory(senderIdStr, 'assistant', truncatedResponse);
+                    log.info(`💎 Gemini réponse avec troncature pour ${senderId}: ${args.substring(0, 30)}...`);
+                    return truncatedResponse;
+                }
+            }
+            
+            // ✅ UN SEUL APPEL groupé à addToMemory pour message normal
+            addToMemory(senderIdStr, 'user', args);
+            addToMemory(senderIdStr, 'assistant', styledResponse);
             log.info(`💎 Gemini réponse pour ${senderId}: ${args.substring(0, 30)}...`);
             return styledResponse;
         }
@@ -890,9 +862,34 @@ Utilisateur: ${args}`;
             
             if (mistralResponse) {
                 const styledResponse = parseMarkdown(mistralResponse);
-                // ✅ UN SEUL APPEL groupé à addToMemory
-                addToMemory(String(senderId), 'user', args);
-                addToMemory(String(senderId), 'assistant', styledResponse);
+                
+                // ✅ GESTION SYNCHRONISÉE DE LA TRONCATURE POUR MISTRAL AUSSI
+                if (styledResponse.length > 2000) {
+                    log.info(`📏 Réponse Mistral longue détectée (${styledResponse.length} chars) - Gestion troncature`);
+                    
+                    const chunks = splitMessageIntoChunks(styledResponse, 2000);
+                    const firstChunk = chunks[0];
+                    
+                    if (chunks.length > 1) {
+                        // Sauvegarder l'état de troncature
+                        truncatedMessages.set(senderIdStr, {
+                            fullMessage: styledResponse,
+                            lastSentPart: firstChunk,
+                            timestamp: new Date().toISOString()
+                        });
+                        
+                        const truncatedResponse = firstChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
+                        // ✅ UN SEUL APPEL groupé à addToMemory
+                        addToMemory(senderIdStr, 'user', args);
+                        addToMemory(senderIdStr, 'assistant', truncatedResponse);
+                        log.info(`🔄 Mistral fallback avec troncature pour ${senderId}: ${args.substring(0, 30)}...`);
+                        return truncatedResponse;
+                    }
+                }
+                
+                // ✅ UN SEUL APPEL groupé à addToMemory pour message normal
+                addToMemory(senderIdStr, 'user', args);
+                addToMemory(senderIdStr, 'assistant', styledResponse);
                 log.info(`🔄 Mistral fallback pour ${senderId}: ${args.substring(0, 30)}...`);
                 return styledResponse;
             }
@@ -905,7 +902,7 @@ Utilisateur: ${args}`;
             const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? 💫";
             const styledError = parseMarkdown(errorResponse);
             // ✅ UN SEUL addToMemory pour les erreurs
-            addToMemory(String(senderId), 'assistant', styledError);
+            addToMemory(senderIdStr, 'assistant', styledError);
             return styledError;
         }
     }
