@@ -29,6 +29,9 @@ const clanData = new Map(); // Stockage des données spécifiques aux commandes
 // ✅ NOUVEAU: Référence vers la commande rank pour le système d'expérience
 let rankCommand = null;
 
+// 🆕 AJOUT: Gestion des messages tronqués avec chunks
+const truncatedMessages = new Map(); // senderId -> { fullMessage, lastSentPart }
+
 // Configuration des logs
 const log = {
     info: (msg) => console.log(`${new Date().toISOString()} - INFO - ${msg}`),
@@ -36,6 +39,91 @@ const log = {
     warning: (msg) => console.warn(`${new Date().toISOString()} - WARNING - ${msg}`),
     debug: (msg) => console.log(`${new Date().toISOString()} - DEBUG - ${msg}`)
 };
+
+// === FONCTIONS DE GESTION DES MESSAGES TRONQUÉS ===
+
+/**
+ * Divise un message en chunks de taille appropriée pour Messenger
+ * @param {string} text - Texte complet
+ * @param {number} maxLength - Taille maximale par chunk (défaut: 2000)
+ * @returns {Array} - Array des chunks
+ */
+function splitMessageIntoChunks(text, maxLength = 2000) {
+    if (!text || text.length <= maxLength) {
+        return [text];
+    }
+    
+    const chunks = [];
+    let currentChunk = '';
+    const lines = text.split('\n');
+    
+    for (const line of lines) {
+        // Si ajouter cette ligne dépasse la limite
+        if (currentChunk.length + line.length + 1 > maxLength) {
+            // Si le chunk actuel n'est pas vide, le sauvegarder
+            if (currentChunk.trim()) {
+                chunks.push(currentChunk.trim());
+                currentChunk = '';
+            }
+            
+            // Si la ligne elle-même est trop longue, la couper
+            if (line.length > maxLength) {
+                const words = line.split(' ');
+                let currentLine = '';
+                
+                for (const word of words) {
+                    if (currentLine.length + word.length + 1 > maxLength) {
+                        if (currentLine.trim()) {
+                            chunks.push(currentLine.trim());
+                            currentLine = word;
+                        } else {
+                            // Mot unique trop long, le couper brutalement
+                            chunks.push(word.substring(0, maxLength - 3) + '...');
+                            currentLine = word.substring(maxLength - 3);
+                        }
+                    } else {
+                        currentLine += (currentLine ? ' ' : '') + word;
+                    }
+                }
+                
+                if (currentLine.trim()) {
+                    currentChunk = currentLine;
+                }
+            } else {
+                currentChunk = line;
+            }
+        } else {
+            currentChunk += (currentChunk ? '\n' : '') + line;
+        }
+    }
+    
+    // Ajouter le dernier chunk s'il n'est pas vide
+    if (currentChunk.trim()) {
+        chunks.push(currentChunk.trim());
+    }
+    
+    return chunks.length > 0 ? chunks : [text];
+}
+
+/**
+ * Détecte si l'utilisateur demande la suite d'un message tronqué
+ * @param {string} message - Message de l'utilisateur
+ * @returns {boolean} - True si c'est une demande de continuation
+ */
+function isContinuationRequest(message) {
+    const lowerMessage = message.toLowerCase().trim();
+    const continuationPatterns = [
+        /^(continue|continuer?)$/,
+        /^(suite|la suite)$/,
+        /^(après|ensuite)$/,
+        /^(plus|encore)$/,
+        /^(next|suivant)$/,
+        /^\.\.\.$/,
+        /^(termine|fini[sr]?)$/
+    ];
+    
+    return continuationPatterns.some(pattern => pattern.test(lowerMessage));
+}
 
 // === GESTION GITHUB API ===
 
@@ -149,15 +237,19 @@ async function saveDataToGitHub() {
             // ✅ NOUVEAU: Sauvegarder les données d'expérience
             userExp: rankCommand ? rankCommand.getExpData() : {},
             
+            // 🆕 NOUVEAU: Sauvegarder les messages tronqués
+            truncatedMessages: Object.fromEntries(truncatedMessages),
+            
             // Données des clans et autres commandes
             clanData: commandContext.clanData || null,
             commandData: Object.fromEntries(clanData),
             
             lastUpdate: new Date().toISOString(),
-            version: "4.0 Amicale + Vision + GitHub + Clans + Rank",
+            version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
             totalUsers: userList.size,
             totalConversations: userMemory.size,
             totalImages: userLastImage.size,
+            totalTruncated: truncatedMessages.size,
             totalClans: commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0,
             totalUsersWithExp: rankCommand ? Object.keys(rankCommand.getExpData()).length : 0,
             bot: "NakamaBot",
@@ -197,7 +289,7 @@ async function saveDataToGitHub() {
                 if (response.status === 200 || response.status === 201) {
                     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
                     const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
-                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs, ${clanCount} clans, ${expDataCount} exp)`);
+                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs, ${clanCount} clans, ${expDataCount} exp, ${truncatedMessages.size} trunc)`);
                     success = true;
                 } else {
                     log.error(`❌ Erreur sauvegarde GitHub: ${response.status}`);
@@ -290,6 +382,16 @@ async function loadDataFromGitHub() {
                     userLastImage.set(userId, imageUrl);
                 });
                 log.info(`✅ ${Object.keys(data.userLastImage).length} images chargées depuis GitHub`);
+            }
+
+            // 🆕 NOUVEAU: Charger les messages tronqués
+            if (data.truncatedMessages && typeof data.truncatedMessages === 'object') {
+                Object.entries(data.truncatedMessages).forEach(([userId, truncData]) => {
+                    if (truncData && typeof truncData === 'object') {
+                        truncatedMessages.set(userId, truncData);
+                    }
+                });
+                log.info(`✅ ${Object.keys(data.truncatedMessages).length} messages tronqués chargés depuis GitHub`);
             }
 
             // ✅ NOUVEAU: Charger les données d'expérience
@@ -575,7 +677,7 @@ function isAdmin(userId) {
     return ADMIN_IDS.has(String(userId));
 }
 
-// === FONCTIONS D'ENVOI AVEC SAUVEGARDE ===
+// === FONCTIONS D'ENVOI AVEC GESTION DE TRONCATURE ===
 
 async function sendMessage(recipientId, text) {
     if (!PAGE_ACCESS_TOKEN) {
@@ -588,6 +690,34 @@ async function sendMessage(recipientId, text) {
         return { success: false, error: "Empty message" };
     }
     
+    // 🆕 GESTION INTELLIGENTE DES MESSAGES LONGS
+    if (text.length > 2000) {
+        log.info(`📏 Message long détecté (${text.length} chars) pour ${recipientId} - Division en chunks`);
+        
+        const chunks = splitMessageIntoChunks(text, 2000);
+        
+        if (chunks.length > 1) {
+            // Envoyer le premier chunk avec indicateur de continuation
+            const firstChunk = chunks[0] + "\n\n📝 *Tape \"continue\" pour la suite...*";
+            
+            // Sauvegarder l'état de troncature
+            truncatedMessages.set(String(recipientId), {
+                fullMessage: text,
+                lastSentPart: chunks[0]
+            });
+            
+            // Sauvegarder immédiatement
+            saveDataImmediate();
+            
+            return await sendSingleMessage(recipientId, firstChunk);
+        }
+    }
+    
+    // Message normal
+    return await sendSingleMessage(recipientId, text);
+}
+
+async function sendSingleMessage(recipientId, text) {
     let finalText = text;
     if (finalText.length > 2000 && !finalText.includes("✨ [Message tronqué avec amour]")) {
         finalText = finalText.substring(0, 1950) + "...\n✨ [Message tronqué avec amour]";
@@ -692,6 +822,9 @@ const commandContext = {
     clanData: null, // Sera initialisé par les commandes
     commandData: clanData, // Map pour autres données de commandes
     
+    // 🆕 AJOUT: Gestion des messages tronqués
+    truncatedMessages,
+    
     // Fonctions utilitaires
     log,
     sleep,
@@ -704,6 +837,10 @@ const commandContext = {
     isAdmin,
     sendMessage,
     sendImageMessage,
+    
+    // 🆕 AJOUT: Fonctions de gestion de troncature
+    splitMessageIntoChunks,
+    isContinuationRequest,
     
     // Fonctions de sauvegarde GitHub
     saveDataToGitHub,
@@ -766,6 +903,59 @@ async function processCommand(senderId, messageText) {
     
     messageText = messageText.trim();
     
+    // 🆕 GESTION DES DEMANDES DE CONTINUATION EN PRIORITÉ
+    if (isContinuationRequest(messageText)) {
+        const truncatedData = truncatedMessages.get(senderIdStr);
+        if (truncatedData) {
+            const { fullMessage, lastSentPart } = truncatedData;
+            
+            // Trouver où on s'était arrêté
+            const lastSentIndex = fullMessage.indexOf(lastSentPart) + lastSentPart.length;
+            const remainingMessage = fullMessage.substring(lastSentIndex);
+            
+            if (remainingMessage.trim()) {
+                const chunks = splitMessageIntoChunks(remainingMessage, 2000);
+                const nextChunk = chunks[0];
+                
+                // Mettre à jour le cache avec la nouvelle partie envoyée
+                if (chunks.length > 1) {
+                    truncatedMessages.set(senderIdStr, {
+                        fullMessage: fullMessage,
+                        lastSentPart: lastSentPart + nextChunk
+                    });
+                    
+                    // Ajouter un indicateur de continuation
+                    const continuationMsg = nextChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
+                    addToMemory(senderIdStr, 'user', messageText);
+                    addToMemory(senderIdStr, 'assistant', continuationMsg);
+                    saveDataImmediate(); // Sauvegarder l'état
+                    return continuationMsg;
+                } else {
+                    // Message terminé
+                    truncatedMessages.delete(senderIdStr);
+                    addToMemory(senderIdStr, 'user', messageText);
+                    addToMemory(senderIdStr, 'assistant', nextChunk);
+                    saveDataImmediate(); // Sauvegarder l'état
+                    return nextChunk;
+                }
+            } else {
+                // Plus rien à envoyer
+                truncatedMessages.delete(senderIdStr);
+                const endMsg = "✅ C'est tout ! Y a-t-il autre chose que je puisse faire pour toi ? 💫";
+                addToMemory(senderIdStr, 'user', messageText);
+                addToMemory(senderIdStr, 'assistant', endMsg);
+                saveDataImmediate(); // Sauvegarder l'état
+                return endMsg;
+            }
+        } else {
+            // Pas de message tronqué en cours
+            const noTruncMsg = "🤔 Il n'y a pas de message en cours à continuer. Pose-moi une nouvelle question ! 💡";
+            addToMemory(senderIdStr, 'user', messageText);
+            addToMemory(senderIdStr, 'assistant', noTruncMsg);
+            return noTruncMsg;
+        }
+    }
+    
     if (!messageText.startsWith('/')) {
         if (COMMANDS.has('chat')) {
             return await COMMANDS.get('chat')(senderId, messageText, commandContext);
@@ -797,7 +987,7 @@ app.get('/', (req, res) => {
     const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
     
     res.json({
-        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank Online ! 💖",
+        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation Online ! 💖",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: "2025",
@@ -807,13 +997,14 @@ app.get('/', (req, res) => {
         images_stored: userLastImage.size,
         clans_total: clanCount,
         users_with_exp: expDataCount,
-        version: "4.0 Amicale + Vision + GitHub + Clans + Rank",
+        truncated_messages: truncatedMessages.size,
+        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
         storage: {
             type: "GitHub API",
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
             auto_save: "Every 5 minutes",
-            includes: ["users", "conversations", "images", "clans", "command_data", "user_exp"]
+            includes: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages"]
         },
         features: [
             "Génération d'images IA",
@@ -823,6 +1014,8 @@ app.get('/', (req, res) => {
             "Système de clans persistant",
             "Système de ranking et expérience",
             "Cartes de rang personnalisées",
+            "Gestion intelligente des messages longs",
+            "Continuation automatique des réponses",
             "Broadcast admin",
             "Recherche 2025",
             "Stats réservées admin",
@@ -921,12 +1114,6 @@ app.post('/webhook', async (req, res) => {
                             // Notifier si l'utilisateur a monté de niveau
                             if (expResult.levelUp) {
                                 log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} !`);
-                                
-                                // Envoyer un message de félicitation après la réponse
-                                /*setTimeout(async () => {
-                                    const levelUpMsg = `🎉 Félicitations ! Tu viens d'atteindre le niveau ${expResult.newLevel} ! ✨\n\nTape /rank pour voir ta carte de rang ! 🏆`;
-                                    await sendMessage(senderId, levelUpMsg);
-                                }, 1000);*/
                             }
                             
                             // Sauvegarder les données mises à jour
@@ -1089,7 +1276,8 @@ app.post('/force-save', async (req, res) => {
                 conversations: userMemory.size,
                 images: userLastImage.size,
                 clans: clanCount,
-                users_with_exp: expDataCount
+                users_with_exp: expDataCount,
+                truncated_messages: truncatedMessages.size
             }
         });
     } catch (error) {
@@ -1117,7 +1305,8 @@ app.post('/reload-data', async (req, res) => {
                 conversations: userMemory.size,
                 images: userLastImage.size,
                 clans: clanCount,
-                users_with_exp: expDataCount
+                users_with_exp: expDataCount,
+                truncated_messages: truncatedMessages.size
             }
         });
     } catch (error) {
@@ -1128,7 +1317,7 @@ app.post('/reload-data', async (req, res) => {
     }
 });
 
-// === STATISTIQUES PUBLIQUES MISES À JOUR AVEC EXPÉRIENCE ===
+// === STATISTIQUES PUBLIQUES MISES À JOUR AVEC EXPÉRIENCE ET TRONCATURE ===
 app.get('/stats', (req, res) => {
     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
     const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
@@ -1139,8 +1328,9 @@ app.get('/stats', (req, res) => {
         images_stored: userLastImage.size,
         clans_total: clanCount,
         users_with_exp: expDataCount,
+        truncated_messages: truncatedMessages.size,
         commands_available: COMMANDS.size,
-        version: "4.0 Amicale + Vision + GitHub + Clans + Rank",
+        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: 2025,
@@ -1149,7 +1339,7 @@ app.get('/stats', (req, res) => {
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
             auto_save_interval: "5 minutes",
-            data_types: ["users", "conversations", "images", "clans", "command_data", "user_exp"]
+            data_types: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages"]
         },
         features: [
             "AI Image Generation",
@@ -1159,6 +1349,8 @@ app.get('/stats', (req, res) => {
             "Persistent Clan System",
             "User Ranking System",
             "Experience & Levels",
+            "Smart Message Truncation",
+            "Message Continuation",
             "Admin Stats",
             "Help Suggestions",
             "GitHub Persistent Storage"
@@ -1167,7 +1359,7 @@ app.get('/stats', (req, res) => {
     });
 });
 
-// === SANTÉ DU BOT MISE À JOUR AVEC EXPÉRIENCE ===
+// === SANTÉ DU BOT MISE À JOUR AVEC EXPÉRIENCE ET TRONCATURE ===
 app.get('/health', (req, res) => {
     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
     const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
@@ -1180,7 +1372,8 @@ app.get('/health', (req, res) => {
             vision: Boolean(MISTRAL_API_KEY),
             facebook: Boolean(PAGE_ACCESS_TOKEN),
             github_storage: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
-            ranking_system: Boolean(rankCommand)
+            ranking_system: Boolean(rankCommand),
+            message_truncation: true
         },
         data: {
             users: userList.size,
@@ -1188,9 +1381,10 @@ app.get('/health', (req, res) => {
             images_stored: userLastImage.size,
             clans_total: clanCount,
             users_with_exp: expDataCount,
+            truncated_messages: truncatedMessages.size,
             commands_loaded: COMMANDS.size
         },
-        version: "4.0 Amicale + Vision + GitHub + Clans + Rank",
+        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
         creator: "Durand",
         repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
         timestamp: new Date().toISOString()
@@ -1222,8 +1416,6 @@ app.get('/health', (req, res) => {
     res.status(statusCode).json(healthStatus);
 });
 
-// À ajouter dans le fichier principal (server.js) après la ligne : app.use(bodyParser.json());
-
 // === SERVEUR DE FICHIERS STATIQUES POUR LES IMAGES TEMPORAIRES ===
 
 app.use('/temp', express.static(path.join(__dirname, 'temp')));
@@ -1254,16 +1446,6 @@ app.use('/temp', (req, res, next) => {
     }
     next();
 });
-
-// === VARIABLE D'ENVIRONNEMENT POUR L'URL DU SERVEUR ===
-// À ajouter dans les variables d'environnement ou au début du fichier :
-
-
-// Cette approche peut être utilisée dans la commande rank comme ceci :
-// const dataUrl = convertImageToBase64DataUrl(imageBuffer);
-// return { type: 'image', url: dataUrl, caption: '...' };
-
-// Note: Facebook Messenger peut avoir des limitations sur la taille des Data URLs
 
 // Route pour voir l'historique des commits GitHub
 app.get('/github-history', async (req, res) => {
@@ -1311,12 +1493,27 @@ app.get('/github-history', async (req, res) => {
     }
 });
 
-// === DÉMARRAGE MODIFIÉ AVEC SYSTÈME D'EXPÉRIENCE ===
+// 🆕 NOUVELLE ROUTE: Nettoyer les messages tronqués (admin uniquement)
+app.post('/clear-truncated', (req, res) => {
+    const clearedCount = truncatedMessages.size;
+    truncatedMessages.clear();
+    
+    // Sauvegarder immédiatement
+    saveDataImmediate();
+    
+    res.json({
+        success: true,
+        message: `${clearedCount} conversations tronquées nettoyées`,
+        timestamp: new Date().toISOString()
+    });
+});
+
+// === DÉMARRAGE MODIFIÉ AVEC SYSTÈME D'EXPÉRIENCE ET TRONCATURE ===
 
 const PORT = process.env.PORT || 5000;
 
 async function startBot() {
-    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank");
+    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation");
     log.info("💖 Personnalité super gentille et amicale, comme une très bonne amie");
     log.info("👨‍💻 Créée par Durand");
     log.info("📅 Année: 2025");
@@ -1362,17 +1559,19 @@ async function startBot() {
     log.info(`🖼️ ${userLastImage.size} images en mémoire`);
     log.info(`🏰 ${clanCount} clans en mémoire`);
     log.info(`⭐ ${expDataCount} utilisateurs avec expérience`);
+    log.info(`📝 ${truncatedMessages.size} conversations tronquées en cours`);
     log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
     log.info(`📂 Repository: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
     log.info(`🌐 Serveur sur le port ${PORT}`);
     
     startAutoSave();
     
-    log.info("🎉 NakamaBot Amicale + Vision + GitHub + Clans + Rank prête à aider avec gentillesse !");
+    log.info("🎉 NakamaBot Amicale + Vision + GitHub + Clans + Rank + Truncation prête à aider avec gentillesse !");
 
     app.listen(PORT, () => {
         log.info(`🌐 Serveur démarré sur le port ${PORT}`);
         log.info("💾 Sauvegarde automatique GitHub activée");
+        log.info("📏 Gestion intelligente des messages longs activée");
         log.info(`📊 Dashboard: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
     });
 }
@@ -1392,6 +1591,13 @@ async function gracefulShutdown() {
         log.info("✅ Données sauvegardées avec succès !");
     } catch (error) {
         log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
+    }
+    
+    // Nettoyage final des messages tronqués
+    const truncatedCount = truncatedMessages.size;
+    if (truncatedCount > 0) {
+        log.info(`🧹 Nettoyage de ${truncatedCount} conversations tronquées en cours...`);
+        truncatedMessages.clear();
     }
     
     log.info("👋 Au revoir ! Données sauvegardées sur GitHub !");
@@ -1414,8 +1620,28 @@ process.on('unhandledRejection', async (reason, promise) => {
     await gracefulShutdown();
 });
 
+// 🆕 NETTOYAGE PÉRIODIQUE: Nettoyer les messages tronqués anciens (plus de 24h)
+setInterval(() => {
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000; // 24 heures en millisecondes
+    let cleanedCount = 0;
+    
+    for (const [userId, data] of truncatedMessages.entries()) {
+        // Si le message n'a pas de timestamp ou est trop ancien
+        if (!data.timestamp || (now - new Date(data.timestamp).getTime() > oneDayMs)) {
+            truncatedMessages.delete(userId);
+            cleanedCount++;
+        }
+    }
+    
+    if (cleanedCount > 0) {
+        log.info(`🧹 Nettoyage automatique: ${cleanedCount} conversations tronquées expirées supprimées`);
+        saveDataImmediate(); // Sauvegarder le nettoyage
+    }
+}, 60 * 60 * 1000); // Vérifier toutes les heures
+
 // Démarrer le bot
 startBot().catch(error => {
     log.error(`❌ Erreur démarrage: ${error.message}`);
     process.exit(1);
-});
+}); 
