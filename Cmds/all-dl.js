@@ -1,5 +1,5 @@
 /**
- * Commande ALLDL - Téléchargement universel de médias
+ * Commande ALLDL - Téléchargement universel de médias CORRIGÉE
  * Supporte YouTube, TikTok, Facebook, Instagram, Twitter, etc.
  * Avec système d'auto-téléchargement pour les groupes (admin seulement)
  * @param {string} senderId - ID de l'utilisateur
@@ -84,6 +84,7 @@ ${isEnabled ? '✅ Toutes les URLs que vous postez seront automatiquement télé
 • \`https://www.youtube.com/watch?v=dQw4w9WgXcQ\`
 • \`https://www.tiktok.com/@user/video/123456\`
 • \`https://www.instagram.com/p/ABC123/\`
+• \`https://www.facebook.com/watch/?v=123456789\`
 
 💡 Astuce : Copiez-collez directement l'URL depuis votre navigateur !`;
 
@@ -98,6 +99,7 @@ ${isEnabled ? '✅ Toutes les URLs que vous postez seront automatiquement télé
         const downloadingMsg = `⏳ **Téléchargement en cours...**
 
 🔗 URL: ${url.length > 80 ? url.substring(0, 80) + '...' : url}
+🎬 Plateforme: ${extractDomain(url)}
 
 💡 Cela peut prendre quelques secondes selon la taille du média...`;
 
@@ -112,21 +114,77 @@ ${isEnabled ? '✅ Toutes les URLs que vous postez seront automatiquement télé
 
             const response = await axios.get(apiUrl, { 
                 timeout: 60000, // 60 secondes pour les gros fichiers
-                maxRedirects: 5
+                maxRedirects: 5,
+                validateStatus: function (status) {
+                    return status >= 200 && status < 500; // Accepter même les 4xx pour gestion personnalisée
+                }
             });
 
-            if (!response.data || !response.data.result) {
-                throw new Error('Réponse API invalide ou média non disponible');
+            log.debug(`📊 Réponse API: Status ${response.status}, Data: ${JSON.stringify(response.data)}`);
+
+            // ✅ NOUVELLE LOGIQUE: Vérification améliorée de la réponse
+            if (!response.data || response.status !== 200) {
+                throw new Error(`API a retourné le statut ${response.status}`);
             }
 
             const mediaData = response.data;
-            const { title, result: mediaUrl, duration, thumbnail } = mediaData;
+            
+            // ✅ CORRECTION: Vérifier différentes structures de réponse possibles
+            let mediaUrl = null;
+            let title = null;
+            let author = null;
+            let thumbnail = null;
+            let duration = null;
+
+            // Structure principale: {result: "url", Title: "...", author: "..."}
+            if (mediaData.result) {
+                mediaUrl = mediaData.result;
+                title = mediaData.Title || mediaData.title || null;
+                author = mediaData.author || null;
+                thumbnail = mediaData.thumbnail || null;
+                duration = mediaData.duration || null;
+            }
+            // Structure alternative: {url: "...", title: "..."}
+            else if (mediaData.url) {
+                mediaUrl = mediaData.url;
+                title = mediaData.title || mediaData.Title || null;
+                author = mediaData.author || null;
+            }
+            // Structure directe avec médias multiples
+            else if (mediaData.medias && mediaData.medias.length > 0) {
+                mediaUrl = mediaData.medias[0].url;
+                title = mediaData.title || null;
+            }
+            // Erreur dans la réponse API
+            else if (mediaData.error || mediaData.message) {
+                throw new Error(mediaData.error || mediaData.message || 'Erreur API non spécifiée');
+            }
+
+            if (!mediaUrl) {
+                log.error(`❌ Aucune URL de média trouvée dans la réponse: ${JSON.stringify(mediaData)}`);
+                throw new Error('URL du média introuvable dans la réponse de l\'API');
+            }
+
+            // ✅ VALIDATION DE L'URL DU MÉDIA
+            if (!isValidUrl(mediaUrl)) {
+                log.error(`❌ URL de média invalide: ${mediaUrl}`);
+                throw new Error('L\'API a retourné une URL de média invalide');
+            }
+
+            log.info(`✅ Média URL obtenue: ${mediaUrl.substring(0, 100)}...`);
 
             // 🎬 PRÉPARATION DU MESSAGE DE RÉSULTAT
             let resultMessage = `✅ **Téléchargement terminé !**\n\n`;
             
             if (title) {
-                resultMessage += `📽️ **Titre :** ${title}\n`;
+                // Nettoyer le titre (enlever les caractères spéciaux problématiques)
+                const cleanTitle = title.replace(/[^\w\s\-\.,!?()]/g, '').substring(0, 100);
+                resultMessage += `📽️ **Titre :** ${cleanTitle}\n`;
+            }
+            
+            if (author) {
+                const cleanAuthor = author.replace(/[^\w\s\-\.,!?()]/g, '').substring(0, 50);
+                resultMessage += `👤 **Auteur :** ${cleanAuthor}\n`;
             }
             
             if (duration) {
@@ -134,27 +192,27 @@ ${isEnabled ? '✅ Toutes les URLs que vous postez seront automatiquement télé
             }
             
             resultMessage += `🔗 **Source :** ${extractDomain(url)}\n`;
-            resultMessage += `👤 **Demandé par :** User ${senderId}\n\n`;
+            resultMessage += `📱 **Demandé par :** User ${senderId}\n\n`;
             resultMessage += `💕 **Téléchargé avec amour par NakamaBot !**`;
 
-            // 🚀 ENVOI DU MÉDIA
-            if (mediaUrl) {
-                // Déterminer le type de média basé sur l'URL
-                const mediaType = getMediaType(mediaUrl);
+            // 🚀 TÉLÉCHARGEMENT ET ENVOI DU MÉDIA
+            log.info(`📤 Tentative d'envoi du média...`);
+            
+            // ✅ CORRECTION: Toujours essayer d'envoyer comme vidéo d'abord
+            // car Facebook et autres plateformes renvoient souvent des vidéos même si l'URL semble être une image
+            
+            try {
+                // Premier essai: Envoyer comme vidéo
+                const videoResult = await sendVideoMessage(senderId, mediaUrl, resultMessage);
                 
-                if (mediaType === 'video') {
-                    // Envoyer comme vidéo
-                    const videoResult = await sendImageMessage(senderId, mediaUrl, resultMessage);
-                    
-                    if (videoResult.success) {
-                        addToMemory(senderIdStr, 'assistant', resultMessage);
-                        log.info(`✅ Vidéo téléchargée avec succès pour ${senderId}`);
-                        return { type: 'media_sent', success: true };
-                    } else {
-                        throw new Error('Échec envoi vidéo');
-                    }
+                if (videoResult.success) {
+                    addToMemory(senderIdStr, 'assistant', resultMessage);
+                    log.info(`✅ Vidéo téléchargée avec succès pour ${senderId}`);
+                    return { type: 'media_sent', success: true };
                 } else {
-                    // Envoyer comme image
+                    log.warning(`⚠️ Échec envoi vidéo, tentative image...`);
+                    
+                    // Deuxième essai: Envoyer comme image
                     const imageResult = await sendImageMessage(senderId, mediaUrl, resultMessage);
                     
                     if (imageResult.success) {
@@ -162,37 +220,74 @@ ${isEnabled ? '✅ Toutes les URLs que vous postez seront automatiquement télé
                         log.info(`✅ Image téléchargée avec succès pour ${senderId}`);
                         return { type: 'media_sent', success: true };
                     } else {
-                        throw new Error('Échec envoi image');
+                        throw new Error('Impossible d\'envoyer le média ni en vidéo ni en image');
                     }
                 }
-            } else {
-                throw new Error('URL du média introuvable dans la réponse');
+            } catch (sendError) {
+                log.error(`❌ Erreur envoi média: ${sendError.message}`);
+                
+                // ✅ FALLBACK: Envoyer le lien direct si l'envoi échoue
+                const fallbackMsg = `📎 **Lien de téléchargement direct :**
+
+🔗 ${mediaUrl}
+
+${title ? `📽️ **Titre :** ${title}\n` : ''}${author ? `👤 **Auteur :** ${author}\n` : ''}
+📱 Cliquez sur le lien pour télécharger le média directement !
+
+💡 **Astuce :** Le lien se téléchargera automatiquement quand vous cliquez dessus.
+
+💕 **Préparé avec amour par NakamaBot !**`;
+
+                addToMemory(senderIdStr, 'assistant', fallbackMsg);
+                return fallbackMsg;
             }
 
         } catch (apiError) {
             log.error(`❌ Erreur API ALLDL: ${apiError.message}`);
             
-            // Messages d'erreur spécifiques
+            // ✅ MESSAGES D'ERREUR AMÉLIORÉS ET PLUS SPÉCIFIQUES
             let errorMsg = "❌ **Échec du téléchargement**\n\n";
             
             if (apiError.response?.status === 404) {
                 errorMsg += "🚫 **Erreur :** Média introuvable ou URL invalide\n";
-                errorMsg += "💡 **Solution :** Vérifiez que l'URL est correcte et accessible";
+                errorMsg += "💡 **Solutions possibles :**\n";
+                errorMsg += "   • Vérifiez que l'URL est correcte et complète\n";
+                errorMsg += "   • Assurez-vous que le contenu est public\n";
+                errorMsg += "   • Réessayez avec une URL différente";
             } else if (apiError.response?.status === 403) {
-                errorMsg += "🔒 **Erreur :** Accès refusé (contenu privé)\n";
-                errorMsg += "💡 **Solution :** Le contenu est peut-être privé ou géo-restreint";
+                errorMsg += "🔒 **Erreur :** Accès refusé (contenu privé ou géo-restreint)\n";
+                errorMsg += "💡 **Solutions possibles :**\n";
+                errorMsg += "   • Le contenu est peut-être privé\n";
+                errorMsg += "   • Il pourrait être géo-restreint\n";
+                errorMsg += "   • Essayez avec un autre contenu public";
             } else if (apiError.code === 'ECONNABORTED' || apiError.message.includes('timeout')) {
                 errorMsg += "⏰ **Erreur :** Délai d'attente dépassé\n";
-                errorMsg += "💡 **Solution :** Le fichier est trop volumineux ou le serveur est lent, réessayez";
+                errorMsg += "💡 **Solutions possibles :**\n";
+                errorMsg += "   • Le fichier est trop volumineux\n";
+                errorMsg += "   • Le serveur est temporairement lent\n";
+                errorMsg += "   • Réessayez dans quelques minutes";
             } else if (apiError.response?.status >= 500) {
                 errorMsg += "🔧 **Erreur :** Problème serveur temporaire\n";
-                errorMsg += "💡 **Solution :** Réessayez dans quelques minutes";
+                errorMsg += "💡 **Solutions possibles :**\n";
+                errorMsg += "   • Les serveurs de téléchargement sont occupés\n";
+                errorMsg += "   • Réessayez dans 5-10 minutes\n";
+                errorMsg += "   • Le service pourrait être en maintenance";
+            } else if (apiError.message.includes('API a retourné le statut')) {
+                errorMsg += `🐛 **Erreur API :** ${apiError.message}\n`;
+                errorMsg += "💡 **Solutions possibles :**\n";
+                errorMsg += "   • L'API de téléchargement a un problème temporaire\n";
+                errorMsg += "   • Réessayez dans quelques minutes\n";
+                errorMsg += "   • Vérifiez que l'URL est supportée";
             } else {
-                errorMsg += `🐛 **Erreur :** ${apiError.message}\n`;
-                errorMsg += "💡 **Solution :** Vérifiez l'URL ou contactez l'admin si le problème persiste";
+                errorMsg += `🐛 **Erreur technique :** ${apiError.message}\n`;
+                errorMsg += "💡 **Solutions possibles :**\n";
+                errorMsg += "   • Vérifiez que l'URL est correcte\n";
+                errorMsg += "   • Réessayez dans quelques minutes\n";
+                errorMsg += "   • Contactez l'admin si le problème persiste";
             }
             
             errorMsg += `\n🔗 **URL testée :** ${url.length > 60 ? url.substring(0, 60) + '...' : url}`;
+            errorMsg += `\n🎬 **Plateforme :** ${extractDomain(url)}`;
             errorMsg += "\n\n🆘 Tapez `/help` si vous avez besoin d'aide !";
 
             addToMemory(senderIdStr, 'assistant', errorMsg);
@@ -207,18 +302,21 @@ ${isEnabled ? '✅ Toutes les URLs que vous postez seront automatiquement télé
 🐛 Une petite erreur technique s'est produite...
 
 **Solutions possibles :**
-• Vérifiez votre URL
+• Vérifiez que votre URL est complète et correcte
 • Réessayez dans quelques instants  
-• Contactez l'admin si ça persiste
+• Assurez-vous que le contenu est public
+• Contactez l'admin si le problème persiste
 
-💕 Désolée pour ce petit désagrément ! Je fais de mon mieux !`;
+🔗 **URL :** ${args ? args.substring(0, 60) + '...' : 'Non fournie'}
+
+💕 Désolée pour ce petit désagrément ! Je fais de mon mieux pour vous aider !`;
 
         addToMemory(senderIdStr, 'assistant', generalErrorMsg);
         return generalErrorMsg;
     }
 };
 
-// === FONCTIONS UTILITAIRES ===
+// === FONCTIONS UTILITAIRES AMÉLIORÉES ===
 
 /**
  * Valide si une chaîne est une URL valide
@@ -237,16 +335,16 @@ function isValidUrl(string) {
 }
 
 /**
- * Extrait le domaine d'une URL
+ * Extrait le domaine d'une URL avec icônes
  * @param {string} url - URL complète
- * @returns {string} - Nom du domaine
+ * @returns {string} - Nom du domaine avec icône
  */
 function extractDomain(url) {
     try {
         const urlObj = new URL(url);
-        let domain = urlObj.hostname;
+        let domain = urlObj.hostname.toLowerCase();
         
-        // Simplifier les domaines connus
+        // Simplifier les domaines connus avec icônes appropriées
         if (domain.includes('youtube.com') || domain.includes('youtu.be')) {
             return '🔴 YouTube';
         } else if (domain.includes('tiktok.com')) {
@@ -257,45 +355,82 @@ function extractDomain(url) {
             return '📘 Facebook';
         } else if (domain.includes('twitter.com') || domain.includes('x.com')) {
             return '🐦 Twitter/X';
+        } else if (domain.includes('snapchat.com')) {
+            return '👻 Snapchat';
+        } else if (domain.includes('pinterest.com')) {
+            return '📌 Pinterest';
+        } else if (domain.includes('linkedin.com')) {
+            return '💼 LinkedIn';
+        } else if (domain.includes('reddit.com')) {
+            return '🤖 Reddit';
+        } else if (domain.includes('twitch.tv')) {
+            return '🎮 Twitch';
         } else {
-            return domain.replace('www.', '');
+            return '🌐 ' + domain.replace('www.', '');
         }
     } catch (error) {
-        return 'Site inconnu';
+        return '🌐 Site inconnu';
     }
 }
 
 /**
- * Détermine le type de média basé sur l'URL
- * @param {string} url - URL du média
- * @returns {string} - 'video' ou 'image'
+ * ✅ NOUVELLE FONCTION: Envoyer une vidéo avec gestion d'erreur améliorée
+ * @param {string} recipientId - ID du destinataire
+ * @param {string} videoUrl - URL de la vidéo
+ * @param {string} caption - Légende
+ * @returns {object} - Résultat de l'envoi
  */
-function getMediaType(url) {
-    if (!url) return 'unknown';
+async function sendVideoMessage(recipientId, videoUrl, caption = "") {
+    // Cette fonction devrait être définie dans le contexte, mais on va l'émuler
+    const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
     
-    const lowerUrl = url.toLowerCase();
-    
-    // Extensions vidéo
-    const videoExtensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v', '.3gp', '.flv'];
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
-    
-    // Vérifier les extensions
-    for (const ext of videoExtensions) {
-        if (lowerUrl.includes(ext)) return 'video';
+    if (!PAGE_ACCESS_TOKEN) {
+        return { success: false, error: "No token" };
     }
     
-    for (const ext of imageExtensions) {
-        if (lowerUrl.includes(ext)) return 'image';
-    }
+    const data = {
+        recipient: { id: String(recipientId) },
+        message: {
+            attachment: {
+                type: "video",
+                payload: {
+                    url: videoUrl,
+                    is_reusable: true
+                }
+            }
+        }
+    };
     
-    // Par défaut, considérer comme vidéo pour les médias sociaux
-    return 'video';
+    try {
+        const axios = require('axios');
+        const response = await axios.post(
+            "https://graph.facebook.com/v18.0/me/messages",
+            data,
+            {
+                params: { access_token: PAGE_ACCESS_TOKEN },
+                timeout: 30000 // 30 secondes pour les vidéos
+            }
+        );
+        
+        if (response.status === 200) {
+            // Envoyer la légende séparément si fournie
+            if (caption && typeof sendMessage === 'function') {
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Attendre 1s
+                return await sendMessage(recipientId, caption);
+            }
+            return { success: true };
+        } else {
+            return { success: false, error: `API Error ${response.status}` };
+        }
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
 }
 
-// === AUTO-DOWNLOAD HANDLER (Pour intégration future dans le système de messages) ===
+// === AUTO-DOWNLOAD HANDLER AMÉLIORÉ ===
 
 /**
- * Fonction pour gérer l'auto-téléchargement (à intégrer dans le webhook principal)
+ * Fonction pour gérer l'auto-téléchargement (à intégrer dans le système de messages)
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} messageText - Texte du message
  * @param {object} ctx - Contexte
@@ -306,14 +441,16 @@ async function handleAutoDownload(senderId, messageText, ctx) {
     // Vérifier si l'auto-download est activé pour cet utilisateur
     if (!autoDownloadSettings.get(senderIdStr)) return false;
     
-    // Chercher des URLs dans le message
-    const urlRegex = /(https?:\/\/[^\s]+)/gi;
+    // Chercher des URLs dans le message (regex améliorée)
+    const urlRegex = /(https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|tiktok\.com\/@[\w.-]+\/video\/|instagram\.com\/(?:p|reel)\/|facebook\.com\/watch\/\?v=|fb\.watch\/|twitter\.com\/[\w]+\/status\/|x\.com\/[\w]+\/status\/)[\w.-]+(?:\S+)?)/gi;
     const urls = messageText.match(urlRegex);
     
     if (urls && urls.length > 0) {
         const url = urls[0]; // Prendre la première URL trouvée
         
         try {
+            ctx.log.info(`🤖 Auto-téléchargement déclenché pour ${senderId}: ${url.substring(0, 50)}...`);
+            
             // Exécuter la commande alldl automatiquement
             await module.exports(senderId, url, ctx);
             return true;
