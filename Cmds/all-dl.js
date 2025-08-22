@@ -2,6 +2,7 @@
  * Commande ALLDL - Téléchargement universel de médias CORRIGÉE
  * Supporte YouTube, TikTok, Facebook, Instagram, Twitter, etc.
  * Avec système d'auto-téléchargement pour les groupes (admin seulement)
+ * ✅ CORRECTION: Ajout système anti-doublons
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - URL ou paramètres (on/off pour auto-download)
  * @param {object} ctx - Contexte du bot
@@ -14,6 +15,10 @@ const ALLDL_API_URL = 'https://noobs-api.top/dipto/alldl';
 
 // Stockage local des paramètres d'auto-téléchargement par utilisateur/groupe
 const autoDownloadSettings = new Map();
+
+// ✅ NOUVEAU: Cache pour éviter les doublons (URL + UserID)
+const downloadCache = new Map();
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes en millisecondes
 
 module.exports = async function cmdAllDl(senderId, args, ctx) {
     const { log, sendMessage, sendImageMessage, addToMemory, isAdmin } = ctx;
@@ -91,6 +96,37 @@ ${isEnabled ? '✅ Toutes les URLs que vous postez seront automatiquement télé
             addToMemory(senderIdStr, 'user', args);
             addToMemory(senderIdStr, 'assistant', invalidMsg);
             return invalidMsg;
+        }
+
+        // ✅ NOUVEAU: Vérification des doublons
+        const cacheKey = `${senderIdStr}_${url}`;
+        const now = Date.now();
+        
+        // Nettoyer le cache des entrées expirées
+        cleanExpiredCache();
+        
+        if (downloadCache.has(cacheKey)) {
+            const cacheEntry = downloadCache.get(cacheKey);
+            const timeElapsed = now - cacheEntry.timestamp;
+            const remainingTime = Math.ceil((CACHE_DURATION - timeElapsed) / 1000);
+            
+            if (timeElapsed < CACHE_DURATION) {
+                const duplicateMsg = `🔄 **Téléchargement récent détecté !**
+
+⚠️ Vous avez déjà téléchargé cette vidéo il y a ${Math.floor(timeElapsed / 1000)} secondes.
+
+🎬 **Vidéo :** ${cacheEntry.title || 'Titre non disponible'}
+🔗 **URL :** ${url.length > 60 ? url.substring(0, 60) + '...' : url}
+
+⏱️ Vous pourrez la télécharger à nouveau dans **${remainingTime} secondes**.
+
+💡 Ceci évite les téléchargements en double et préserve les ressources du serveur.`;
+
+                log.info(`🔄 Doublon évité pour ${senderId}: ${url.substring(0, 50)}...`);
+                addToMemory(senderIdStr, 'user', args);
+                addToMemory(senderIdStr, 'assistant', duplicateMsg);
+                return duplicateMsg;
+            }
         }
 
         // 🚀 TÉLÉCHARGEMENT
@@ -173,6 +209,14 @@ ${isEnabled ? '✅ Toutes les URLs que vous postez seront automatiquement télé
 
             log.info(`✅ Média URL obtenue: ${mediaUrl.substring(0, 100)}...`);
 
+            // ✅ NOUVEAU: Ajouter au cache AVANT l'envoi
+            downloadCache.set(cacheKey, {
+                timestamp: now,
+                title: title,
+                mediaUrl: mediaUrl,
+                author: author
+            });
+
             // 🎬 PRÉPARATION DU MESSAGE DE RÉSULTAT
             let resultMessage = `✅ **Téléchargement terminé !**\n\n`;
             
@@ -197,9 +241,6 @@ ${isEnabled ? '✅ Toutes les URLs que vous postez seront automatiquement télé
 
             // 🚀 TÉLÉCHARGEMENT ET ENVOI DU MÉDIA
             log.info(`📤 Tentative d'envoi du média...`);
-            
-            // ✅ CORRECTION: Toujours essayer d'envoyer comme vidéo d'abord
-            // car Facebook et autres plateformes renvoient souvent des vidéos même si l'URL semble être une image
             
             try {
                 // Premier essai: Envoyer comme vidéo
@@ -244,6 +285,9 @@ ${title ? `📽️ **Titre :** ${title}\n` : ''}${author ? `👤 **Auteur :** ${
 
         } catch (apiError) {
             log.error(`❌ Erreur API ALLDL: ${apiError.message}`);
+            
+            // ✅ NOUVEAU: Supprimer du cache en cas d'erreur
+            downloadCache.delete(cacheKey);
             
             // ✅ MESSAGES D'ERREUR AMÉLIORÉS ET PLUS SPÉCIFIQUES
             let errorMsg = "❌ **Échec du téléchargement**\n\n";
@@ -317,6 +361,49 @@ ${title ? `📽️ **Titre :** ${title}\n` : ''}${author ? `👤 **Auteur :** ${
 };
 
 // === FONCTIONS UTILITAIRES AMÉLIORÉES ===
+
+/**
+ * ✅ NOUVEAU: Nettoyer le cache des entrées expirées
+ */
+function cleanExpiredCache() {
+    const now = Date.now();
+    const expiredKeys = [];
+    
+    for (const [key, entry] of downloadCache.entries()) {
+        if (now - entry.timestamp > CACHE_DURATION) {
+            expiredKeys.push(key);
+        }
+    }
+    
+    expiredKeys.forEach(key => downloadCache.delete(key));
+    
+    if (expiredKeys.length > 0) {
+        console.log(`🧹 Cache nettoyé: ${expiredKeys.length} entrées expirées supprimées`);
+    }
+}
+
+/**
+ * ✅ NOUVEAU: Obtenir les statistiques du cache
+ */
+function getCacheStats() {
+    const now = Date.now();
+    let activeEntries = 0;
+    let expiredEntries = 0;
+    
+    for (const [key, entry] of downloadCache.entries()) {
+        if (now - entry.timestamp <= CACHE_DURATION) {
+            activeEntries++;
+        } else {
+            expiredEntries++;
+        }
+    }
+    
+    return {
+        total: downloadCache.size,
+        active: activeEntries,
+        expired: expiredEntries
+    };
+}
 
 /**
  * Valide si une chaîne est une URL valide
@@ -466,3 +553,6 @@ async function handleAutoDownload(senderId, messageText, ctx) {
 module.exports.handleAutoDownload = handleAutoDownload;
 module.exports.autoDownloadSettings = autoDownloadSettings;
 module.exports.isValidUrl = isValidUrl;
+module.exports.downloadCache = downloadCache; // ✅ NOUVEAU: Export du cache pour debug
+module.exports.getCacheStats = getCacheStats; // ✅ NOUVEAU: Export des stats
+module.exports.cleanExpiredCache = cleanExpiredCache; // ✅ NOUVEAU: Export du nettoyage
