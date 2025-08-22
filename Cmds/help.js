@@ -51,21 +51,31 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 
     // Envoyer un seul message avec TOUS les boutons principaux
     let helpText = `╔═══════════╗
-║ 🤖 NAKAMABOT v5.1║
+║ 🤖 NAKAMABOT v5.2║
 ║ ----------HELP 🤖----------║
 ╚═══════════╝
+
 ✨ COMMANDES PRINCIPALES:
 🏠 BASE:
 ┣━━ "/start" - Ma présentation mignonne
+________________________________________
 ┣━━ "/help" - Cette aide pleine d'amour
+________________________________________
 ┗━━ "/chat" [msg] - Papote avec gentillesse
+
 🎵 MÉDIA:
 ┣━━ "/music" - Trouve ta musique YouTube
+________________________________________
 ┣━━ "/image" [desc] - Crée des images IA
+________________________________________
 ┣━━ "/anime" - Transforme en style anime
+________________________________________
 ┗━━ "/vision" - Décris tes images
+________________________________________
+
 🐱‍🏍 ADMINS:
 ┗━━ "/contact" - Envoie un message a un admin
+________________________________________
 ⚔️ CLANS:
 ┗━━ "/clan help" - Univers de guerre virtuelle`;
 
@@ -73,9 +83,13 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
         helpText += `
 🔐 ADMIN SPÉCIAL:
 ┣━━ "/stats" - Mes statistiques
+________________________________________
 ┣━━ "/admin" - Panneau admin
+________________________________________
 ┣━━ "/broadcast" [msg] - Diffusion
+________________________________________
 ┣━━ "/stop-broadcast" - Arrête la diffusion
+________________________________________
 ┗━━ "/restart" - Redémarrage`;
     }
 
