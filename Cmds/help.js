@@ -58,24 +58,23 @@ module.exports = async function cmdHelp(senderId, args, ctx) {
 ✨ COMMANDES PRINCIPALES:
 🏠 BASE:
 ┣━━ "/start" - Ma présentation mignonne
-________________________________________
+_____________________
 ┣━━ "/help" - Cette aide pleine d'amour
-________________________________________
+_____________________
 ┗━━ "/chat" [msg] - Papote avec gentillesse
 
 🎵 MÉDIA:
 ┣━━ "/music" - Trouve ta musique YouTube
-________________________________________
+_____________________
 ┣━━ "/image" [desc] - Crée des images IA
-________________________________________
+_____________________
 ┣━━ "/anime" - Transforme en style anime
-________________________________________
+_____________________
 ┗━━ "/vision" - Décris tes images
-________________________________________
 
 🐱‍🏍 ADMINS:
 ┗━━ "/contact" - Envoie un message a un admin
-________________________________________
+_____________________
 ⚔️ CLANS:
 ┗━━ "/clan help" - Univers de guerre virtuelle`;
 
@@ -83,13 +82,13 @@ ________________________________________
         helpText += `
 🔐 ADMIN SPÉCIAL:
 ┣━━ "/stats" - Mes statistiques
-________________________________________
+_____________________
 ┣━━ "/admin" - Panneau admin
-________________________________________
+_____________________
 ┣━━ "/broadcast" [msg] - Diffusion
-________________________________________
+_____________________
 ┣━━ "/stop-broadcast" - Arrête la diffusion
-________________________________________
+_____________________
 ┗━━ "/restart" - Redémarrage`;
     }
 
