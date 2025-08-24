@@ -65,7 +65,7 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
             const statusMsg = `🔧 Auto-téléchargement YouTube ${isEnabled ? '**activé**' : '**désactivé**'} !`;
             addToMemory(senderIdStr, 'user', args);
             addToMemory(senderIdStr, 'assistant', statusMsg);
-            log.info(`🔧 Auto-download ${isEnabled ? 'ON' : 'OFF'} pour ${senderId}`);
+            safeLog(log, 'info', `🔧 Auto-download ${isEnabled ? 'ON' : 'OFF'} pour ${senderId}`);
             return statusMsg;
         }
 
@@ -99,7 +99,7 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
                 const remainingTime = Math.ceil((CACHE_DURATION - timeElapsed) / 1000);
                 const duplicateMsg = `🔄 Téléchargement récent ! Réessayez dans ${remainingTime}s.`;
                 
-                log.debug(`🔄 Cache hit pour ${senderId}`);
+                safeLog(log, 'debug', `🔄 Cache hit pour ${senderId}`);
                 addToMemory(senderIdStr, 'user', args);
                 addToMemory(senderIdStr, 'assistant', duplicateMsg);
                 return duplicateMsg;
@@ -121,7 +121,7 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
             throw new Error('URL YouTube invalide selon ytdl-core');
         }
 
-        log.info(`📡 [RENDER] Extraction YouTube: ${shortenUrl(url)}`);
+        safeLog(log, 'info', `📡 [RENDER] Extraction YouTube: ${shortenUrl(url)}`);
 
         // Configuration optimisée pour Render Free
         const info = await downloadWithRetry(url, log);
@@ -136,7 +136,7 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
         const duration = formatDuration(videoDetails.lengthSeconds);
         const viewCount = formatNumber(videoDetails.viewCount);
 
-        log.info(`✅ [RENDER] Infos: "${title.substring(0, 30)}..." par ${author}`);
+        safeLog(log, 'info', `✅ [RENDER] Infos: "${title.substring(0, 30)}..." par ${author}`);
 
         // Sélection format optimisée Render
         const format = selectBestFormatForRender(info.formats);
@@ -145,7 +145,7 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
             throw new Error('Aucun format compatible Render trouvé');
         }
 
-        log.info(`🎬 [RENDER] Format: ${format.qualityLabel || format.quality}`);
+        safeLog(log, 'info', `🎬 [RENDER] Format: ${format.qualityLabel || format.quality}`);
 
         // Ajouter au cache
         downloadCache.set(cacheKey, {
@@ -167,19 +167,19 @@ ${duration ? `⏱️ **Durée :** ${duration}\n` : ''}${viewCount ? `👀 **Vues
 
         // Envoi avec timeout Render
         try {
-            log.info(`📤 [RENDER] Envoi vidéo...`);
+            safeLog(log, 'info', `📤 [RENDER] Envoi vidéo...`);
             
             const videoResult = await sendVideoMessageRender(senderId, format.url, resultMessage, ctx);
             
             if (videoResult.success) {
                 addToMemory(senderIdStr, 'assistant', resultMessage);
-                log.info(`✅ [RENDER] Succès pour ${senderId}`);
+                safeLog(log, 'info', `✅ [RENDER] Succès pour ${senderId}`);
                 return { type: 'media_sent', success: true };
             } else {
                 throw new Error(`Envoi échoué: ${videoResult.error}`);
             }
         } catch (sendError) {
-            log.warn(`⚠️ [RENDER] Échec envoi: ${sendError.message}`);
+            console.warn(`⚠️ [RENDER] Échec envoi: ${sendError.message}`);
             
             // Fallback: lien direct (compatible Render)
             const fallbackMsg = `🔗 **Lien YouTube direct :**
@@ -198,7 +198,7 @@ ${duration ? `⏱️ **Durée :** ${duration}\n` : ''}🎯 **Qualité :** ${form
         }
 
     } catch (error) {
-        log.error(`❌ [RENDER] Erreur ytdl pour ${senderId}: ${error.message}`);
+        safeLog(log, 'error', `❌ [RENDER] Erreur ytdl pour ${senderId}: ${error.message}`);
         
         // Supprimer du cache
         const cacheKey = `${senderIdStr}_${args?.trim()}`;
@@ -262,12 +262,12 @@ async function downloadWithRetry(url, log, retryCount = 0) {
     };
     
     try {
-        log.debug(`🔄 [RENDER] Tentative ${retryCount + 1}/${RENDER_CONFIG.maxRetries + 1}`);
+        console.log(`🔄 [RENDER] Tentative ${retryCount + 1}/${RENDER_CONFIG.maxRetries + 1}`);
         const info = await ytdl.getInfo(url, options);
         return info;
     } catch (error) {
         if (retryCount < RENDER_CONFIG.maxRetries) {
-            log.warn(`⚠️ [RENDER] Échec tentative ${retryCount + 1}: ${error.message}`);
+            console.warn(`⚠️ [RENDER] Échec tentative ${retryCount + 1}: ${error.message}`);
             await new Promise(resolve => setTimeout(resolve, 2000)); // Attendre 2s
             return downloadWithRetry(url, log, retryCount + 1);
         }
@@ -367,7 +367,19 @@ async function sendVideoMessageRender(recipientId, videoUrl, caption = "", ctx) 
     }
 }
 
-// === FONCTIONS UTILITAIRES ===
+// === FONCTIONS UTILITAIRES AVEC LOG SÉCURISÉ ===
+
+function safeLog(log, level, message) {
+    try {
+        if (log && typeof log[level] === 'function') {
+            log[level](message);
+        } else {
+            console[level] ? console[level](message) : console.log(`[${level.toUpperCase()}] ${message}`);
+        }
+    } catch (error) {
+        console.log(`[${level.toUpperCase()}] ${message}`);
+    }
+}
 
 function isValidYouTubeUrl(url) {
     if (!url || typeof url !== 'string') return false;
@@ -435,11 +447,11 @@ async function handleYouTubeAutoDownload(senderId, messageText, ctx) {
     if (urls?.length > 0) {
         const url = urls[0];
         try {
-            ctx.log.info(`🔴 [RENDER] Auto-download: ${shortenUrl(url)}`);
+            safeLog(ctx.log, 'info', `🔴 [RENDER] Auto-download: ${shortenUrl(url)}`);
             await module.exports(senderId, url, ctx);
             return true;
         } catch (error) {
-            ctx.log.warn(`⚠️ [RENDER] Auto-download error: ${error.message}`);
+            safeLog(ctx.log, 'warn', `⚠️ [RENDER] Auto-download error: ${error.message}`);
         }
     }
     return false;
