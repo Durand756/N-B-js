@@ -1,10 +1,23 @@
-const ytdl = require('ytdl-core');
-const axios = require('axios');
+// Désactiver la vérification de mise à jour ytdl
+process.env.YTDL_NO_UPDATE = 'true';
+
+const ytdl = require('@distube/ytdl-core'); // Utiliser @distube/ytdl-core (plus stable)
 
 // Cache pour éviter les doublons
 const downloadCache = new Map();
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 const autoDownloadSettings = new Map();
+
+// Configuration pour Render Free
+const RENDER_CONFIG = {
+    timeout: 25000, // 25s max sur Render Free
+    maxRetries: 2,
+    userAgents: [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ]
+};
 
 module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
     const { log, sendMessage, addToMemory, isAdmin } = ctx;
@@ -26,7 +39,9 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
 • \`/ytdl on\` - Active l'auto-téléchargement
 • \`/ytdl off\` - Désactive l'auto-téléchargement
 
-💡 **Exemple :** \`/ytdl https://www.youtube.com/watch?v=dQw4w9WgXcQ\``;
+💡 **Exemple :** \`/ytdl https://www.youtube.com/watch?v=dQw4w9WgXcQ\`
+
+⚡ **Optimisé pour Render Free !**`;
 
             addToMemory(senderIdStr, 'user', args || '/ytdl');
             addToMemory(senderIdStr, 'assistant', helpMsg);
@@ -35,7 +50,7 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
 
         const command = args.trim().toLowerCase();
 
-        // Gestion des paramètres auto-download (Admin seulement)
+        // Gestion des paramètres auto-download
         if (command === 'on' || command === 'off') {
             if (!isAdmin(senderId)) {
                 const noPermMsg = "🚫 Seuls les administrateurs peuvent modifier l'auto-téléchargement !";
@@ -50,11 +65,11 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
             const statusMsg = `🔧 Auto-téléchargement YouTube ${isEnabled ? '**activé**' : '**désactivé**'} !`;
             addToMemory(senderIdStr, 'user', args);
             addToMemory(senderIdStr, 'assistant', statusMsg);
-            log.info(`🔧 Auto-download YouTube ${isEnabled ? 'activé' : 'désactivé'} pour ${senderId}`);
+            log.info(`🔧 Auto-download ${isEnabled ? 'ON' : 'OFF'} pour ${senderId}`);
             return statusMsg;
         }
 
-        // Validation de l'URL YouTube
+        // Validation URL
         const url = args.trim();
         if (!isValidYouTubeUrl(url)) {
             const invalidMsg = `❌ **URL YouTube invalide !**
@@ -64,14 +79,14 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
 • \`https://youtu.be/VIDEO_ID\`
 • \`https://www.youtube.com/shorts/VIDEO_ID\`
 
-💡 **Astuce :** Copiez l'URL directement depuis YouTube !`;
+💡 Copiez l'URL directement depuis YouTube !`;
 
             addToMemory(senderIdStr, 'user', args);
             addToMemory(senderIdStr, 'assistant', invalidMsg);
             return invalidMsg;
         }
 
-        // Vérification des doublons
+        // Vérification cache anti-doublons
         const cacheKey = `${senderIdStr}_${url}`;
         const now = Date.now();
         cleanExpiredCache();
@@ -82,12 +97,9 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
             
             if (timeElapsed < CACHE_DURATION) {
                 const remainingTime = Math.ceil((CACHE_DURATION - timeElapsed) / 1000);
-                const duplicateMsg = `🔄 **Téléchargement récent détecté !**
-
-⚠️ Vous avez déjà téléchargé cette vidéo récemment.
-⏱️ Vous pourrez la télécharger à nouveau dans **${remainingTime} secondes**.`;
-
-                log.debug(`🔄 Doublon YouTube évité pour ${senderId}: ${shortenUrl(url)}`);
+                const duplicateMsg = `🔄 Téléchargement récent ! Réessayez dans ${remainingTime}s.`;
+                
+                log.debug(`🔄 Cache hit pour ${senderId}`);
                 addToMemory(senderIdStr, 'user', args);
                 addToMemory(senderIdStr, 'assistant', duplicateMsg);
                 return duplicateMsg;
@@ -98,52 +110,42 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
         const loadingMsg = `⏳ **Téléchargement YouTube en cours...**
 
 📗 URL: ${shortenUrl(url)}
-🔴 Extraction des informations vidéo...`;
+🔴 Extraction des informations...
+⚡ Optimisé Render Free`;
 
         addToMemory(senderIdStr, 'user', args);
         await sendMessage(senderId, loadingMsg);
 
-        // Validation et extraction des infos
+        // Validation initiale
         if (!ytdl.validateURL(url)) {
             throw new Error('URL YouTube invalide selon ytdl-core');
         }
 
-        log.info(`📡 Extraction infos YouTube: ${shortenUrl(url)}`);
-        
-        // Options ytdl améliorées pour éviter l'erreur 410
-        const ytdlOptions = {
-            filter: 'audioandvideo',
-            quality: 'highest',
-            highWaterMark: 1 << 25, // Évite les coupures
-            requestOptions: {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
-            }
-        };
+        log.info(`📡 [RENDER] Extraction YouTube: ${shortenUrl(url)}`);
 
-        const info = await ytdl.getInfo(url, ytdlOptions);
+        // Configuration optimisée pour Render Free
+        const info = await downloadWithRetry(url, log);
         
         if (!info?.videoDetails) {
-            throw new Error('Impossible d\'obtenir les informations de la vidéo');
+            throw new Error('Impossible d\'obtenir les informations vidéo');
         }
 
         const videoDetails = info.videoDetails;
         const title = videoDetails.title;
-        const author = videoDetails.author?.name || videoDetails.ownerChannelName;
+        const author = videoDetails.author?.name || videoDetails.ownerChannelName || 'Inconnu';
         const duration = formatDuration(videoDetails.lengthSeconds);
         const viewCount = formatNumber(videoDetails.viewCount);
 
-        log.info(`✅ Infos extraites: "${title}" par ${author}`);
+        log.info(`✅ [RENDER] Infos: "${title.substring(0, 30)}..." par ${author}`);
 
-        // Sélection du meilleur format (corrigé pour éviter 410)
-        const format = selectBestFormat(info.formats);
+        // Sélection format optimisée Render
+        const format = selectBestFormatForRender(info.formats);
         
         if (!format?.url) {
-            throw new Error('Aucun format de téléchargement disponible');
+            throw new Error('Aucun format compatible Render trouvé');
         }
 
-        log.info(`🎬 Format sélectionné: ${format.qualityLabel || format.quality} (${format.container || 'unknown'})`);
+        log.info(`🎬 [RENDER] Format: ${format.qualityLabel || format.quality}`);
 
         // Ajouter au cache
         downloadCache.set(cacheKey, {
@@ -154,173 +156,175 @@ module.exports = async function cmdYouTubeDl(senderId, args, ctx) {
         });
 
         // Message de résultat
-        const resultMessage = `✅ **Téléchargement YouTube terminé !**
+        const resultMessage = `✅ **YouTube téléchargé !**
 
-🎬 **Titre :** ${cleanText(title, 80)}
-📺 **Chaîne :** ${cleanText(author, 50)}
+🎬 **Titre :** ${cleanText(title, 70)}
+📺 **Chaîne :** ${cleanText(author, 40)}
 ${duration ? `⏱️ **Durée :** ${duration}\n` : ''}${viewCount ? `👀 **Vues :** ${viewCount}\n` : ''}🎯 **Qualité :** ${format.qualityLabel || format.quality}
-📱 **Demandé par :** User ${senderId}
+⚡ **Serveur :** Render Free
 
-💕 **Téléchargé avec amour par NakamaBot !**`;
+💕 **Téléchargé par NakamaBot !**`;
 
-        // Téléchargement et envoi
+        // Envoi avec timeout Render
         try {
-            log.info(`📤 Tentative d'envoi du média YouTube...`);
+            log.info(`📤 [RENDER] Envoi vidéo...`);
             
-            const videoResult = await sendVideoMessage(senderId, format.url, resultMessage, ctx);
+            const videoResult = await sendVideoMessageRender(senderId, format.url, resultMessage, ctx);
             
             if (videoResult.success) {
                 addToMemory(senderIdStr, 'assistant', resultMessage);
-                log.info(`✅ Vidéo YouTube téléchargée avec succès pour ${senderId}`);
+                log.info(`✅ [RENDER] Succès pour ${senderId}`);
                 return { type: 'media_sent', success: true };
             } else {
-                throw new Error('Envoi vidéo échoué');
+                throw new Error(`Envoi échoué: ${videoResult.error}`);
             }
         } catch (sendError) {
-            log.warn(`⚠️ Échec envoi vidéo YouTube: ${sendError.message}`);
+            log.warn(`⚠️ [RENDER] Échec envoi: ${sendError.message}`);
             
-            // Fallback: envoyer le lien direct
-            const fallbackMsg = `🔗 **Lien de téléchargement YouTube direct :**
+            // Fallback: lien direct (compatible Render)
+            const fallbackMsg = `🔗 **Lien YouTube direct :**
 
-📗 ${format.url}
+📗 **URL :** ${format.url}
 
-🎬 **Titre :** ${cleanText(title, 60)}
-📺 **Chaîne :** ${cleanText(author, 40)}
+🎬 **Titre :** ${cleanText(title, 50)}
+📺 **Chaîne :** ${cleanText(author, 30)}
 ${duration ? `⏱️ **Durée :** ${duration}\n` : ''}🎯 **Qualité :** ${format.qualityLabel || format.quality}
 
-📱 Cliquez sur le lien pour télécharger la vidéo !`;
+📱 Cliquez pour télécharger !
+⚡ Via Render Free`;
 
             addToMemory(senderIdStr, 'assistant', fallbackMsg);
             return fallbackMsg;
         }
 
-    } catch (ytdlError) {
-        log.error(`❌ Erreur YTDL pour ${senderId}: ${ytdlError.message}`);
+    } catch (error) {
+        log.error(`❌ [RENDER] Erreur ytdl pour ${senderId}: ${error.message}`);
         
-        // Supprimer du cache en cas d'erreur
+        // Supprimer du cache
         const cacheKey = `${senderIdStr}_${args?.trim()}`;
         downloadCache.delete(cacheKey);
         
-        let errorMsg = "❌ **Échec du téléchargement YouTube**\n\n";
+        let errorMsg = "❌ **Échec téléchargement YouTube**\n\n";
         
-        if (ytdlError.statusCode === 410 || ytdlError.message.includes('410')) {
-            errorMsg += "🚫 **Erreur 410 :** La ressource n'est plus disponible\n";
-            errorMsg += "💡 **Solutions :**\n";
-            errorMsg += "   • Le format demandé a expiré (YouTube change souvent les URLs)\n";
-            errorMsg += "   • Réessayez dans quelques secondes\n";
+        // Messages d'erreur spécifiques Render
+        if (error.statusCode === 410 || error.message.includes('410')) {
+            errorMsg += "🚫 **Erreur 410 :** Format expiré\n";
+            errorMsg += "💡 **Solutions Render Free :**\n";
+            errorMsg += "   • Les URLs YouTube expirent rapidement\n";
+            errorMsg += "   • Réessayez immédiatement\n";
             errorMsg += "   • Utilisez `/alldl` comme alternative";
-        } else if (ytdlError.message.includes('Video unavailable')) {
-            errorMsg += "🚫 **Erreur :** Vidéo non disponible\n";
-            errorMsg += "   • La vidéo est privée, supprimée ou restreinte\n";
+        } else if (error.statusCode === 403 || error.message.includes('403')) {
+            errorMsg += "🚫 **Erreur 403 :** Accès refusé\n";
+            errorMsg += "   • YouTube bloque parfois Render Free\n";
+            errorMsg += "   • Attendez 30 secondes et réessayez\n";
+            errorMsg += "   • Contactez l'admin si persistant";
+        } else if (error.message.includes('timeout') || error.message.includes('ETIMEDOUT')) {
+            errorMsg += "⏰ **Timeout Render :** Délai dépassé\n";
+            errorMsg += "   • Serveur Render Free limité à 25s\n";
+            errorMsg += "   • Vidéo trop lourde pour Render\n";
+            errorMsg += "   • Essayez une vidéo plus courte";
+        } else if (error.message.includes('Video unavailable')) {
+            errorMsg += "🚫 **Vidéo non disponible**\n";
+            errorMsg += "   • Vidéo privée, supprimée ou restreinte\n";
             errorMsg += "   • Restriction géographique possible";
-        } else if (ytdlError.message.includes('Sign in to confirm')) {
-            errorMsg += "🔞 **Erreur :** Vérification d'âge requise\n";
-            errorMsg += "   • Cette vidéo nécessite une connexion YouTube";
-        } else if (ytdlError.message.includes('rate limit') || ytdlError.message.includes('429')) {
-            errorMsg += "🚦 **Erreur :** Limite de taux atteinte\n";
-            errorMsg += "   • Attendez 5-10 minutes avant de réessayer";
         } else {
-            errorMsg += `🐛 **Erreur technique :** ${ytdlError.message.substring(0, 100)}\n`;
-            errorMsg += "💡 **Solutions générales :**\n";
-            errorMsg += "   • Vérifiez l'URL YouTube\n";
-            errorMsg += "   • Réessayez dans quelques minutes\n";
-            errorMsg += "   • Utilisez `/alldl` comme alternative";
+            errorMsg += `🐛 **Erreur technique :** ${error.message.substring(0, 80)}\n`;
+            errorMsg += "💡 **Solutions Render Free :**\n";
+            errorMsg += "   • Réessayez dans 30 secondes\n";
+            errorMsg += "   • Utilisez `/alldl` comme alternative\n";
+            errorMsg += "   • Préférez des vidéos courtes (<5 min)";
         }
         
-        errorMsg += `\n📗 **URL testée :** ${shortenUrl(args?.trim())}`;
+        errorMsg += `\n📗 **URL :** ${shortenUrl(args?.trim())}`;
+        errorMsg += "\n⚡ **Serveur :** Render Free";
 
         addToMemory(senderIdStr, 'assistant', errorMsg);
         return errorMsg;
     }
 };
 
-// === FONCTIONS UTILITAIRES ===
+// === FONCTIONS OPTIMISÉES RENDER ===
 
-function isValidYouTubeUrl(url) {
-    if (!url || typeof url !== 'string') return false;
-    const youtubeRegex = /^https?:\/\/(www\.)?(youtube\.com\/(watch\?v=|shorts\/)|youtu\.be\/)[\w-]{11}(\S+)?$/;
-    return youtubeRegex.test(url);
+async function downloadWithRetry(url, log, retryCount = 0) {
+    const userAgent = RENDER_CONFIG.userAgents[retryCount % RENDER_CONFIG.userAgents.length];
+    
+    const options = {
+        requestOptions: {
+            timeout: RENDER_CONFIG.timeout,
+            headers: {
+                'User-Agent': userAgent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive'
+            }
+        }
+    };
+    
+    try {
+        log.debug(`🔄 [RENDER] Tentative ${retryCount + 1}/${RENDER_CONFIG.maxRetries + 1}`);
+        const info = await ytdl.getInfo(url, options);
+        return info;
+    } catch (error) {
+        if (retryCount < RENDER_CONFIG.maxRetries) {
+            log.warn(`⚠️ [RENDER] Échec tentative ${retryCount + 1}: ${error.message}`);
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Attendre 2s
+            return downloadWithRetry(url, log, retryCount + 1);
+        }
+        throw error;
+    }
 }
 
-function selectBestFormat(formats) {
-    if (!formats?.length) return null;
-    
-    // Filtrer les formats valides avec audio et vidéo
-    const validFormats = formats.filter(f => 
-        f.hasVideo && 
-        f.hasAudio && 
-        f.url &&
-        !f.isLive &&
-        f.container !== 'webm' // Préférer MP4
-    );
-    
-    if (validFormats.length > 0) {
-        // Préférer dans l'ordre: 720p, 480p, 360p, puis le premier disponible
-        return validFormats.find(f => f.qualityLabel === '720p') ||
-               validFormats.find(f => f.qualityLabel === '480p') ||
-               validFormats.find(f => f.qualityLabel === '360p') ||
-               validFormats[0];
+function selectBestFormatForRender(formats) {
+    if (!formats?.length) {
+        console.log('🚫 [RENDER] Aucun format disponible');
+        return null;
     }
     
-    // Fallback: audio seulement
-    const audioFormats = formats.filter(f => f.hasAudio && !f.hasVideo && f.url);
-    if (audioFormats.length > 0) {
-        return audioFormats.find(f => f.audioBitrate) || audioFormats[0];
-    }
+    console.log(`📋 [RENDER] ${formats.length} formats trouvés`);
     
-    // Dernier recours
-    return formats.find(f => f.url) || null;
-}
-
-function formatDuration(seconds) {
-    if (!seconds) return null;
-    const sec = parseInt(seconds);
-    const hours = Math.floor(sec / 3600);
-    const minutes = Math.floor((sec % 3600) / 60);
-    const remainingSeconds = sec % 60;
+    // Pour Render Free: privilégier formats légers et rapides
+    const renderCompatible = formats.filter(f => {
+        const hasValidUrl = f.url && f.url.includes('googlevideo.com');
+        const isNotHeavy = !f.contentLength || parseInt(f.contentLength) < 50000000; // <50MB
+        const isNotLive = !f.isLive;
+        
+        return hasValidUrl && isNotHeavy && isNotLive;
+    });
     
-    if (hours > 0) {
-        return `${hours}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-    }
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-}
-
-function formatNumber(num) {
-    if (!num) return null;
-    const number = parseInt(num);
-    if (number >= 1000000) return (number / 1000000).toFixed(1) + 'M';
-    if (number >= 1000) return (number / 1000).toFixed(1) + 'K';
-    return number.toString();
-}
-
-function shortenUrl(url) {
-    if (!url) return 'URL manquante';
-    return url.length > 60 ? url.substring(0, 60) + '...' : url;
-}
-
-function cleanText(text, maxLength = 100) {
-    if (!text) return 'Non disponible';
-    return text.replace(/[^\w\s\-\.,!?()\[\]]/g, '').substring(0, maxLength).trim();
-}
-
-function cleanExpiredCache() {
-    const now = Date.now();
-    const expiredKeys = [];
+    console.log(`✅ [RENDER] ${renderCompatible.length} formats compatibles`);
     
-    for (const [key, entry] of downloadCache.entries()) {
-        if (now - entry.timestamp > CACHE_DURATION) {
-            expiredKeys.push(key);
+    // Préférer audio+video légers
+    const videoFormats = renderCompatible.filter(f => f.hasVideo && f.hasAudio);
+    
+    if (videoFormats.length > 0) {
+        // Préférer 360p ou 480p (optimal pour Render Free)
+        const selected = videoFormats.find(f => f.qualityLabel === '360p') ||
+                        videoFormats.find(f => f.qualityLabel === '480p') ||
+                        videoFormats.find(f => f.quality === 'medium') ||
+                        videoFormats.find(f => f.quality === 'small') ||
+                        videoFormats[0];
+        
+        if (selected) {
+            console.log(`🎯 [RENDER] Sélectionné: ${selected.qualityLabel || selected.quality}`);
+            return selected;
         }
     }
     
-    expiredKeys.forEach(key => downloadCache.delete(key));
+    // Fallback: audio seulement (plus léger)
+    const audioFormats = renderCompatible.filter(f => f.hasAudio && !f.hasVideo);
     
-    if (expiredKeys.length > 0) {
-        console.log(`🧹 Cache YouTube nettoyé: ${expiredKeys.length} entrées expirées`);
+    if (audioFormats.length > 0) {
+        const audioSelected = audioFormats.find(f => f.audioBitrate && f.audioBitrate <= 128) || audioFormats[0];
+        console.log(`🎵 [RENDER] Audio sélectionné: ${audioSelected.audioBitrate}kbps`);
+        return audioSelected;
     }
+    
+    console.log('❌ [RENDER] Aucun format compatible Render trouvé');
+    return null;
 }
 
-async function sendVideoMessage(recipientId, videoUrl, caption = "", ctx) {
+async function sendVideoMessageRender(recipientId, videoUrl, caption = "", ctx) {
     const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
     
     if (!PAGE_ACCESS_TOKEN) {
@@ -346,13 +350,13 @@ async function sendVideoMessage(recipientId, videoUrl, caption = "", ctx) {
             data,
             {
                 params: { access_token: PAGE_ACCESS_TOKEN },
-                timeout: 45000
+                timeout: 20000 // 20s max pour Render Free
             }
         );
         
         if (response.status === 200) {
             if (caption && ctx.sendMessage) {
-                await new Promise(resolve => setTimeout(resolve, 1500));
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 await ctx.sendMessage(recipientId, caption);
             }
             return { success: true };
@@ -360,6 +364,62 @@ async function sendVideoMessage(recipientId, videoUrl, caption = "", ctx) {
         return { success: false, error: `API Error ${response.status}` };
     } catch (error) {
         return { success: false, error: error.message };
+    }
+}
+
+// === FONCTIONS UTILITAIRES ===
+
+function isValidYouTubeUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    const youtubeRegex = /^https?:\/\/(www\.)?(youtube\.com\/(watch\?v=|shorts\/)|youtu\.be\/)[\w-]{11}(\S+)?$/;
+    return youtubeRegex.test(url);
+}
+
+function formatDuration(seconds) {
+    if (!seconds) return null;
+    const sec = parseInt(seconds);
+    const hours = Math.floor(sec / 3600);
+    const minutes = Math.floor((sec % 3600) / 60);
+    const remainingSeconds = sec % 60;
+    
+    if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+    }
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+function formatNumber(num) {
+    if (!num) return null;
+    const number = parseInt(num);
+    if (number >= 1000000) return (number / 1000000).toFixed(1) + 'M';
+    if (number >= 1000) return (number / 1000).toFixed(1) + 'K';
+    return number.toString();
+}
+
+function shortenUrl(url) {
+    if (!url) return 'URL manquante';
+    return url.length > 50 ? url.substring(0, 50) + '...' : url;
+}
+
+function cleanText(text, maxLength = 100) {
+    if (!text) return 'Non disponible';
+    return text.replace(/[^\w\s\-\.,!?()\[\]]/g, '').substring(0, maxLength).trim();
+}
+
+function cleanExpiredCache() {
+    const now = Date.now();
+    const expiredKeys = [];
+    
+    for (const [key, entry] of downloadCache.entries()) {
+        if (now - entry.timestamp > CACHE_DURATION) {
+            expiredKeys.push(key);
+        }
+    }
+    
+    expiredKeys.forEach(key => downloadCache.delete(key));
+    
+    if (expiredKeys.length > 0) {
+        console.log(`🧹 [RENDER] Cache nettoyé: ${expiredKeys.length} entrées`);
     }
 }
 
@@ -375,11 +435,11 @@ async function handleYouTubeAutoDownload(senderId, messageText, ctx) {
     if (urls?.length > 0) {
         const url = urls[0];
         try {
-            ctx.log.info(`🔴 Auto-téléchargement YouTube déclenché pour ${senderId}: ${shortenUrl(url)}`);
+            ctx.log.info(`🔴 [RENDER] Auto-download: ${shortenUrl(url)}`);
             await module.exports(senderId, url, ctx);
             return true;
         } catch (error) {
-            ctx.log.warn(`⚠️ Erreur auto-download YouTube: ${error.message}`);
+            ctx.log.warn(`⚠️ [RENDER] Auto-download error: ${error.message}`);
         }
     }
     return false;
