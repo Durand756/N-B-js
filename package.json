@@ -35,7 +35,7 @@
     "googleapis": "^129.0.0",
     "sanitize-filename": "^1.6.3",
     "youtube-search-api": "^1.1.6",
-    "@distube/ytdl-core": "^4.13.5",
+    "ytdl-core": "^4.11.5",
     "cloudinary": "^1.41.0",
     "cheerio": "^1.0.0",
     "@google/generative-ai": "^0.24.1",
