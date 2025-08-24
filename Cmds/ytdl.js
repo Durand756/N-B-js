@@ -1,7 +1,7 @@
 // Désactiver la vérification de mise à jour ytdl
 process.env.YTDL_NO_UPDATE = 'true';
 
-const ytdl = require('@distube/ytdl-core'); // Utiliser @distube/ytdl-core (plus stable)
+const ytdl = require('@distube/ytdl-core'); // Utiliser @ distube/ytdl-core (plus stable)
 
 // Cache pour éviter les doublons
 const downloadCache = new Map();
