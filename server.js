@@ -691,7 +691,7 @@ async function sendMessage(recipientId, text) {
     }
     
     // 🆕 GESTION INTELLIGENTE DES MESSAGES LONGS
-    if (text.length > 2000) {
+    if (text.length > 6000) {
         log.info(`📏 Message long détecté (${text.length} chars) pour ${recipientId} - Division en chunks`);
         
         const chunks = splitMessageIntoChunks(text, 2000);
@@ -719,8 +719,8 @@ async function sendMessage(recipientId, text) {
 
 async function sendSingleMessage(recipientId, text) {
     let finalText = text;
-    if (finalText.length > 2000 && !finalText.includes("✨ [Message tronqué avec amour]")) {
-        finalText = finalText.substring(0, 1950) + "...\n✨ [Message tronqué avec amour]";
+    if (finalText.length > 6000 && !finalText.includes("✨ [Message Trop long]")) {
+        finalText = finalText.substring(0, 5950) + "...\n✨ [Message Trop long]";
     }
     
     const data = {
