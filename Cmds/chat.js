@@ -639,7 +639,7 @@ async function generateNaturalResponseWithContext(originalQuery, searchResults, 
         // 🔧 FIX: Prompt avec contexte de conversation complet
         const contextualPrompt = `Tu es NakamaBot, une IA conversationnelle empathique et créative.
 
-GARDE JUSTE EN MEMOIRE CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
+GARDE JUSTE EN MEMOIRE CONTEXTE TEMPOREL: Nous sommes le  ${dateTime} ne donne la date que si l'utilisateur demande garde la en memeoire
 
 HISTORIQUE DE CONVERSATION:
 ${conversationHistory || "Début de conversation"}
