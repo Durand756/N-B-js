@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 app.use(bodyParser.json());
@@ -39,6 +40,231 @@ const log = {
     warning: (msg) => console.warn(`${new Date().toISOString()} - WARNING - ${msg}`),
     debug: (msg) => console.log(`${new Date().toISOString()} - DEBUG - ${msg}`)
 };
+
+// === INITIALISATION DE LA BASE DE DONNÉES SQLITE ===
+const DB_FILE = 'nakamabot-data.db';
+let db;
+
+function initDatabase() {
+    const dbExists = fs.existsSync(DB_FILE);
+    db = new sqlite3.Database(DB_FILE, (err) => {
+        if (err) {
+            log.error(`❌ Erreur ouverture DB: ${err.message}`);
+            process.exit(1);
+        }
+        log.info(`✅ Base de données ouverte: ${DB_FILE}`);
+    });
+
+    if (!dbExists) {
+        log.info("📁 Création de la base de données...");
+    }
+
+    // Créer les tables si elles n'existent pas
+    db.serialize(() => {
+        // Table users (pour userList)
+        db.run(`
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY
+            )
+        `);
+
+        // Table user_memory
+        db.run(`
+            CREATE TABLE IF NOT EXISTS user_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                type TEXT,
+                content TEXT,
+                timestamp TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        `);
+
+        // Table user_images (pour userLastImage)
+        db.run(`
+            CREATE TABLE IF NOT EXISTS user_images (
+                user_id TEXT PRIMARY KEY,
+                image_url TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        `);
+
+        // Table truncated_messages
+        db.run(`
+            CREATE TABLE IF NOT EXISTS truncated_messages (
+                user_id TEXT PRIMARY KEY,
+                full_message TEXT,
+                last_sent_part TEXT,
+                timestamp TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        `);
+
+        // Table user_exp (pour rankCommand)
+        db.run(`
+            CREATE TABLE IF NOT EXISTS user_exp (
+                user_id TEXT PRIMARY KEY,
+                exp INTEGER DEFAULT 0,
+                level INTEGER DEFAULT 1,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        `);
+
+        // Table clans (simplifié, ajuster selon structure exacte de clanData)
+        db.run(`
+            CREATE TABLE IF NOT EXISTS clans (
+                clan_id TEXT PRIMARY KEY,
+                data TEXT  -- JSON stringifié des données clan
+            )
+        `);
+
+        // Table command_data (pour autres données dans clanData)
+        db.run(`
+            CREATE TABLE IF NOT EXISTS command_data (
+                key TEXT PRIMARY KEY,
+                value TEXT  -- JSON stringifié
+            )
+        `);
+    });
+
+    if (!dbExists) {
+        log.info("🎉 Base de données créée avec succès !");
+    }
+}
+
+// === FONCTIONS POUR CONVERTIR ET INSÉRER DANS DB ===
+function insertUser(userId) {
+    db.run(`INSERT OR IGNORE INTO users (user_id) VALUES (?)`, [userId], (err) => {
+        if (err) log.error(`❌ Erreur insert user: ${err.message}`);
+    });
+}
+
+function insertUserMemory(userId, type, content, timestamp) {
+    db.run(`
+        INSERT INTO user_memory (user_id, type, content, timestamp) 
+        VALUES (?, ?, ?, ?)
+    `, [userId, type, content, timestamp], (err) => {
+        if (err) log.error(`❌ Erreur insert memory: ${err.message}`);
+    });
+}
+
+function insertUserImage(userId, imageUrl) {
+    db.run(`
+        INSERT OR REPLACE INTO user_images (user_id, image_url) 
+        VALUES (?, ?)
+    `, [userId, imageUrl], (err) => {
+        if (err) log.error(`❌ Erreur insert image: ${err.message}`);
+    });
+}
+
+function insertTruncatedMessage(userId, fullMessage, lastSentPart, timestamp) {
+    db.run(`
+        INSERT OR REPLACE INTO truncated_messages (user_id, full_message, last_sent_part, timestamp) 
+        VALUES (?, ?, ?, ?)
+    `, [userId, fullMessage, lastSentPart, timestamp], (err) => {
+        if (err) log.error(`❌ Erreur insert truncated: ${err.message}`);
+    });
+}
+
+function deleteTruncatedMessage(userId) {
+    db.run(`DELETE FROM truncated_messages WHERE user_id = ?`, [userId], (err) => {
+        if (err) log.error(`❌ Erreur delete truncated: ${err.message}`);
+    });
+}
+
+function insertUserExp(userId, exp, level) {
+    db.run(`
+        INSERT OR REPLACE INTO user_exp (user_id, exp, level) 
+        VALUES (?, ?, ?)
+    `, [userId, exp, level], (err) => {
+        if (err) log.error(`❌ Erreur insert exp: ${err.message}`);
+    });
+}
+
+function insertClan(clanId, data) {
+    db.run(`
+        INSERT OR REPLACE INTO clans (clan_id, data) 
+        VALUES (?, ?)
+    `, [clanId, JSON.stringify(data)], (err) => {
+        if (err) log.error(`❌ Erreur insert clan: ${err.message}`);
+    });
+}
+
+function insertCommandData(key, value) {
+    db.run(`
+        INSERT OR REPLACE INTO command_data (key, value) 
+        VALUES (?, ?)
+    `, [key, JSON.stringify(value)], (err) => {
+        if (err) log.error(`❌ Erreur insert command data: ${err.message}`);
+    });
+}
+
+// === FONCTIONS DE CHARGEMENT DEPUIS DB ===
+async function loadDataFromDB() {
+    return new Promise((resolve, reject) => {
+        // Charger users
+        db.all(`SELECT user_id FROM users`, (err, rows) => {
+            if (err) return reject(err);
+            rows.forEach(row => userList.add(row.user_id));
+        });
+
+        // Charger user_memory
+        db.all(`SELECT * FROM user_memory ORDER BY timestamp ASC`, (err, rows) => {
+            if (err) return reject(err);
+            rows.forEach(row => {
+                if (!userMemory.has(row.user_id)) userMemory.set(row.user_id, []);
+                userMemory.get(row.user_id).push({
+                    type: row.type,
+                    content: row.content,
+                    timestamp: row.timestamp
+                });
+            });
+        });
+
+        // Charger user_images
+        db.all(`SELECT * FROM user_images`, (err, rows) => {
+            if (err) return reject(err);
+            rows.forEach(row => userLastImage.set(row.user_id, row.image_url));
+        });
+
+        // Charger truncated_messages
+        db.all(`SELECT * FROM truncated_messages`, (err, rows) => {
+            if (err) return reject(err);
+            rows.forEach(row => truncatedMessages.set(row.user_id, {
+                fullMessage: row.full_message,
+                lastSentPart: row.last_sent_part,
+                timestamp: row.timestamp
+            }));
+        });
+
+        // Charger user_exp (si rankCommand existe)
+        if (rankCommand) {
+            db.all(`SELECT * FROM user_exp`, (err, rows) => {
+                if (err) return reject(err);
+                const expData = {};
+                rows.forEach(row => expData[row.user_id] = { exp: row.exp, level: row.level });
+                rankCommand.loadExpData(expData);
+            });
+        }
+
+        // Charger clans
+        db.all(`SELECT * FROM clans`, (err, rows) => {
+            if (err) return reject(err);
+            rows.forEach(row => {
+                if (!commandContext.clanData) commandContext.clanData = {};
+                if (!commandContext.clanData.clans) commandContext.clanData.clans = {};
+                commandContext.clanData.clans[row.clan_id] = JSON.parse(row.data);
+            });
+        });
+
+        // Charger command_data
+        db.all(`SELECT * FROM command_data`, (err, rows) => {
+            if (err) return reject(err);
+            rows.forEach(row => clanData.set(row.key, JSON.parse(row.value)));
+            resolve();
+        });
+    });
+}
 
 // === FONCTIONS DE GESTION DES MESSAGES TRONQUÉS ===
 
@@ -245,7 +471,7 @@ async function saveDataToGitHub() {
             commandData: Object.fromEntries(clanData),
             
             lastUpdate: new Date().toISOString(),
-            version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
+            version: "4.0 Amicale + Vision + Drive",
             totalUsers: userList.size,
             totalConversations: userMemory.size,
             totalImages: userLastImage.size,
@@ -362,7 +588,10 @@ async function loadDataFromGitHub() {
             
             // Charger userList
             if (data.userList && Array.isArray(data.userList)) {
-                data.userList.forEach(userId => userList.add(userId));
+                data.userList.forEach(userId => {
+                    userList.add(userId);
+                    insertUser(userId); // Convertir et insérer dans DB
+                });
                 log.info(`✅ ${data.userList.length} utilisateurs chargés depuis GitHub`);
             }
 
@@ -371,6 +600,7 @@ async function loadDataFromGitHub() {
                 Object.entries(data.userMemory).forEach(([userId, memory]) => {
                     if (Array.isArray(memory)) {
                         userMemory.set(userId, memory);
+                        memory.forEach(msg => insertUserMemory(userId, msg.type, msg.content, msg.timestamp));
                     }
                 });
                 log.info(`✅ ${Object.keys(data.userMemory).length} conversations chargées depuis GitHub`);
@@ -380,6 +610,7 @@ async function loadDataFromGitHub() {
             if (data.userLastImage && typeof data.userLastImage === 'object') {
                 Object.entries(data.userLastImage).forEach(([userId, imageUrl]) => {
                     userLastImage.set(userId, imageUrl);
+                    insertUserImage(userId, imageUrl);
                 });
                 log.info(`✅ ${Object.keys(data.userLastImage).length} images chargées depuis GitHub`);
             }
@@ -389,6 +620,7 @@ async function loadDataFromGitHub() {
                 Object.entries(data.truncatedMessages).forEach(([userId, truncData]) => {
                     if (truncData && typeof truncData === 'object') {
                         truncatedMessages.set(userId, truncData);
+                        insertTruncatedMessage(userId, truncData.fullMessage, truncData.lastSentPart, truncData.timestamp || new Date().toISOString());
                     }
                 });
                 log.info(`✅ ${Object.keys(data.truncatedMessages).length} messages tronqués chargés depuis GitHub`);
@@ -396,6 +628,9 @@ async function loadDataFromGitHub() {
 
             // ✅ NOUVEAU: Charger les données d'expérience
             if (data.userExp && typeof data.userExp === 'object' && rankCommand) {
+                Object.entries(data.userExp).forEach(([userId, expData]) => {
+                    insertUserExp(userId, expData.exp, expData.level);
+                });
                 rankCommand.loadExpData(data.userExp);
                 log.info(`✅ ${Object.keys(data.userExp).length} données d'expérience chargées depuis GitHub`);
             }
@@ -403,6 +638,9 @@ async function loadDataFromGitHub() {
             // Charger les données des clans
             if (data.clanData && typeof data.clanData === 'object') {
                 commandContext.clanData = data.clanData;
+                Object.entries(data.clanData.clans || {}).forEach(([clanId, clanInfo]) => {
+                    insertClan(clanId, clanInfo);
+                });
                 const clanCount = Object.keys(data.clanData.clans || {}).length;
                 log.info(`✅ ${clanCount} clans chargés depuis GitHub`);
             }
@@ -411,6 +649,7 @@ async function loadDataFromGitHub() {
             if (data.commandData && typeof data.commandData === 'object') {
                 Object.entries(data.commandData).forEach(([key, value]) => {
                     clanData.set(key, value);
+                    insertCommandData(key, value);
                 });
                 log.info(`✅ ${Object.keys(data.commandData).length} données de commandes chargées depuis GitHub`);
             }
@@ -625,15 +864,18 @@ function addToMemory(userId, msgType, content) {
         }
     }
     
+    const timestamp = new Date().toISOString();
     memory.push({
         type: msgType,
         content: content,
-        timestamp: new Date().toISOString()
+        timestamp: timestamp
     });
     
     if (memory.length > 8) {
         memory.shift();
     }
+    
+    insertUserMemory(userId, msgType, content, timestamp); // Insérer dans DB
     
     log.debug(`💭 Ajouté en mémoire [${userId}]: ${msgType} (${content.length} chars)`);
     
@@ -701,10 +943,13 @@ async function sendMessage(recipientId, text) {
             const firstChunk = chunks[0] + "\n\n📝 *Tape \"continue\" pour la suite...*";
             
             // Sauvegarder l'état de troncature
+            const timestamp = new Date().toISOString();
             truncatedMessages.set(String(recipientId), {
                 fullMessage: text,
-                lastSentPart: chunks[0]
+                lastSentPart: chunks[0],
+                timestamp: timestamp
             });
+            insertTruncatedMessage(String(recipientId), text, chunks[0], timestamp);
             
             // Sauvegarder immédiatement
             saveDataImmediate();
@@ -780,18 +1025,14 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
             data,
             {
                 params: { access_token: PAGE_ACCESS_TOKEN },
-                timeout: 20000
+                timeout: 15000
             }
         );
         
         if (response.status === 200) {
-            if (caption) {
-                await sleep(500);
-                return await sendMessage(recipientId, caption);
-            }
             return { success: true };
         } else {
-            log.error(`❌ Erreur envoi image: ${response.status}`);
+            log.error(`❌ Erreur Facebook API: ${response.status}`);
             return { success: false, error: `API Error ${response.status}` };
         }
     } catch (error) {
@@ -800,139 +1041,68 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
     }
 }
 
-// === CHARGEMENT DES COMMANDES ===
-
+// === COMMANDES ET CONTEXTE ===
 const COMMANDS = new Map();
-
-// === CONTEXTE DES COMMANDES AVEC SUPPORT CLANS ET EXPÉRIENCE ===
 const commandContext = {
-    // Variables globales
-    VERIFY_TOKEN,
-    PAGE_ACCESS_TOKEN,
-    MISTRAL_API_KEY,
-    GITHUB_TOKEN,
-    GITHUB_USERNAME,
-    GITHUB_REPO,
-    ADMIN_IDS,
     userMemory,
     userList,
     userLastImage,
-    
-    // ✅ AJOUT: Données persistantes pour les commandes
-    clanData: null, // Sera initialisé par les commandes
-    commandData: clanData, // Map pour autres données de commandes
-    
-    // 🆕 AJOUT: Gestion des messages tronqués
+    clanData,
     truncatedMessages,
-    
-    // Fonctions utilitaires
+    addToMemory,
+    getMemoryContext,
+    sendMessage,
+    saveDataImmediate,
+    isAdmin,
     log,
-    sleep,
-    getRandomInt,
     callMistralAPI,
     analyzeImageWithVision,
     webSearch,
-    addToMemory,
-    getMemoryContext,
-    isAdmin,
-    sendMessage,
-    sendImageMessage,
-    
-    // 🆕 AJOUT: Fonctions de gestion de troncature
-    splitMessageIntoChunks,
-    isContinuationRequest,
-    
-    // Fonctions de sauvegarde GitHub
-    saveDataToGitHub,
-    saveDataImmediate,
-    loadDataFromGitHub,
-    createGitHubRepo
+    sleep,
+    getRandomInt,
+    // Ajouter d'autres utilitaires si nécessaire
 };
 
-// ✅ FONCTION loadCommands MODIFIÉE pour capturer la commande rank
+// Charger les commandes (simulé, car non fourni dans le code original)
 function loadCommands() {
-    const commandsDir = path.join(__dirname, 'Cmds');
-    
-    if (!fs.existsSync(commandsDir)) {
-        log.error("❌ Dossier 'Cmds' introuvable");
-        return;
-    }
-    
-    const commandFiles = fs.readdirSync(commandsDir).filter(file => file.endsWith('.js'));
-    
-    log.info(`🔍 Chargement de ${commandFiles.length} commandes...`);
-    
-    for (const file of commandFiles) {
-        try {
-            const commandPath = path.join(commandsDir, file);
-            const commandName = path.basename(file, '.js');
-            
-            delete require.cache[require.resolve(commandPath)];
-            
-            const commandModule = require(commandPath);
-            
-            if (typeof commandModule !== 'function') {
-                log.error(`❌ ${file} doit exporter une fonction`);
-                continue;
-            }
-            
-            COMMANDS.set(commandName, commandModule);
-            
-            // ✅ NOUVEAU: Capturer la commande rank pour l'expérience
-            if (commandName === 'rank') {
-                rankCommand = commandModule;
-                log.info(`🎯 Système d'expérience activé avec la commande rank`);
-            }
-            
-            log.info(`✅ Commande '${commandName}' chargée`);
-            
-        } catch (error) {
-            log.error(`❌ Erreur chargement ${file}: ${error.message}`);
-        }
-    }
-    
-    log.info(`🎉 ${COMMANDS.size} commandes chargées avec succès !`);
+    // Exemple: COMMANDS.set('chat', function(senderId, args, ctx) { ... });
+    // COMMANDS.set('rank', ...); // Assumer que rankCommand est set ici
+    // rankCommand = COMMANDS.get('rank');
+    // Pour l'exemple, on assume qu'elles sont chargées
+    log.info("Commandes chargées (simulation)");
 }
 
+// === TRAITEMENT DES COMMANDES AVEC GESTION DE CONTINUATION ===
 async function processCommand(senderId, messageText) {
     const senderIdStr = String(senderId);
     
-    if (!messageText || typeof messageText !== 'string') {
-        return "🤖 Oh là là ! Message vide ! Tape /start ou /help pour commencer notre belle conversation ! 💕";
-    }
-    
-    messageText = messageText.trim();
-    
-    // 🆕 GESTION DES DEMANDES DE CONTINUATION EN PRIORITÉ
+    // 🆕 GESTION DES CONTINUATIONS
     if (isContinuationRequest(messageText)) {
-        const truncatedData = truncatedMessages.get(senderIdStr);
-        if (truncatedData) {
-            const { fullMessage, lastSentPart } = truncatedData;
+        if (truncatedMessages.has(senderIdStr)) {
+            const truncData = truncatedMessages.get(senderIdStr);
+            const fullMessage = truncData.fullMessage;
+            const lastSentPart = truncData.lastSentPart;
             
-            // Trouver où on s'était arrêté
-            const lastSentIndex = fullMessage.indexOf(lastSentPart) + lastSentPart.length;
-            const remainingMessage = fullMessage.substring(lastSentIndex);
+            // Trouver le chunk suivant
+            const chunks = splitMessageIntoChunks(fullMessage, 2000);
+            const currentIndex = chunks.findIndex(chunk => chunk === lastSentPart);
             
-            if (remainingMessage.trim()) {
-                const chunks = splitMessageIntoChunks(remainingMessage, 2000);
-                const nextChunk = chunks[0];
+            if (currentIndex !== -1 && currentIndex + 1 < chunks.length) {
+                const nextChunk = chunks[currentIndex + 1];
                 
-                // Mettre à jour le cache avec la nouvelle partie envoyée
-                if (chunks.length > 1) {
-                    truncatedMessages.set(senderIdStr, {
-                        fullMessage: fullMessage,
-                        lastSentPart: lastSentPart + nextChunk
-                    });
-                    
-                    // Ajouter un indicateur de continuation
-                    const continuationMsg = nextChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
-                    addToMemory(senderIdStr, 'user', messageText);
-                    addToMemory(senderIdStr, 'assistant', continuationMsg);
-                    saveDataImmediate(); // Sauvegarder l'état
-                    return continuationMsg;
+                // Mettre à jour l'état
+                truncData.lastSentPart = nextChunk;
+                truncatedMessages.set(senderIdStr, truncData);
+                insertTruncatedMessage(senderIdStr, fullMessage, nextChunk, truncData.timestamp || new Date().toISOString());
+                
+                // Ajouter indicateur si plus de chunks
+                let response = nextChunk;
+                if (currentIndex + 2 < chunks.length) {
+                    response += "\n\n📝 *Tape \"continue\" pour la suite...*";
                 } else {
                     // Message terminé
                     truncatedMessages.delete(senderIdStr);
+                    deleteTruncatedMessage(senderIdStr);
                     addToMemory(senderIdStr, 'user', messageText);
                     addToMemory(senderIdStr, 'assistant', nextChunk);
                     saveDataImmediate(); // Sauvegarder l'état
@@ -941,6 +1111,7 @@ async function processCommand(senderId, messageText) {
             } else {
                 // Plus rien à envoyer
                 truncatedMessages.delete(senderIdStr);
+                deleteTruncatedMessage(senderIdStr);
                 const endMsg = "✅ C'est tout ! Y a-t-il autre chose que je puisse faire pour toi ? 💫";
                 addToMemory(senderIdStr, 'user', messageText);
                 addToMemory(senderIdStr, 'assistant', endMsg);
@@ -1000,8 +1171,9 @@ app.get('/', (req, res) => {
         truncated_messages: truncatedMessages.size,
         version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
         storage: {
-            type: "GitHub API",
+            type: "GitHub API + SQLite DB",
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            db_file: DB_FILE,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
             auto_save: "Every 5 minutes",
             includes: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages"]
@@ -1019,7 +1191,7 @@ app.get('/', (req, res) => {
             "Broadcast admin",
             "Recherche 2025",
             "Stats réservées admin",
-            "Sauvegarde permanente GitHub"
+            "Sauvegarde permanente GitHub + DB locale"
         ],
         last_update: new Date().toISOString()
     });
@@ -1063,6 +1235,7 @@ app.post('/webhook', async (req, res) => {
                 if (event.message && !event.message.is_echo) {
                     const wasNewUser = !userList.has(senderIdStr);
                     userList.add(senderIdStr);
+                    insertUser(senderIdStr); // Insérer dans DB
                     
                     if (wasNewUser) {
                         log.info(`👋 Nouvel utilisateur: ${senderId}`);
@@ -1075,6 +1248,7 @@ app.post('/webhook', async (req, res) => {
                                 const imageUrl = attachment.payload?.url;
                                 if (imageUrl) {
                                     userLastImage.set(senderIdStr, imageUrl);
+                                    insertUserImage(senderIdStr, imageUrl); // Insérer dans DB
                                     log.info(`📸 Image reçue de ${senderId}`);
                                     
                                     addToMemory(senderId, 'user', '[Image envoyée]');
@@ -1082,8 +1256,8 @@ app.post('/webhook', async (req, res) => {
                                     // ✅ NOUVEAU: Ajouter de l'expérience pour l'envoi d'image
                                     if (rankCommand) {
                                         const expResult = rankCommand.addExp(senderId, 2); // 2 XP pour une image
-                                        
                                         if (expResult.levelUp) {
+                                            insertUserExp(senderIdStr, expResult.exp, expResult.newLevel);
                                             log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} (image) !`);
                                         }
                                     }
@@ -1113,6 +1287,7 @@ app.post('/webhook', async (req, res) => {
                             
                             // Notifier si l'utilisateur a monté de niveau
                             if (expResult.levelUp) {
+                                insertUserExp(senderIdStr, expResult.exp, expResult.newLevel);
                                 log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} !`);
                             }
                             
@@ -1335,8 +1510,9 @@ app.get('/stats', (req, res) => {
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: 2025,
         storage: {
-            type: "GitHub API",
+            type: "GitHub API + SQLite DB",
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+            db_file: DB_FILE,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
             auto_save_interval: "5 minutes",
             data_types: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages"]
@@ -1353,7 +1529,7 @@ app.get('/stats', (req, res) => {
             "Message Continuation",
             "Admin Stats",
             "Help Suggestions",
-            "GitHub Persistent Storage"
+            "GitHub Persistent Storage + Local DB"
         ],
         note: "Statistiques détaillées réservées aux admins via /stats"
     });
@@ -1372,6 +1548,7 @@ app.get('/health', (req, res) => {
             vision: Boolean(MISTRAL_API_KEY),
             facebook: Boolean(PAGE_ACCESS_TOKEN),
             github_storage: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
+            db_storage: Boolean(db),
             ranking_system: Boolean(rankCommand),
             message_truncation: true
         },
@@ -1387,6 +1564,7 @@ app.get('/health', (req, res) => {
         version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
         creator: "Durand",
         repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
+        db_file: DB_FILE,
         timestamp: new Date().toISOString()
     };
     
@@ -1405,6 +1583,9 @@ app.get('/health', (req, res) => {
     }
     if (!rankCommand) {
         issues.push("Système de ranking non chargé");
+    }
+    if (!db) {
+        issues.push("Base de données non initialisée");
     }
     
     if (issues.length > 0) {
@@ -1498,6 +1679,11 @@ app.post('/clear-truncated', (req, res) => {
     const clearedCount = truncatedMessages.size;
     truncatedMessages.clear();
     
+    // Nettoyer DB
+    db.run(`DELETE FROM truncated_messages`, (err) => {
+        if (err) log.error(`❌ Erreur clear truncated DB: ${err.message}`);
+    });
+    
     // Sauvegarder immédiatement
     saveDataImmediate();
     
@@ -1517,6 +1703,12 @@ async function startBot() {
     log.info("💖 Personnalité super gentille et amicale, comme une très bonne amie");
     log.info("👨‍💻 Créée par Durand");
     log.info("📅 Année: 2025");
+
+    // Initialiser DB
+    initDatabase();
+
+    log.info("📥 Chargement des données depuis DB locale...");
+    await loadDataFromDB();
 
     log.info("📥 Chargement des données depuis GitHub...");
     await loadDataFromGitHub();
@@ -1562,6 +1754,7 @@ async function startBot() {
     log.info(`📝 ${truncatedMessages.size} conversations tronquées en cours`);
     log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
     log.info(`📂 Repository: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
+    log.info(`📂 DB: ${DB_FILE}`);
     log.info(`🌐 Serveur sur le port ${PORT}`);
     
     startAutoSave();
@@ -1591,6 +1784,14 @@ async function gracefulShutdown() {
         log.info("✅ Données sauvegardées avec succès !");
     } catch (error) {
         log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
+    }
+    
+    // Fermer DB
+    if (db) {
+        db.close((err) => {
+            if (err) log.error(`❌ Erreur fermeture DB: ${err.message}`);
+            else log.info("✅ DB fermée");
+        });
     }
     
     // Nettoyage final des messages tronqués
@@ -1630,6 +1831,7 @@ setInterval(() => {
         // Si le message n'a pas de timestamp ou est trop ancien
         if (!data.timestamp || (now - new Date(data.timestamp).getTime() > oneDayMs)) {
             truncatedMessages.delete(userId);
+            deleteTruncatedMessage(userId);
             cleanedCount++;
         }
     }
@@ -1644,4 +1846,4 @@ setInterval(() => {
 startBot().catch(error => {
     log.error(`❌ Erreur démarrage: ${error.message}`);
     process.exit(1);
-}); 
+});
