@@ -4,6 +4,8 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const sqlite3 = require('sqlite3').verbose();
+const { open } = require('sqlite');
 
 const app = express();
 app.use(bodyParser.json());
@@ -20,7 +22,7 @@ const ADMIN_IDS = new Set(
     (process.env.ADMIN_IDS || "").split(",").map(id => id.trim()).filter(id => id)
 );
 
-// Mémoire du bot (stockage local temporaire + sauvegarde permanente GitHub)
+// Mémoire du bot (stockage local temporaire + sauvegarde permanente GitHub + SQLite)
 const userMemory = new Map();
 const userList = new Set();
 const userLastImage = new Map();
@@ -32,6 +34,9 @@ let rankCommand = null;
 // 🆕 AJOUT: Gestion des messages tronqués avec chunks
 const truncatedMessages = new Map(); // senderId -> { fullMessage, lastSentPart }
 
+// ✅ NOUVEAU: Instance de base de données SQLite
+let db = null;
+
 // Configuration des logs
 const log = {
     info: (msg) => console.log(`${new Date().toISOString()} - INFO - ${msg}`),
@@ -39,6 +44,292 @@ const log = {
     warning: (msg) => console.warn(`${new Date().toISOString()} - WARNING - ${msg}`),
     debug: (msg) => console.log(`${new Date().toISOString()} - DEBUG - ${msg}`)
 };
+
+// === GESTION DE LA BASE DE DONNÉES SQLITE ===
+
+async function initializeDatabase() {
+    try {
+        const dbPath = path.join(__dirname, 'nakamabot.db');
+        
+        db = await open({
+            filename: dbPath,
+            driver: sqlite3.Database
+        });
+
+        log.info(`📂 Base de données SQLite initialisée: ${dbPath}`);
+
+        // Créer les tables si elles n'existent pas
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                first_seen TEXT,
+                last_active TEXT,
+                message_count INTEGER DEFAULT 0,
+                image_count INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                message_type TEXT,
+                content TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
+
+            CREATE TABLE IF NOT EXISTS images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                image_url TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
+
+            CREATE TABLE IF NOT EXISTS user_experience (
+                user_id TEXT PRIMARY KEY,
+                experience INTEGER DEFAULT 0,
+                level INTEGER DEFAULT 1,
+                last_exp_gain TEXT,
+                total_messages INTEGER DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
+
+            CREATE TABLE IF NOT EXISTS clans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE,
+                description TEXT,
+                creator_id TEXT,
+                member_count INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS clan_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                clan_id INTEGER,
+                user_id TEXT,
+                role TEXT DEFAULT 'member',
+                joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (clan_id) REFERENCES clans (id),
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
+
+            CREATE TABLE IF NOT EXISTS truncated_messages (
+                user_id TEXT PRIMARY KEY,
+                full_message TEXT,
+                last_sent_part TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS bot_data (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        log.info("✅ Tables SQLite créées/vérifiées avec succès");
+        return true;
+    } catch (error) {
+        log.error(`❌ Erreur initialisation SQLite: ${error.message}`);
+        return false;
+    }
+}
+
+// Sauvegarder un utilisateur dans SQLite
+async function saveUserToDb(userId) {
+    if (!db) return;
+    
+    try {
+        const now = new Date().toISOString();
+        await db.run(
+            `INSERT OR IGNORE INTO users (id, first_seen, last_active) VALUES (?, ?, ?)`,
+            [userId, now, now]
+        );
+        
+        await db.run(
+            `UPDATE users SET last_active = ? WHERE id = ?`,
+            [now, userId]
+        );
+    } catch (error) {
+        log.error(`❌ Erreur sauvegarde utilisateur SQLite: ${error.message}`);
+    }
+}
+
+// Sauvegarder une conversation dans SQLite
+async function saveConversationToDb(userId, messageType, content) {
+    if (!db) return;
+    
+    try {
+        const now = new Date().toISOString();
+        await db.run(
+            `INSERT INTO conversations (user_id, message_type, content, timestamp) VALUES (?, ?, ?, ?)`,
+            [userId, messageType, content.substring(0, 2000), now]
+        );
+        
+        // Incrémenter le compteur de messages
+        if (messageType === 'user') {
+            await db.run(
+                `UPDATE users SET message_count = message_count + 1 WHERE id = ?`,
+                [userId]
+            );
+        }
+    } catch (error) {
+        log.error(`❌ Erreur sauvegarde conversation SQLite: ${error.message}`);
+    }
+}
+
+// Sauvegarder une image dans SQLite
+async function saveImageToDb(userId, imageUrl) {
+    if (!db) return;
+    
+    try {
+        const now = new Date().toISOString();
+        await db.run(
+            `INSERT INTO images (user_id, image_url, timestamp) VALUES (?, ?, ?)`,
+            [userId, imageUrl, now]
+        );
+        
+        // Incrémenter le compteur d'images
+        await db.run(
+            `UPDATE users SET image_count = image_count + 1 WHERE id = ?`,
+            [userId]
+        );
+    } catch (error) {
+        log.error(`❌ Erreur sauvegarde image SQLite: ${error.message}`);
+    }
+}
+
+// Sauvegarder l'expérience utilisateur dans SQLite
+async function saveUserExpToDb(userId, experience, level) {
+    if (!db) return;
+    
+    try {
+        const now = new Date().toISOString();
+        await db.run(
+            `INSERT OR REPLACE INTO user_experience (user_id, experience, level, last_exp_gain, total_messages) 
+             VALUES (?, ?, ?, ?, (SELECT COALESCE(message_count, 0) FROM users WHERE id = ?))`,
+            [userId, experience, level, now, userId]
+        );
+    } catch (error) {
+        log.error(`❌ Erreur sauvegarde expérience SQLite: ${error.message}`);
+    }
+}
+
+// Sauvegarder un message tronqué dans SQLite
+async function saveTruncatedToDb(userId, fullMessage, lastSentPart) {
+    if (!db) return;
+    
+    try {
+        const now = new Date().toISOString();
+        await db.run(
+            `INSERT OR REPLACE INTO truncated_messages (user_id, full_message, last_sent_part, timestamp) VALUES (?, ?, ?, ?)`,
+            [userId, fullMessage, lastSentPart, now]
+        );
+    } catch (error) {
+        log.error(`❌ Erreur sauvegarde message tronqué SQLite: ${error.message}`);
+    }
+}
+
+// Charger les données depuis SQLite
+async function loadDataFromDb() {
+    if (!db) return;
+    
+    try {
+        // Charger les utilisateurs
+        const users = await db.all('SELECT id FROM users');
+        users.forEach(user => userList.add(user.id));
+        log.info(`✅ ${users.length} utilisateurs chargés depuis SQLite`);
+        
+        // Charger les conversations récentes (dernières 8 par utilisateur)
+        const conversations = await db.all(`
+            SELECT user_id, message_type, content, timestamp 
+            FROM (
+                SELECT user_id, message_type, content, timestamp,
+                       ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY timestamp DESC) as rn
+                FROM conversations
+            ) WHERE rn <= 8
+            ORDER BY user_id, timestamp ASC
+        `);
+        
+        const conversationMap = new Map();
+        conversations.forEach(conv => {
+            if (!conversationMap.has(conv.user_id)) {
+                conversationMap.set(conv.user_id, []);
+            }
+            conversationMap.get(conv.user_id).push({
+                type: conv.message_type,
+                content: conv.content,
+                timestamp: conv.timestamp
+            });
+        });
+        
+        conversationMap.forEach((convs, userId) => {
+            userMemory.set(userId, convs);
+        });
+        
+        log.info(`✅ ${conversationMap.size} conversations chargées depuis SQLite`);
+        
+        // Charger les dernières images
+        const images = await db.all(`
+            SELECT user_id, image_url 
+            FROM (
+                SELECT user_id, image_url,
+                       ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY timestamp DESC) as rn
+                FROM images
+            ) WHERE rn = 1
+        `);
+        
+        images.forEach(img => {
+            userLastImage.set(img.user_id, img.image_url);
+        });
+        
+        log.info(`✅ ${images.length} dernières images chargées depuis SQLite`);
+        
+        // Charger les messages tronqués
+        const truncated = await db.all('SELECT user_id, full_message, last_sent_part FROM truncated_messages');
+        truncated.forEach(trunc => {
+            truncatedMessages.set(trunc.user_id, {
+                fullMessage: trunc.full_message,
+                lastSentPart: trunc.last_sent_part
+            });
+        });
+        
+        log.info(`✅ ${truncated.length} messages tronqués chargés depuis SQLite`);
+        
+    } catch (error) {
+        log.error(`❌ Erreur chargement SQLite: ${error.message}`);
+    }
+}
+
+// Obtenir des statistiques depuis SQLite
+async function getDbStats() {
+    if (!db) return {};
+    
+    try {
+        const stats = {};
+        
+        const userCount = await db.get('SELECT COUNT(*) as count FROM users');
+        stats.total_users_db = userCount.count;
+        
+        const messageCount = await db.get('SELECT COUNT(*) as count FROM conversations');
+        stats.total_messages_db = messageCount.count;
+        
+        const imageCount = await db.get('SELECT COUNT(*) as count FROM images');
+        stats.total_images_db = imageCount.count;
+        
+        const expCount = await db.get('SELECT COUNT(*) as count FROM user_experience WHERE level > 1');
+        stats.users_with_levels_db = expCount.count;
+        
+        const truncatedCount = await db.get('SELECT COUNT(*) as count FROM truncated_messages');
+        stats.truncated_messages_db = truncatedCount.count;
+        
+        return stats;
+    } catch (error) {
+        log.error(`❌ Erreur statistiques SQLite: ${error.message}`);
+        return {};
+    }
+}
 
 // === FONCTIONS DE GESTION DES MESSAGES TRONQUÉS ===
 
@@ -76,7 +367,143 @@ function splitMessageIntoChunks(text, maxLength = 2000) {
                         if (currentLine.trim()) {
                             chunks.push(currentLine.trim());
                             currentLine = word;
-                        } else {
+                        if (missingVars.length > 0) {
+        log.error(`❌ Variables manquantes: ${missingVars.join(', ')}`);
+    } else {
+        log.info("✅ Configuration complète OK");
+    }
+
+    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
+    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
+    const dbStats = await getDbStats();
+
+    log.info(`🎨 ${COMMANDS.size} commandes disponibles`);
+    log.info(`👥 ${userList.size} utilisateurs en mémoire`);
+    log.info(`💬 ${userMemory.size} conversations en mémoire`);
+    log.info(`🖼️ ${userLastImage.size} images en mémoire`);
+    log.info(`🏰 ${clanCount} clans en mémoire`);
+    log.info(`⭐ ${expDataCount} utilisateurs avec expérience`);
+    log.info(`📝 ${truncatedMessages.size} conversations tronquées en cours`);
+    log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
+    log.info(`📂 Repository: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
+    log.info(`🗃️ Base SQLite: ${dbStats.total_users_db || 0} users, ${dbStats.total_messages_db || 0} messages`);
+    log.info(`🌐 Serveur sur le port ${PORT}`);
+    
+    startAutoSave();
+    
+    log.info("🎉 NakamaBot Amicale + Vision + GitHub + SQLite + Clans + Rank + Truncation prête à aider avec gentillesse !");
+
+    app.listen(PORT, () => {
+        log.info(`🌐 Serveur démarré sur le port ${PORT}`);
+        log.info("💾 Sauvegarde automatique GitHub activée");
+        log.info("🗃️ Base de données SQLite prête");
+        log.info("📏 Gestion intelligente des messages longs activée");
+        log.info(`📊 Dashboard: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
+    });
+}
+
+// Fonction de nettoyage lors de l'arrêt
+async function gracefulShutdown() {
+    log.info("🛑 Arrêt du bot avec tendresse...");
+    
+    if (saveInterval) {
+        clearInterval(saveInterval);
+        log.info("⏹️ Sauvegarde automatique arrêtée");
+    }
+    
+    try {
+        log.info("💾 Sauvegarde finale des données sur GitHub...");
+        await saveDataToGitHub();
+        log.info("✅ Données sauvegardées avec succès !");
+    } catch (error) {
+        log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
+    }
+    
+    // Nettoyage final des messages tronqués
+    const truncatedCount = truncatedMessages.size;
+    if (truncatedCount > 0) {
+        log.info(`🧹 Nettoyage de ${truncatedCount} conversations tronquées en cours...`);
+        truncatedMessages.clear();
+        
+        // ✅ NOUVEAU: Nettoyer aussi dans SQLite
+        if (db) {
+            try {
+                await db.run('DELETE FROM truncated_messages');
+                log.info("🗃️ Messages tronqués nettoyés de SQLite");
+            } catch (error) {
+                log.debug(`Erreur nettoyage SQLite: ${error.message}`);
+            }
+        }
+    }
+    
+    // ✅ NOUVEAU: Fermer la connexion SQLite proprement
+    if (db) {
+        try {
+            await db.close();
+            log.info("🗃️ Connexion SQLite fermée proprement");
+        } catch (error) {
+            log.debug(`Erreur fermeture SQLite: ${error.message}`);
+        }
+    }
+    
+    log.info("👋 Au revoir ! Données sauvegardées sur GitHub et SQLite !");
+    log.info(`📂 Repository: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
+    process.exit(0);
+}
+
+// Gestion propre de l'arrêt
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
+
+// Gestion des erreurs non capturées
+process.on('uncaughtException', async (error) => {
+    log.error(`❌ Erreur non capturée: ${error.message}`);
+    await gracefulShutdown();
+});
+
+process.on('unhandledRejection', async (reason, promise) => {
+    log.error(`❌ Promesse rejetée: ${reason}`);
+    await gracefulShutdown();
+});
+
+// 🆕 NETTOYAGE PÉRIODIQUE: Nettoyer les messages tronqués anciens (plus de 24h)
+setInterval(async () => {
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000; // 24 heures en millisecondes
+    let cleanedCount = 0;
+    
+    // Nettoyer en mémoire
+    for (const [userId, data] of truncatedMessages.entries()) {
+        // Si le message n'a pas de timestamp ou est trop ancien
+        if (!data.timestamp || (now - new Date(data.timestamp).getTime() > oneDayMs)) {
+            truncatedMessages.delete(userId);
+            cleanedCount++;
+        }
+    }
+    
+    // ✅ NOUVEAU: Nettoyer aussi dans SQLite
+    if (db && cleanedCount > 0) {
+        try {
+            const result = await db.run(
+                `DELETE FROM truncated_messages WHERE timestamp < datetime('now', '-1 day')`
+            );
+            log.info(`🧹 Nettoyage automatique SQLite: ${result.changes} messages tronqués expirés supprimés`);
+        } catch (error) {
+            log.debug(`Erreur nettoyage SQLite automatique: ${error.message}`);
+        }
+    }
+    
+    if (cleanedCount > 0) {
+        log.info(`🧹 Nettoyage automatique: ${cleanedCount} conversations tronquées expirées supprimées`);
+        saveDataImmediate(); // Sauvegarder le nettoyage
+    }
+}, 60 * 60 * 1000); // Vérifier toutes les heures
+
+// Démarrer le bot
+startBot().catch(error => {
+    log.error(`❌ Erreur démarrage: ${error.message}`);
+    process.exit(1);
+}); {
                             // Mot unique trop long, le couper brutalement
                             chunks.push(word.substring(0, maxLength - 3) + '...');
                             currentLine = word.substring(maxLength - 3);
@@ -172,7 +599,7 @@ async function createGitHubRepo() {
                     'https://api.github.com/user/repos',
                     {
                         name: GITHUB_REPO,
-                        description: 'Sauvegarde des données NakamaBot - Créé automatiquement',
+                        description: 'Sauvegarde des données NakamaBot avec SQLite - Créé automatiquement',
                         private: true,
                         auto_init: true
                     },
@@ -207,7 +634,7 @@ async function createGitHubRepo() {
 let isSaving = false;
 let saveQueue = [];
 
-// === SAUVEGARDE GITHUB AVEC SUPPORT CLANS ET EXPÉRIENCE ===
+// === SAUVEGARDE GITHUB AVEC SUPPORT SQLITE + CLANS ET EXPÉRIENCE ===
 async function saveDataToGitHub() {
     if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
         log.debug("🔄 Pas de sauvegarde GitHub (config manquante)");
@@ -229,6 +656,9 @@ async function saveDataToGitHub() {
         const filename = 'nakamabot-data.json';
         const url = getGitHubApiUrl(filename);
         
+        // Obtenir les statistiques de la DB
+        const dbStats = await getDbStats();
+        
         const dataToSave = {
             userList: Array.from(userList),
             userMemory: Object.fromEntries(userMemory),
@@ -244,20 +674,31 @@ async function saveDataToGitHub() {
             clanData: commandContext.clanData || null,
             commandData: Object.fromEntries(clanData),
             
+            // ✅ NOUVEAU: Statistiques SQLite
+            databaseStats: dbStats,
+            
             lastUpdate: new Date().toISOString(),
-            version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
+            version: "4.0 Amicale + Vision + GitHub + SQLite + Clans + Rank + Truncation",
             totalUsers: userList.size,
             totalConversations: userMemory.size,
             totalImages: userLastImage.size,
             totalTruncated: truncatedMessages.size,
             totalClans: commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0,
             totalUsersWithExp: rankCommand ? Object.keys(rankCommand.getExpData()).length : 0,
+            storage: {
+                memory: {
+                    users: userList.size,
+                    conversations: userMemory.size,
+                    images: userLastImage.size
+                },
+                database: dbStats
+            },
             bot: "NakamaBot",
             creator: "Durand"
         };
 
         const commitData = {
-            message: `🤖 Sauvegarde automatique NakamaBot - ${new Date().toISOString()}`,
+            message: `🤖 Sauvegarde automatique NakamaBot + SQLite - ${new Date().toISOString()}`,
             content: encodeBase64(dataToSave)
         };
 
@@ -289,7 +730,7 @@ async function saveDataToGitHub() {
                 if (response.status === 200 || response.status === 201) {
                     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
                     const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
-                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs, ${clanCount} clans, ${expDataCount} exp, ${truncatedMessages.size} trunc)`);
+                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs, ${clanCount} clans, ${expDataCount} exp, ${truncatedMessages.size} trunc) + SQLite`);
                     success = true;
                 } else {
                     log.error(`❌ Erreur sauvegarde GitHub: ${response.status}`);
@@ -336,10 +777,10 @@ async function saveDataToGitHub() {
     }
 }
 
-// === CHARGEMENT GITHUB AVEC SUPPORT CLANS ET EXPÉRIENCE ===
+// === CHARGEMENT GITHUB AVEC SUPPORT SQLITE + CLANS ET EXPÉRIENCE ===
 async function loadDataFromGitHub() {
     if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
-        log.warning("⚠️ Configuration GitHub manquante, utilisation du stockage temporaire uniquement");
+        log.warning("⚠️ Configuration GitHub manquante, utilisation du stockage SQLite + temporaire uniquement");
         return;
     }
 
@@ -590,7 +1031,7 @@ async function webSearch(query) {
     }
 }
 
-// ✅ GESTION CORRIGÉE DE LA MÉMOIRE - ÉVITER LES DOUBLONS
+// ✅ GESTION CORRIGÉE DE LA MÉMOIRE - ÉVITER LES DOUBLONS + SAUVEGARDE SQLITE
 function addToMemory(userId, msgType, content) {
     if (!userId || !msgType || !content) {
         log.debug("❌ Paramètres manquants pour addToMemory");
@@ -637,6 +1078,9 @@ function addToMemory(userId, msgType, content) {
     
     log.debug(`💭 Ajouté en mémoire [${userId}]: ${msgType} (${content.length} chars)`);
     
+    // ✅ NOUVEAU: Sauvegarder aussi dans SQLite
+    saveConversationToDb(userId, msgType, content);
+    
     saveDataImmediate().catch(err => 
         log.debug(`🔄 Erreur sauvegarde mémoire: ${err.message}`)
     );
@@ -677,7 +1121,7 @@ function isAdmin(userId) {
     return ADMIN_IDS.has(String(userId));
 }
 
-// === FONCTIONS D'ENVOI AVEC GESTION DE TRONCATURE ===
+// === FONCTIONS D'ENVOI AVEC GESTION DE TRONCATURE + SQLITE ===
 
 async function sendMessage(recipientId, text) {
     if (!PAGE_ACCESS_TOKEN) {
@@ -690,7 +1134,7 @@ async function sendMessage(recipientId, text) {
         return { success: false, error: "Empty message" };
     }
     
-    // 🆕 GESTION INTELLIGENTE DES MESSAGES LONGS
+    // 🆕 GESTION INTELLIGENTE DES MESSAGES LONGS + SQLITE
     if (text.length > 6000) {
         log.info(`📏 Message long détecté (${text.length} chars) pour ${recipientId} - Division en chunks`);
         
@@ -700,11 +1144,14 @@ async function sendMessage(recipientId, text) {
             // Envoyer le premier chunk avec indicateur de continuation
             const firstChunk = chunks[0] + "\n\n📝 *Tape \"continue\" pour la suite...*";
             
-            // Sauvegarder l'état de troncature
+            // Sauvegarder l'état de troncature en mémoire et SQLite
             truncatedMessages.set(String(recipientId), {
                 fullMessage: text,
                 lastSentPart: chunks[0]
             });
+            
+            // ✅ NOUVEAU: Sauvegarder aussi dans SQLite
+            saveTruncatedToDb(String(recipientId), text, chunks[0]);
             
             // Sauvegarder immédiatement
             saveDataImmediate();
@@ -804,7 +1251,7 @@ async function sendImageMessage(recipientId, imageUrl, caption = "") {
 
 const COMMANDS = new Map();
 
-// === CONTEXTE DES COMMANDES AVEC SUPPORT CLANS ET EXPÉRIENCE ===
+// === CONTEXTE DES COMMANDES AVEC SUPPORT SQLITE + CLANS ET EXPÉRIENCE ===
 const commandContext = {
     // Variables globales
     VERIFY_TOKEN,
@@ -824,6 +1271,15 @@ const commandContext = {
     
     // 🆕 AJOUT: Gestion des messages tronqués
     truncatedMessages,
+    
+    // ✅ NOUVEAU: Base de données SQLite
+    db,
+    saveUserToDb,
+    saveConversationToDb,
+    saveImageToDb,
+    saveUserExpToDb,
+    saveTruncatedToDb,
+    getDbStats,
     
     // Fonctions utilitaires
     log,
@@ -893,755 +1349,3 @@ function loadCommands() {
     
     log.info(`🎉 ${COMMANDS.size} commandes chargées avec succès !`);
 }
-
-async function processCommand(senderId, messageText) {
-    const senderIdStr = String(senderId);
-    
-    if (!messageText || typeof messageText !== 'string') {
-        return "🤖 Oh là là ! Message vide ! Tape /start ou /help pour commencer notre belle conversation ! 💕";
-    }
-    
-    messageText = messageText.trim();
-    
-    // 🆕 GESTION DES DEMANDES DE CONTINUATION EN PRIORITÉ
-    if (isContinuationRequest(messageText)) {
-        const truncatedData = truncatedMessages.get(senderIdStr);
-        if (truncatedData) {
-            const { fullMessage, lastSentPart } = truncatedData;
-            
-            // Trouver où on s'était arrêté
-            const lastSentIndex = fullMessage.indexOf(lastSentPart) + lastSentPart.length;
-            const remainingMessage = fullMessage.substring(lastSentIndex);
-            
-            if (remainingMessage.trim()) {
-                const chunks = splitMessageIntoChunks(remainingMessage, 2000);
-                const nextChunk = chunks[0];
-                
-                // Mettre à jour le cache avec la nouvelle partie envoyée
-                if (chunks.length > 1) {
-                    truncatedMessages.set(senderIdStr, {
-                        fullMessage: fullMessage,
-                        lastSentPart: lastSentPart + nextChunk
-                    });
-                    
-                    // Ajouter un indicateur de continuation
-                    const continuationMsg = nextChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
-                    addToMemory(senderIdStr, 'user', messageText);
-                    addToMemory(senderIdStr, 'assistant', continuationMsg);
-                    saveDataImmediate(); // Sauvegarder l'état
-                    return continuationMsg;
-                } else {
-                    // Message terminé
-                    truncatedMessages.delete(senderIdStr);
-                    addToMemory(senderIdStr, 'user', messageText);
-                    addToMemory(senderIdStr, 'assistant', nextChunk);
-                    saveDataImmediate(); // Sauvegarder l'état
-                    return nextChunk;
-                }
-            } else {
-                // Plus rien à envoyer
-                truncatedMessages.delete(senderIdStr);
-                const endMsg = "✅ C'est tout ! Y a-t-il autre chose que je puisse faire pour toi ? 💫";
-                addToMemory(senderIdStr, 'user', messageText);
-                addToMemory(senderIdStr, 'assistant', endMsg);
-                saveDataImmediate(); // Sauvegarder l'état
-                return endMsg;
-            }
-        } else {
-            // Pas de message tronqué en cours
-            const noTruncMsg = "🤔 Il n'y a pas de message en cours à continuer. Pose-moi une nouvelle question ! 💡";
-            addToMemory(senderIdStr, 'user', messageText);
-            addToMemory(senderIdStr, 'assistant', noTruncMsg);
-            return noTruncMsg;
-        }
-    }
-    
-    if (!messageText.startsWith('/')) {
-        if (COMMANDS.has('chat')) {
-            return await COMMANDS.get('chat')(senderId, messageText, commandContext);
-        }
-        return "🤖 Coucou ! Tape /start ou /help pour découvrir ce que je peux faire ! ✨";
-    }
-    
-    const parts = messageText.substring(1).split(' ');
-    const command = parts[0].toLowerCase();
-    const args = parts.slice(1).join(' ');
-    
-    if (COMMANDS.has(command)) {
-        try {
-            return await COMMANDS.get(command)(senderId, args, commandContext);
-        } catch (error) {
-            log.error(`❌ Erreur commande ${command}: ${error.message}`);
-            return `💥 Oh non ! Petite erreur dans /${command} ! Réessaie ou tape /help ! 💕`;
-        }
-    }
-    
-    return `❓ Oh ! La commande /${command} m'est inconnue ! Tape /help pour voir tout ce que je sais faire ! ✨💕`;
-}
-
-// === ROUTES EXPRESS ===
-
-// === ROUTE D'ACCUEIL MISE À JOUR ===
-app.get('/', (req, res) => {
-    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
-    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
-    
-    res.json({
-        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation Online ! 💖",
-        creator: "Durand",
-        personality: "Super gentille et amicale, comme une très bonne amie",
-        year: "2025",
-        commands: COMMANDS.size,
-        users: userList.size,
-        conversations: userMemory.size,
-        images_stored: userLastImage.size,
-        clans_total: clanCount,
-        users_with_exp: expDataCount,
-        truncated_messages: truncatedMessages.size,
-        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
-        storage: {
-            type: "GitHub API",
-            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
-            persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
-            auto_save: "Every 5 minutes",
-            includes: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages"]
-        },
-        features: [
-            "Génération d'images IA",
-            "Transformation anime", 
-            "Analyse d'images IA",
-            "Chat intelligent et doux",
-            "Système de clans persistant",
-            "Système de ranking et expérience",
-            "Cartes de rang personnalisées",
-            "Gestion intelligente des messages longs",
-            "Continuation automatique des réponses",
-            "Broadcast admin",
-            "Recherche 2025",
-            "Stats réservées admin",
-            "Sauvegarde permanente GitHub"
-        ],
-        last_update: new Date().toISOString()
-    });
-});
-
-// Webhook Facebook Messenger
-app.get('/webhook', (req, res) => {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-    
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-        log.info('✅ Webhook vérifié');
-        res.status(200).send(challenge);
-    } else {
-        log.warning('❌ Échec vérification webhook');
-        res.status(403).send('Verification failed');
-    }
-});
-
-// ✅ WEBHOOK PRINCIPAL MODIFIÉ - AJOUT D'EXPÉRIENCE ET NOTIFICATIONS DE NIVEAU
-app.post('/webhook', async (req, res) => {
-    try {
-        const data = req.body;
-        
-        if (!data) {
-            log.warning('⚠️ Aucune donnée reçue');
-            return res.status(400).json({ error: "No data received" });
-        }
-        
-        for (const entry of data.entry || []) {
-            for (const event of entry.messaging || []) {
-                const senderId = event.sender?.id;
-                
-                if (!senderId) {
-                    continue;
-                }
-                
-                const senderIdStr = String(senderId);
-                
-                if (event.message && !event.message.is_echo) {
-                    const wasNewUser = !userList.has(senderIdStr);
-                    userList.add(senderIdStr);
-                    
-                    if (wasNewUser) {
-                        log.info(`👋 Nouvel utilisateur: ${senderId}`);
-                        saveDataImmediate();
-                    }
-                    
-                    if (event.message.attachments) {
-                        for (const attachment of event.message.attachments) {
-                            if (attachment.type === 'image') {
-                                const imageUrl = attachment.payload?.url;
-                                if (imageUrl) {
-                                    userLastImage.set(senderIdStr, imageUrl);
-                                    log.info(`📸 Image reçue de ${senderId}`);
-                                    
-                                    addToMemory(senderId, 'user', '[Image envoyée]');
-                                    
-                                    // ✅ NOUVEAU: Ajouter de l'expérience pour l'envoi d'image
-                                    if (rankCommand) {
-                                        const expResult = rankCommand.addExp(senderId, 2); // 2 XP pour une image
-                                        
-                                        if (expResult.levelUp) {
-                                            log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} (image) !`);
-                                        }
-                                    }
-                                    
-                                    saveDataImmediate();
-                                    
-                                    const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
-                                    
-                                    const sendResult = await sendMessage(senderId, response);
-                                    if (sendResult.success) {
-                                        addToMemory(senderId, 'assistant', response);
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    
-                    const messageText = event.message.text?.trim();
-                    
-                    if (messageText) {
-                        log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}...`);
-                        
-                        // ✅ NOUVEAU: Ajouter de l'expérience pour chaque message
-                        if (messageText && rankCommand) {
-                            const expResult = rankCommand.addExp(senderId, 1);
-                            
-                            // Notifier si l'utilisateur a monté de niveau
-                            if (expResult.levelUp) {
-                                log.info(`🎉 ${senderId} a atteint le niveau ${expResult.newLevel} !`);
-                            }
-                            
-                            // Sauvegarder les données mises à jour
-                            saveDataImmediate();
-                        }
-                        
-                        const response = await processCommand(senderId, messageText);
-                        
-                        if (response) {
-                            if (typeof response === 'object' && response.type === 'image') {
-                                const sendResult = await sendImageMessage(senderId, response.url, response.caption);
-                                
-                                if (sendResult.success) {
-                                    log.info(`✅ Image envoyée à ${senderId}`);
-                                } else {
-                                    log.warning(`❌ Échec envoi image à ${senderId}`);
-                                    const fallbackMsg = "🎨 Image créée avec amour mais petite erreur d'envoi ! Réessaie ! 💕";
-                                    const fallbackResult = await sendMessage(senderId, fallbackMsg);
-                                    if (fallbackResult.success) {
-                                        addToMemory(senderId, 'assistant', fallbackMsg);
-                                    }
-                                }
-                            } else if (typeof response === 'string') {
-                                const sendResult = await sendMessage(senderId, response);
-                                
-                                if (sendResult.success) {
-                                    log.info(`✅ Réponse envoyée à ${senderId}`);
-                                } else {
-                                    log.warning(`❌ Échec envoi à ${senderId}`);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } catch (error) {
-        log.error(`❌ Erreur webhook: ${error.message}`);
-        return res.status(500).json({ error: `Webhook error: ${error.message}` });
-    }
-    
-    res.status(200).json({ status: "ok" });
-});
-
-// Route pour créer un nouveau repository GitHub
-app.post('/create-repo', async (req, res) => {
-    try {
-        if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
-            return res.status(400).json({
-                success: false,
-                error: "GITHUB_TOKEN ou GITHUB_USERNAME manquant"
-            });
-        }
-
-        const repoCreated = await createGitHubRepo();
-        
-        if (repoCreated) {
-            res.json({
-                success: true,
-                message: "Repository GitHub créé avec succès !",
-                repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
-                url: `https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`,
-                instructions: [
-                    "Le repository a été créé automatiquement",
-                    "Les données seront sauvegardées automatiquement",
-                    "Vérifiez que le repository est privé pour la sécurité"
-                ],
-                timestamp: new Date().toISOString()
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                error: "Impossible de créer le repository"
-            });
-        }
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Route pour tester la connexion GitHub
-app.get('/test-github', async (req, res) => {
-    try {
-        if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
-            return res.status(400).json({
-                success: false,
-                error: "Configuration GitHub manquante",
-                missing: {
-                    token: !GITHUB_TOKEN,
-                    username: !GITHUB_USERNAME
-                }
-            });
-        }
-
-        const repoUrl = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}`;
-        const response = await axios.get(repoUrl, {
-            headers: {
-                'Authorization': `token ${GITHUB_TOKEN}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            timeout: 10000
-        });
-
-        res.json({
-            success: true,
-            message: "Connexion GitHub OK !",
-            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
-            url: `https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`,
-            status: response.status,
-            private: response.data.private,
-            created_at: response.data.created_at,
-            timestamp: new Date().toISOString()
-        });
-
-    } catch (error) {
-        let errorMessage = error.message;
-        let suggestions = [];
-
-        if (error.response?.status === 404) {
-            errorMessage = "Repository introuvable (404)";
-            suggestions = [
-                "Vérifiez que GITHUB_USERNAME et GITHUB_REPO sont corrects",
-                "Utilisez POST /create-repo pour créer automatiquement le repository"
-            ];
-        } else if (error.response?.status === 401) {
-            errorMessage = "Token GitHub invalide (401)";
-            suggestions = ["Vérifiez votre GITHUB_TOKEN"];
-        } else if (error.response?.status === 403) {
-            errorMessage = "Accès refusé (403)";
-            suggestions = ["Vérifiez les permissions de votre token (repo, contents)"];
-        }
-
-        res.status(error.response?.status || 500).json({
-            success: false,
-            error: errorMessage,
-            suggestions: suggestions,
-            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-// Route pour forcer une sauvegarde
-app.post('/force-save', async (req, res) => {
-    try {
-        await saveDataToGitHub();
-        const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
-        const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
-        
-        res.json({
-            success: true,
-            message: "Données sauvegardées avec succès sur GitHub !",
-            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
-            timestamp: new Date().toISOString(),
-            stats: {
-                users: userList.size,
-                conversations: userMemory.size,
-                images: userLastImage.size,
-                clans: clanCount,
-                users_with_exp: expDataCount,
-                truncated_messages: truncatedMessages.size
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Route pour recharger les données depuis GitHub
-app.post('/reload-data', async (req, res) => {
-    try {
-        await loadDataFromGitHub();
-        const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
-        const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
-        
-        res.json({
-            success: true,
-            message: "Données rechargées avec succès depuis GitHub !",
-            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
-            timestamp: new Date().toISOString(),
-            stats: {
-                users: userList.size,
-                conversations: userMemory.size,
-                images: userLastImage.size,
-                clans: clanCount,
-                users_with_exp: expDataCount,
-                truncated_messages: truncatedMessages.size
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// === STATISTIQUES PUBLIQUES MISES À JOUR AVEC EXPÉRIENCE ET TRONCATURE ===
-app.get('/stats', (req, res) => {
-    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
-    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
-    
-    res.json({
-        users_count: userList.size,
-        conversations_count: userMemory.size,
-        images_stored: userLastImage.size,
-        clans_total: clanCount,
-        users_with_exp: expDataCount,
-        truncated_messages: truncatedMessages.size,
-        commands_available: COMMANDS.size,
-        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
-        creator: "Durand",
-        personality: "Super gentille et amicale, comme une très bonne amie",
-        year: 2025,
-        storage: {
-            type: "GitHub API",
-            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
-            persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
-            auto_save_interval: "5 minutes",
-            data_types: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages"]
-        },
-        features: [
-            "AI Image Generation",
-            "Anime Transformation", 
-            "AI Image Analysis",
-            "Friendly Chat",
-            "Persistent Clan System",
-            "User Ranking System",
-            "Experience & Levels",
-            "Smart Message Truncation",
-            "Message Continuation",
-            "Admin Stats",
-            "Help Suggestions",
-            "GitHub Persistent Storage"
-        ],
-        note: "Statistiques détaillées réservées aux admins via /stats"
-    });
-});
-
-// === SANTÉ DU BOT MISE À JOUR AVEC EXPÉRIENCE ET TRONCATURE ===
-app.get('/health', (req, res) => {
-    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
-    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
-    
-    const healthStatus = {
-        status: "healthy",
-        personality: "Super gentille et amicale, comme une très bonne amie 💖",
-        services: {
-            ai: Boolean(MISTRAL_API_KEY),
-            vision: Boolean(MISTRAL_API_KEY),
-            facebook: Boolean(PAGE_ACCESS_TOKEN),
-            github_storage: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
-            ranking_system: Boolean(rankCommand),
-            message_truncation: true
-        },
-        data: {
-            users: userList.size,
-            conversations: userMemory.size,
-            images_stored: userLastImage.size,
-            clans_total: clanCount,
-            users_with_exp: expDataCount,
-            truncated_messages: truncatedMessages.size,
-            commands_loaded: COMMANDS.size
-        },
-        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
-        creator: "Durand",
-        repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
-        timestamp: new Date().toISOString()
-    };
-    
-    const issues = [];
-    if (!MISTRAL_API_KEY) {
-        issues.push("Clé IA manquante");
-    }
-    if (!PAGE_ACCESS_TOKEN) {
-        issues.push("Token Facebook manquant");
-    }
-    if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
-        issues.push("Configuration GitHub manquante");
-    }
-    if (COMMANDS.size === 0) {
-        issues.push("Aucune commande chargée");
-    }
-    if (!rankCommand) {
-        issues.push("Système de ranking non chargé");
-    }
-    
-    if (issues.length > 0) {
-        healthStatus.status = "degraded";
-        healthStatus.issues = issues;
-    }
-    
-    const statusCode = healthStatus.status === "healthy" ? 200 : 503;
-    res.status(statusCode).json(healthStatus);
-});
-
-// === SERVEUR DE FICHIERS STATIQUES POUR LES IMAGES TEMPORAIRES ===
-
-app.use('/temp', express.static(path.join(__dirname, 'temp')));
-
-// Middleware pour nettoyer automatiquement les anciens fichiers temporaires
-app.use('/temp', (req, res, next) => {
-    // Nettoyer les fichiers de plus de 1 heure
-    const tempDir = path.join(__dirname, 'temp');
-    if (fs.existsSync(tempDir)) {
-        const files = fs.readdirSync(tempDir);
-        const now = Date.now();
-        
-        files.forEach(file => {
-            const filePath = path.join(tempDir, file);
-            const stats = fs.statSync(filePath);
-            const ageInMs = now - stats.mtime.getTime();
-            
-            // Supprimer si plus d'1 heure (3600000 ms)
-            if (ageInMs > 3600000) {
-                try {
-                    fs.unlinkSync(filePath);
-                    log.debug(`🗑️ Fichier temporaire nettoyé: ${file}`);
-                } catch (error) {
-                    // Nettoyage silencieux
-                }
-            }
-        });
-    }
-    next();
-});
-
-// Route pour voir l'historique des commits GitHub
-app.get('/github-history', async (req, res) => {
-    try {
-        if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
-            return res.status(400).json({
-                success: false,
-                error: "Configuration GitHub manquante"
-            });
-        }
-
-        const commitsUrl = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/commits`;
-        const response = await axios.get(commitsUrl, {
-            headers: {
-                'Authorization': `token ${GITHUB_TOKEN}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            params: {
-                per_page: 10
-            },
-            timeout: 10000
-        });
-
-        const commits = response.data.map(commit => ({
-            message: commit.commit.message,
-            date: commit.commit.author.date,
-            sha: commit.sha.substring(0, 7),
-            author: commit.commit.author.name
-        }));
-
-        res.json({
-            success: true,
-            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
-            commits: commits,
-            total_shown: commits.length,
-            timestamp: new Date().toISOString()
-        });
-
-    } catch (error) {
-        res.status(error.response?.status || 500).json({
-            success: false,
-            error: error.message,
-            repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`
-        });
-    }
-});
-
-// 🆕 NOUVELLE ROUTE: Nettoyer les messages tronqués (admin uniquement)
-app.post('/clear-truncated', (req, res) => {
-    const clearedCount = truncatedMessages.size;
-    truncatedMessages.clear();
-    
-    // Sauvegarder immédiatement
-    saveDataImmediate();
-    
-    res.json({
-        success: true,
-        message: `${clearedCount} conversations tronquées nettoyées`,
-        timestamp: new Date().toISOString()
-    });
-});
-
-// === DÉMARRAGE MODIFIÉ AVEC SYSTÈME D'EXPÉRIENCE ET TRONCATURE ===
-
-const PORT = process.env.PORT || 5000;
-
-async function startBot() {
-    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation");
-    log.info("💖 Personnalité super gentille et amicale, comme une très bonne amie");
-    log.info("👨‍💻 Créée par Durand");
-    log.info("📅 Année: 2025");
-
-    log.info("📥 Chargement des données depuis GitHub...");
-    await loadDataFromGitHub();
-
-    loadCommands();
-
-    // ✅ NOUVEAU: Charger les données d'expérience après le chargement des commandes
-    if (rankCommand) {
-        log.info("🎯 Système d'expérience détecté et prêt !");
-    } else {
-        log.warning("⚠️ Commande rank non trouvée - Système d'expérience désactivé");
-    }
-
-    const missingVars = [];
-    if (!PAGE_ACCESS_TOKEN) {
-        missingVars.push("PAGE_ACCESS_TOKEN");
-    }
-    if (!MISTRAL_API_KEY) {
-        missingVars.push("MISTRAL_API_KEY");
-    }
-    if (!GITHUB_TOKEN) {
-        missingVars.push("GITHUB_TOKEN");
-    }
-    if (!GITHUB_USERNAME) {
-        missingVars.push("GITHUB_USERNAME");
-    }
-
-    if (missingVars.length > 0) {
-        log.error(`❌ Variables manquantes: ${missingVars.join(', ')}`);
-    } else {
-        log.info("✅ Configuration complète OK");
-    }
-
-    const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
-    const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
-
-    log.info(`🎨 ${COMMANDS.size} commandes disponibles`);
-    log.info(`👥 ${userList.size} utilisateurs en mémoire`);
-    log.info(`💬 ${userMemory.size} conversations en mémoire`);
-    log.info(`🖼️ ${userLastImage.size} images en mémoire`);
-    log.info(`🏰 ${clanCount} clans en mémoire`);
-    log.info(`⭐ ${expDataCount} utilisateurs avec expérience`);
-    log.info(`📝 ${truncatedMessages.size} conversations tronquées en cours`);
-    log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
-    log.info(`📂 Repository: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
-    log.info(`🌐 Serveur sur le port ${PORT}`);
-    
-    startAutoSave();
-    
-    log.info("🎉 NakamaBot Amicale + Vision + GitHub + Clans + Rank + Truncation prête à aider avec gentillesse !");
-
-    app.listen(PORT, () => {
-        log.info(`🌐 Serveur démarré sur le port ${PORT}`);
-        log.info("💾 Sauvegarde automatique GitHub activée");
-        log.info("📏 Gestion intelligente des messages longs activée");
-        log.info(`📊 Dashboard: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
-    });
-}
-
-// Fonction de nettoyage lors de l'arrêt
-async function gracefulShutdown() {
-    log.info("🛑 Arrêt du bot avec tendresse...");
-    
-    if (saveInterval) {
-        clearInterval(saveInterval);
-        log.info("⏹️ Sauvegarde automatique arrêtée");
-    }
-    
-    try {
-        log.info("💾 Sauvegarde finale des données sur GitHub...");
-        await saveDataToGitHub();
-        log.info("✅ Données sauvegardées avec succès !");
-    } catch (error) {
-        log.error(`❌ Erreur sauvegarde finale: ${error.message}`);
-    }
-    
-    // Nettoyage final des messages tronqués
-    const truncatedCount = truncatedMessages.size;
-    if (truncatedCount > 0) {
-        log.info(`🧹 Nettoyage de ${truncatedCount} conversations tronquées en cours...`);
-        truncatedMessages.clear();
-    }
-    
-    log.info("👋 Au revoir ! Données sauvegardées sur GitHub !");
-    log.info(`📂 Repository: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
-    process.exit(0);
-}
-
-// Gestion propre de l'arrêt
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
-
-// Gestion des erreurs non capturées
-process.on('uncaughtException', async (error) => {
-    log.error(`❌ Erreur non capturée: ${error.message}`);
-    await gracefulShutdown();
-});
-
-process.on('unhandledRejection', async (reason, promise) => {
-    log.error(`❌ Promesse rejetée: ${reason}`);
-    await gracefulShutdown();
-});
-
-// 🆕 NETTOYAGE PÉRIODIQUE: Nettoyer les messages tronqués anciens (plus de 24h)
-setInterval(() => {
-    const now = Date.now();
-    const oneDayMs = 24 * 60 * 60 * 1000; // 24 heures en millisecondes
-    let cleanedCount = 0;
-    
-    for (const [userId, data] of truncatedMessages.entries()) {
-        // Si le message n'a pas de timestamp ou est trop ancien
-        if (!data.timestamp || (now - new Date(data.timestamp).getTime() > oneDayMs)) {
-            truncatedMessages.delete(userId);
-            cleanedCount++;
-        }
-    }
-    
-    if (cleanedCount > 0) {
-        log.info(`🧹 Nettoyage automatique: ${cleanedCount} conversations tronquées expirées supprimées`);
-        saveDataImmediate(); // Sauvegarder le nettoyage
-    }
-}, 60 * 60 * 1000); // Vérifier toutes les heures
-
-// Démarrer le bot
-startBot().catch(error => {
-    log.error(`❌ Erreur démarrage: ${error.message}`);
-    process.exit(1);
-}); 
