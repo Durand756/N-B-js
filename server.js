@@ -15,7 +15,7 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "";
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || "";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const GITHUB_USERNAME = process.env.GITHUB_USERNAME || "Durand756";
-const GITHUB_REPO = process.env.GITHUB_REPO || "nakamabot-data";
+const GITHUB_REPO = process.env.GITHUB_REPO || "Nakama";
 const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT || 5000}`;
 const ADMIN_IDS = new Set(
     (process.env.ADMIN_IDS || "").split(",").map(id => id.trim()).filter(id => id)
