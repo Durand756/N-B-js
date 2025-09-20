@@ -13,6 +13,7 @@
     "facebook-messenger",
     "ai",
     "mistral",
+    "google-drive",
     "github",
     "sqlite",
     "nakamabot",
@@ -33,6 +34,14 @@
     "express": "^4.18.2",
     "axios": "^1.6.2",
     "body-parser": "^1.20.2",
+    "googleapis": "^129.0.0",
+    "sanitize-filename": "^1.6.3",
+    "youtube-search-api": "^1.1.6",
+    "@distube/ytdl-core": "^4.13.5",
+    "cloudinary": "^1.41.0",
+    "cheerio": "^1.0.0",
+    "@google/generative-ai": "^0.24.1",
+    "sharp": "^0.33.1",
     "sqlite3": "^5.1.6"
   },
   "devDependencies": {
