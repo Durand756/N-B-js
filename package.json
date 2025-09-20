@@ -1,34 +1,43 @@
 {
-  "name": "nakamabot-server",
-  "version": "4.0.0",
-  "description": "NakamaBot - Assistant IA super gentil avec SQLite + GitHub",
-  "main": "server.js",
+  "name": "nakamabot",
+  "version": "4.1.0",
+  "description": "NakamaBot - Assistant IA gentille et amicale avec base de données SQLite et sauvegarde GitHub",
+  "main": "index.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "build": "echo 'No build step required'"
+    "postinstall": "echo 'Installation terminée - NakamaBot prêt !'"
   },
-  "keywords": [
-    "chatbot",
-    "ai",
-    "messenger",
-    "sqlite",
-    "github"
-  ],
-  "author": "Durand",
-  "license": "MIT",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.2",
+    "axios": "^1.6.0",
     "body-parser": "^1.20.2",
-    "sqlite3": "^5.1.6"
+    "sqlite3": "^5.1.6",
+    "crypto": "^1.0.1"
   },
+  "devDependencies": {},
+  "keywords": [
+    "chatbot",
+    "messenger",
+    "facebook",
+    "ai",
+    "sqlite",
+    "github",
+    "assistant",
+    "nakamabot"
+  ],
+  "author": "Durand",
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-username/nakamabot.git"
+    "url": "https://github.com/votre-username/nakamabot.git"
   },
-  "homepage": "https://github.com/your-username/nakamabot#readme"
+  "homepage": "https://github.com/votre-username/nakamabot#readme",
+  "bugs": {
+    "url": "https://github.com/votre-username/nakamabot/issues"
+  }
 }
