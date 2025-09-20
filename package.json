@@ -1,43 +1,102 @@
 {
-  "name": "nakamabot",
+  "name": "nakamabot-drive-db",
   "version": "4.1.0",
-  "description": "NakamaBot - Assistant IA gentille et amicale avec base de données SQLite et sauvegarde GitHub",
-  "main": "index.js",
+  "description": "NakamaBot - Assistante IA super gentille et amicale avec sauvegarde GitHub + Base de données SQLite",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
-    "postinstall": "echo 'Installation terminée - NakamaBot prêt !'"
+    "dev": "nodemon server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "keywords": [
+    "chatbot",
+    "facebook-messenger",
+    "ai",
+    "mistral",
+    "github",
+    "sqlite",
+    "nakamabot",
+    "friendly-ai",
+    "image-analysis",
+    "anime-transformation"
+  ],
+  "author": {
+    "name": "Durand",
+    "description": "Créateur de NakamaBot - L'assistante IA la plus gentille"
+  },
+  "license": "MIT",
   "engines": {
-    "node": ">=16.0.0",
-    "npm": ">=8.0.0"
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.0",
+    "axios": "^1.6.2",
     "body-parser": "^1.20.2",
-    "sqlite3": "^5.1.6",
-    "crypto": "^1.0.1"
+    "sqlite3": "^5.1.6"
   },
-  "devDependencies": {},
-  "keywords": [
-    "chatbot",
-    "messenger",
-    "facebook",
-    "ai",
-    "sqlite",
-    "github",
-    "assistant",
-    "nakamabot"
-  ],
-  "author": "Durand",
-  "license": "MIT",
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/votre-username/nakamabot.git"
+    "url": "git+https://github.com/your-username/nakamabot-drive-db.git"
   },
-  "homepage": "https://github.com/votre-username/nakamabot#readme",
   "bugs": {
-    "url": "https://github.com/votre-username/nakamabot/issues"
+    "url": "https://github.com/your-username/nakamabot-drive-db/issues"
+  },
+  "homepage": "https://github.com/your-username/nakamabot-drive-db#readme",
+  "config": {
+    "personality": "Super gentille et amicale, comme une très bonne amie",
+    "version_name": "Amicale + Vision + GitHub + DB",
+    "year": "2025",
+    "creator": "Durand"
+  },
+  "features": [
+    "Génération d'images IA avec Mistral",
+    "Transformation d'images en style anime",
+    "Analyse d'images avec Vision IA",
+    "Chat intelligent et conversationnel",
+    "Base de données SQLite locale",
+    "Sauvegarde GitHub permanente",
+    "Mémoire persistante des conversations",
+    "Système de clans persistant",
+    "Système de ranking et expérience",
+    "Gestion intelligente des messages longs",
+    "Commandes administrateur",
+    "Broadcast de messages",
+    "Statistiques détaillées",
+    "Interface Facebook Messenger",
+    "Personnalité amicale et bienveillante"
+  ],
+  "environment_variables": {
+    "required": [
+      "PAGE_ACCESS_TOKEN",
+      "MISTRAL_API_KEY",
+      "GITHUB_TOKEN",
+      "GITHUB_USERNAME"
+    ],
+    "optional": [
+      "VERIFY_TOKEN",
+      "ADMIN_IDS",
+      "GITHUB_REPO",
+      "PORT"
+    ]
+  },
+  "storage": {
+    "primary": "SQLite Database (local)",
+    "backup": "GitHub API",
+    "files": [
+      "nakamabot.db"
+    ],
+    "backup_frequency": "5 minutes",
+    "emergency_save": true,
+    "data_persistence": "Dual storage (local DB + GitHub backup)"
+  },
+  "render": {
+    "buildCommand": "npm install",
+    "startCommand": "npm start",
+    "environment": "node",
+    "plan": "free"
   }
 }
