@@ -756,7 +756,7 @@ INSTRUCTIONS CRITIQUES:
 - Réponds en tenant compte de tout le contexte précédent
 - Si l'utilisateur fait référence à quelque chose mentionné avant, tu t'en souviens
 - Adopte un ton conversationnel et amical avec quelques emojis
-- Maximum 2000 caractères
+- Maximum 1999 caractères
 - Ne mentionne JAMAIS que tu as fait une recherche
 - Ne dis jamais "d'après mes recherches" ou "selon les sources"
 - Réponds naturellement comme dans une conversation continue
@@ -896,7 +896,7 @@ CAPACITÉS PRINCIPALES:
 
 DIRECTIVES:
 - Parle en fonction de la langue utilisée par l'utilisateur et du contexte garde en memoire que nous somme le ${dateTime}
-- Maximum 3000 caractères par réponse
+- Maximum 1999 caractères par réponse
 - Utilise quelques emojis avec parcimonie
 - Évite les répétitions et formules toutes faites
 - ${messageCount >= 5 ? 'Suggère /help si pertinent pour débloquer l\'utilisateur' : ''}
