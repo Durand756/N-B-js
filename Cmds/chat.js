@@ -239,6 +239,13 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     }
     
     try {
+        // 🆕 AJOUT : Envoyer un message "Traitement en cours..." pour informer l'utilisateur (sauf pour messages vides ou continuations)
+        if (args.trim() && !isContinuationRequest(args)) {
+            const processingMessage = "🕒 Traitement en cours...";
+            addToMemory(String(senderId), 'assistant', processingMessage);
+            await ctx.sendMessage(senderId, processingMessage); // Envoi immédiat du message intermédiaire (assumé via ctx.sendMessage)
+        }
+        
         if (!args.trim()) {
             const welcomeMsg = "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
             const styledWelcome = parseMarkdown(welcomeMsg);
@@ -374,7 +381,6 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                             const firstChunk = chunks[0];
                             
                             if (chunks.length > 1) {
-                                // Sauvegarder l'état de troncature
                                 truncatedMessages.set(senderIdStr, {
                                     fullMessage: styledNatural,
                                     lastSentPart: firstChunk,
