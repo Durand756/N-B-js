@@ -2,7 +2,6 @@
  * NakamaBot - Commande /chat avec recherche intelligente intégrée et rotation des clés Gemini
  * + Support Markdown vers Unicode stylisé pour Facebook Messenger
  * + Système de troncature synchronisé avec le serveur principal
- * + MESSAGE DE TRAITEMENT EN COURS pour meilleure UX
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
@@ -27,10 +26,6 @@ const failedKeys = new Set();
 const activeRequests = new Map();
 const recentMessages = new Map(); // Cache des messages récents pour éviter les doublons
 
-// 🆕 SYSTÈME DE MESSAGES DE TRAITEMENT
-const processingMessages = new Map(); // Tracker des messages de traitement envoyés
-const PROCESSING_TIMEOUT = 15000; // 15 secondes timeout pour le traitement
-
 // 🎨 FONCTIONS DE PARSING MARKDOWN → UNICODE
 // ========================================
 
@@ -50,26 +45,45 @@ const UNICODE_MAPPINGS = {
 
 /**
  * Convertit une chaîne en gras Unicode
+ * @param {string} str - Texte à convertir
+ * @returns {string} - Texte en gras Unicode
  */
 function toBold(str) {
     return str.split('').map(char => UNICODE_MAPPINGS.bold[char] || char).join('');
 }
 
+/**
+ * Convertit une chaîne en italique Unicode (SUPPRIMÉ)
+ * @param {string} str - Texte à convertir
+ * @returns {string} - Texte original sans modification
+ */
 function toItalic(str) {
     // Italique désactivé - retourne le texte original
     return str;
 }
 
+/**
+ * Convertit une chaîne en souligné Unicode
+ * @param {string} str - Texte à convertir
+ * @returns {string} - Texte souligné Unicode
+ */
 function toUnderline(str) {
     return str.split('').map(char => char + '\u0332').join('');
 }
 
+/**
+ * Convertit une chaîne en barré Unicode
+ * @param {string} str - Texte à convertir
+ * @returns {string} - Texte barré Unicode
+ */
 function toStrikethrough(str) {
     return str.split('').map(char => char + '\u0336').join('');
 }
 
 /**
  * Parse le Markdown et le convertit en Unicode stylisé
+ * @param {string} text - Texte avec Markdown
+ * @returns {string} - Texte stylisé en Unicode
  */
 function parseMarkdown(text) {
     if (!text || typeof text !== 'string') {
@@ -78,7 +92,7 @@ function parseMarkdown(text) {
 
     let parsed = text;
 
-    // 1. Traitement des titres (### titre)
+    // 1. Traitement des titres (### titre) - FIX: Regex corrigée
     parsed = parsed.replace(/^###\s+(.+)$/gm, (match, title) => {
         return `🔹 ${toBold(title.trim())}`;
     });
@@ -88,17 +102,20 @@ function parseMarkdown(text) {
         return toBold(content);
     });
 
-    // 3. Traitement du souligné (__texte__)
+    // 3. Traitement de l'italique (*texte*) - DÉSACTIVÉ
+    // L'italique est désactivé, les *texte* restent inchangés
+
+    // 4. Traitement du souligné (__texte__)
     parsed = parsed.replace(/__([^_]+)__/g, (match, content) => {
         return toUnderline(content);
     });
 
-    // 4. Traitement du barré (~~texte~~)
+    // 5. Traitement du barré (~~texte~~)
     parsed = parsed.replace(/~~([^~]+)~~/g, (match, content) => {
         return toStrikethrough(content);
     });
 
-    // 5. Traitement des listes (- item ou * item)
+    // 6. Traitement des listes (- item ou * item)
     parsed = parsed.replace(/^[\s]*[-*]\s+(.+)$/gm, (match, content) => {
         return `• ${content.trim()}`;
     });
@@ -106,148 +123,8 @@ function parseMarkdown(text) {
     return parsed;
 }
 
-// 🆕 FONCTIONS DE GESTION DES MESSAGES DE TRAITEMENT
-// ==================================================
-
-/**
- * Envoie un message de traitement en cours et le tracker
- * @param {string} senderId - ID de l'utilisateur
- * @param {string} originalMessage - Message original de l'utilisateur
- * @param {object} ctx - Contexte du bot
- * @returns {Promise<string>} - ID du message de traitement envoyé
- */
-async function sendProcessingMessage(senderId, originalMessage, ctx) {
-    const { sendMessage, log } = ctx;
-    
-    // Générer un message de traitement contextuel
-    const processingMsg = generateProcessingMessage(originalMessage);
-    
-    try {
-        // Envoyer le message de traitement
-        const messageId = await sendMessage(senderId, processingMsg);
-        
-        // Tracker le message pour pouvoir le modifier plus tard
-        processingMessages.set(senderId, {
-            messageId: messageId,
-            content: processingMsg,
-            timestamp: Date.now(),
-            originalQuery: originalMessage
-        });
-        
-        log.info(`⏳ Message de traitement envoyé pour ${senderId}: "${processingMsg}"`);
-        return messageId;
-        
-    } catch (error) {
-        log.warning(`⚠️ Erreur envoi message traitement: ${error.message}`);
-        return null;
-    }
-}
-
-/**
- * Génère un message de traitement contextuel basé sur la demande
- * @param {string} message - Message de l'utilisateur
- * @returns {string} - Message de traitement approprié
- */
-function generateProcessingMessage(message) {
-    const lowerMessage = message.toLowerCase();
-    
-    // Messages contextuels selon le type de demande
-    if (lowerMessage.includes('dessine') || lowerMessage.includes('image') || lowerMessage.includes('crée')) {
-        return "🎨 **Création en cours...**\nJe prépare ton image, ça peut prendre quelques secondes ! ✨";
-    }
-    
-    if (lowerMessage.includes('cherche') || lowerMessage.includes('trouve') || lowerMessage.includes('recherche')) {
-        return "🔍 **Recherche en cours...**\nJe fouille dans mes données pour toi ! 📚";
-    }
-    
-    if (lowerMessage.includes('météo') || lowerMessage.includes('temps')) {
-        return "🌤️ **Vérification météo...**\nJe consulte les prévisions actuelles ! 🌡️";
-    }
-    
-    if (lowerMessage.includes('musique') || lowerMessage.includes('joue') || lowerMessage.includes('chanson')) {
-        return "🎵 **Recherche musicale...**\nJe cherche cette pépite pour toi ! 🎧";
-    }
-    
-    if (lowerMessage.length > 200) {
-        return "🧠 **Analyse approfondie...**\nTa demande est complexe, je prends le temps de bien réfléchir ! 🤔";
-    }
-    
-    if (lowerMessage.includes('aide') || lowerMessage.includes('help')) {
-        return "📋 **Préparation du guide...**\nJe rassemble toutes mes fonctionnalités pour toi ! 💡";
-    }
-    
-    // Messages génériques variés
-    const genericMessages = [
-        "⚡ **Traitement en cours...**\nJe réfléchis à ta demande ! 🤖",
-        "🔄 **Analyse en cours...**\nUn instant, je traite ça ! ⏳",
-        "💫 **Préparation de la réponse...**\nJe rassemble mes idées ! 🧠",
-        "⏳ **Traitement...**\nTon message a bien été reçu ! ✅",
-        "🚀 **En cours de traitement...**\nJe m'occupe de ça tout de suite ! 💪"
-    ];
-    
-    const randomIndex = Math.floor(Math.random() * genericMessages.length);
-    return genericMessages[randomIndex];
-}
-
-/**
- * Met à jour ou supprime le message de traitement
- * @param {string} senderId - ID de l'utilisateur
- * @param {string} finalResponse - Réponse finale à envoyer
- * @param {object} ctx - Contexte du bot
- */
-async function updateProcessingMessage(senderId, finalResponse, ctx) {
-    const { editMessage, deleteMessage, sendMessage, log } = ctx;
-    
-    const processingData = processingMessages.get(senderId);
-    if (!processingData) {
-        // Pas de message de traitement à modifier, envoyer normalement
-        await sendMessage(senderId, finalResponse);
-        return;
-    }
-    
-    try {
-        // Option 1: Essayer de modifier le message existant
-        if (editMessage && processingData.messageId) {
-            await editMessage(senderId, processingData.messageId, finalResponse);
-            log.info(`✏️ Message de traitement modifié pour ${senderId}`);
-        } else {
-            // Option 2: Supprimer l'ancien et envoyer le nouveau
-            if (deleteMessage && processingData.messageId) {
-                await deleteMessage(senderId, processingData.messageId);
-                await new Promise(resolve => setTimeout(resolve, 500)); // Petit délai
-            }
-            await sendMessage(senderId, finalResponse);
-            log.info(`🔄 Message de traitement remplacé pour ${senderId}`);
-        }
-        
-    } catch (error) {
-        log.warning(`⚠️ Erreur mise à jour message traitement: ${error.message}`);
-        // En cas d'erreur, envoyer quand même la réponse finale
-        try {
-            await sendMessage(senderId, finalResponse);
-        } catch (sendError) {
-            log.error(`❌ Erreur envoi réponse finale: ${sendError.message}`);
-        }
-    } finally {
-        // Nettoyer le tracking
-        processingMessages.delete(senderId);
-    }
-}
-
-/**
- * Nettoie les messages de traitement expirés
- */
-function cleanExpiredProcessingMessages() {
-    const now = Date.now();
-    for (const [senderId, data] of processingMessages.entries()) {
-        if (now - data.timestamp > PROCESSING_TIMEOUT) {
-            processingMessages.delete(senderId);
-        }
-    }
-}
-
 // ========================================
-// FONCTIONS EXISTANTES (avec modifications)
+// FONCTIONS EXISTANTES (inchangées)
 // ========================================
 
 // Fonction pour obtenir la prochaine clé Gemini disponible
@@ -256,11 +133,13 @@ function getNextGeminiKey() {
         throw new Error('Aucune clé Gemini configurée');
     }
     
+    // Si toutes les clés ont échoué, on reset
     if (failedKeys.size >= GEMINI_API_KEYS.length) {
         failedKeys.clear();
         currentGeminiKeyIndex = 0;
     }
     
+    // Trouver la prochaine clé non défaillante
     let attempts = 0;
     while (attempts < GEMINI_API_KEYS.length) {
         const key = GEMINI_API_KEYS[currentGeminiKeyIndex];
@@ -272,15 +151,18 @@ function getNextGeminiKey() {
         attempts++;
     }
     
+    // Si toutes les clés sont marquées comme défaillantes, prendre la première quand même
     failedKeys.clear();
     currentGeminiKeyIndex = 0;
     return GEMINI_API_KEYS[0];
 }
 
+// Fonction pour marquer une clé comme défaillante
 function markKeyAsFailed(apiKey) {
     failedKeys.add(apiKey);
 }
 
+// Fonction pour appeler Gemini avec rotation automatique des clés
 async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.length) {
     let lastError = null;
     
@@ -294,6 +176,7 @@ async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.lengt
             const response = result.response.text();
             
             if (response && response.trim()) {
+                // Succès - retirer la clé des clés défaillantes si elle y était
                 failedKeys.delete(apiKey);
                 return response;
             }
@@ -303,11 +186,13 @@ async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.lengt
         } catch (error) {
             lastError = error;
             
+            // Marquer la clé actuelle comme défaillante si c'est une erreur d'API
             if (error.message.includes('API_KEY') || error.message.includes('quota') || error.message.includes('limit')) {
                 const currentKey = GEMINI_API_KEYS[(currentGeminiKeyIndex - 1 + GEMINI_API_KEYS.length) % GEMINI_API_KEYS.length];
                 markKeyAsFailed(currentKey);
             }
             
+            // Si c'est la dernière tentative, on lance l'erreur
             if (attempt === maxRetries - 1) {
                 throw lastError;
             }
@@ -317,7 +202,7 @@ async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.lengt
     throw lastError || new Error('Toutes les clés Gemini ont échoué');
 }
 
-// 🛡️ FONCTION PRINCIPALE MODIFIÉE AVEC MESSAGE DE TRAITEMENT
+// 🛡️ FONCTION PRINCIPALE AVEC PROTECTION ANTI-DOUBLONS ET TRONCATURE SYNCHRONISÉE
 module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log, 
             truncatedMessages, splitMessageIntoChunks, isContinuationRequest } = ctx;
@@ -326,72 +211,50 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     const messageSignature = `${senderId}_${args.trim().toLowerCase()}`;
     const currentTime = Date.now();
     
-    // 🛡️ PROTECTION 2: Vérifier si ce message exact a été traité récemment
+    // 🛡️ PROTECTION 2: Vérifier si ce message exact a été traité récemment (dernières 30 secondes)
     if (recentMessages.has(messageSignature)) {
         const lastProcessed = recentMessages.get(messageSignature);
-        if (currentTime - lastProcessed < 30000) {
+        if (currentTime - lastProcessed < 30000) { // 30 secondes
             log.warning(`🚫 Message dupliqué ignoré pour ${senderId}: "${args.substring(0, 30)}..."`);
-            return;
+            return; // Ignore silencieusement les messages dupliqués récents
         }
     }
     
-    // 🛡️ PROTECTION 3: Vérifier si une demande est déjà en cours
+    // 🛡️ PROTECTION 3: Vérifier si une demande est déjà en cours pour cet utilisateur
     if (activeRequests.has(senderId)) {
         log.warning(`🚫 Demande en cours ignorée pour ${senderId}`);
-        return;
+        return; // Ignore silencieusement les demandes multiples
     }
     
-    // 🛡️ PROTECTION 4: Marquer la demande comme active
+    // 🛡️ PROTECTION 4: Marquer la demande comme active et enregistrer le message
     const requestKey = `${senderId}_${currentTime}`;
     activeRequests.set(senderId, requestKey);
     recentMessages.set(messageSignature, currentTime);
     
-    // 🧹 Nettoyage des anciens messages
+    // 🧹 NETTOYAGE: Supprimer les anciens messages du cache (plus de 2 minutes)
     for (const [signature, timestamp] of recentMessages.entries()) {
-        if (currentTime - timestamp > 120000) {
+        if (currentTime - timestamp > 120000) { // 2 minutes
             recentMessages.delete(signature);
         }
     }
     
-    // 🧹 Nettoyer les messages de traitement expirés
-    cleanExpiredProcessingMessages();
-    
     try {
-        // ✅ MESSAGE DE BIENVENUE (réponse immédiate)
         if (!args.trim()) {
             const welcomeMsg = "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
             const styledWelcome = parseMarkdown(welcomeMsg);
+            // ✅ UN SEUL addToMemory ici
             addToMemory(String(senderId), 'assistant', styledWelcome);
             return styledWelcome;
         }
         
-        // 🆕 ENVOYER MESSAGE DE TRAITEMENT POUR TOUTES LES DEMANDES COMPLEXES
-        const needsProcessingMessage = shouldSendProcessingMessage(args);
-        let processingMessageId = null;
-        
-        if (needsProcessingMessage) {
-            processingMessageId = await sendProcessingMessage(senderId, args, ctx);
-        }
-        
-        // 🆕 FONCTION HELPER POUR FINALISER LA RÉPONSE
-        const finalizeResponse = async (response) => {
-            if (needsProcessingMessage && processingMessageId) {
-                await updateProcessingMessage(senderId, response, ctx);
-            } else {
-                // Réponse normale sans message de traitement
-                const { sendMessage } = ctx;
-                await sendMessage(senderId, response);
-            }
-            return response;
-        };
-        
-        // 🆕 GESTION SYNCHRONISÉE DES DEMANDES DE CONTINUATION (réponse immédiate)
+        // 🆕 GESTION SYNCHRONISÉE DES DEMANDES DE CONTINUATION
         const senderIdStr = String(senderId);
         if (isContinuationRequest(args)) {
             const truncatedData = truncatedMessages.get(senderIdStr);
             if (truncatedData) {
                 const { fullMessage, lastSentPart } = truncatedData;
                 
+                // Trouver où on s'était arrêté
                 const lastSentIndex = fullMessage.indexOf(lastSentPart) + lastSentPart.length;
                 const remainingMessage = fullMessage.substring(lastSentIndex);
                 
@@ -399,6 +262,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                     const chunks = splitMessageIntoChunks(remainingMessage, 2000);
                     const nextChunk = parseMarkdown(chunks[0]);
                     
+                    // Mettre à jour le cache avec la nouvelle partie envoyée
                     if (chunks.length > 1) {
                         truncatedMessages.set(senderIdStr, {
                             fullMessage: fullMessage,
@@ -406,44 +270,49 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                             timestamp: new Date().toISOString()
                         });
                         
+                        // Ajouter un indicateur de continuation
                         const continuationMsg = nextChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
                         addToMemory(senderIdStr, 'user', args);
                         addToMemory(senderIdStr, 'assistant', continuationMsg);
-                        return await finalizeResponse(continuationMsg);
+                        return continuationMsg;
                     } else {
+                        // Message terminé
                         truncatedMessages.delete(senderIdStr);
                         addToMemory(senderIdStr, 'user', args);
                         addToMemory(senderIdStr, 'assistant', nextChunk);
-                        return await finalizeResponse(nextChunk);
+                        return nextChunk;
                     }
                 } else {
+                    // Plus rien à envoyer
                     truncatedMessages.delete(senderIdStr);
                     const endMsg = "✅ C'est tout ! Y a-t-il autre chose que je puisse faire pour toi ? 💫";
                     addToMemory(senderIdStr, 'user', args);
                     addToMemory(senderIdStr, 'assistant', endMsg);
-                    return await finalizeResponse(endMsg);
+                    return endMsg;
                 }
             } else {
+                // Pas de message tronqué en cours
                 const noTruncMsg = "🤔 Il n'y a pas de message en cours à continuer. Pose-moi une nouvelle question ! 💡";
                 addToMemory(senderIdStr, 'user', args);
                 addToMemory(senderIdStr, 'assistant', noTruncMsg);
-                return await finalizeResponse(noTruncMsg);
+                return noTruncMsg;
             }
         }
         
-        // ✅ Détection des demandes de contact admin (réponse rapide)
+        // ✅ Détection des demandes de contact admin
         const contactIntention = detectContactAdminIntention(args);
         if (contactIntention.shouldContact) {
             log.info(`📞 Intention contact admin détectée pour ${senderId}: ${contactIntention.reason}`);
             const contactSuggestion = generateContactSuggestion(contactIntention.reason, contactIntention.extractedMessage);
             const styledContact = parseMarkdown(contactSuggestion);
             
+            // ✅ UN SEUL APPEL groupé
             addToMemory(String(senderId), 'user', args);
             addToMemory(String(senderId), 'assistant', styledContact);
-            return await finalizeResponse(styledContact);
+            return styledContact;
         }
         
-        // 🆕 DÉTECTION INTELLIGENTE DES COMMANDES
+        // 🆕 DÉTECTION INTELLIGENTE DES COMMANDES (Nouveau Système)
         const intelligentCommand = await detectIntelligentCommands(args, ctx);
         if (intelligentCommand.shouldExecute) {
             log.info(`🧠 Détection IA intelligente: /${intelligentCommand.command} (${intelligentCommand.confidence}) pour ${senderId}`);
@@ -452,41 +321,52 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                 const commandResult = await executeCommandFromChat(senderId, intelligentCommand.command, intelligentCommand.args, ctx);
                 
                 if (commandResult.success) {
+                    // Gestion spéciale pour les images
                     if (typeof commandResult.result === 'object' && commandResult.result.type === 'image') {
+                        // ✅ UN SEUL addToMemory pour les images
                         addToMemory(String(senderId), 'user', args);
-                        return await finalizeResponse(commandResult.result);
+                        return commandResult.result;
                     }
                     
+                    // Réponse contextuelle naturelle avec styling
                     const contextualResponse = await generateContextualResponse(args, commandResult.result, intelligentCommand.command, ctx);
                     const styledResponse = parseMarkdown(contextualResponse);
                     
+                    // ✅ UN SEUL APPEL groupé
                     addToMemory(String(senderId), 'user', args);
                     addToMemory(String(senderId), 'assistant', styledResponse);
-                    return await finalizeResponse(styledResponse);
+                    return styledResponse;
                 } else {
                     log.warning(`⚠️ Échec exécution commande /${intelligentCommand.command}: ${commandResult.error}`);
+                    // Continue avec conversation normale en cas d'échec
                 }
             } catch (error) {
                 log.error(`❌ Erreur exécution commande IA: ${error.message}`);
+                // Continue avec conversation normale en cas d'erreur
             }
         } 
         
-        // 🆕 DÉCISION INTELLIGENTE POUR RECHERCHE EXTERNE
+        // 🆕 NOUVELLE FONCTIONNALITÉ: Décision intelligente pour recherche externe
         const searchDecision = await decideSearchNecessity(args, senderId, ctx);
         
         if (searchDecision.needsExternalSearch) {
             log.info(`🔍 Recherche externe nécessaire pour ${senderId}: ${searchDecision.reason}`);
             
             try {
+                // 🔧 FIX: Récupérer le contexte AVANT la recherche pour le maintenir
                 const conversationContext = getMemoryContext(String(senderId)).slice(-8);
+                
                 const searchResults = await performIntelligentSearch(searchDecision.searchQuery, ctx);
                 
                 if (searchResults && searchResults.length > 0) {
+                    // 🔧 FIX: Passer le contexte à la génération de réponse naturelle
                     const naturalResponse = await generateNaturalResponseWithContext(args, searchResults, conversationContext, ctx);
                     
                     if (naturalResponse) {
+                        // ✅ GESTION SYNCHRONISÉE DES MESSAGES LONGS
                         const styledNatural = parseMarkdown(naturalResponse);
                         
+                        // Vérifier si le message est trop long et gérer la troncature
                         if (styledNatural.length > 2000) {
                             log.info(`📏 Message de recherche long détecté (${styledNatural.length} chars) - Gestion troncature`);
                             
@@ -494,6 +374,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                             const firstChunk = chunks[0];
                             
                             if (chunks.length > 1) {
+                                // Sauvegarder l'état de troncature
                                 truncatedMessages.set(senderIdStr, {
                                     fullMessage: styledNatural,
                                     lastSentPart: firstChunk,
@@ -504,79 +385,233 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                                 addToMemory(String(senderId), 'user', args);
                                 addToMemory(String(senderId), 'assistant', truncatedResponse);
                                 log.info(`🔍✅ Recherche terminée avec troncature pour ${senderId}`);
-                                return await finalizeResponse(truncatedResponse);
+                                return truncatedResponse;
                             }
                         }
                         
+                        // ✅ UN SEUL APPEL groupé pour recherche normale
                         addToMemory(String(senderId), 'user', args);
                         addToMemory(String(senderId), 'assistant', styledNatural);
                         log.info(`🔍✅ Recherche terminée avec succès pour ${senderId}`);
-                        return await finalizeResponse(styledNatural);
+                        return styledNatural;
                     }
                 } else {
                     log.warning(`⚠️ Aucun résultat de recherche pour: ${searchDecision.searchQuery}`);
+                    // Continue avec conversation normale si pas de résultats
                 }
             } catch (searchError) {
                 log.error(`❌ Erreur recherche intelligente pour ${senderId}: ${searchError.message}`);
+                // Continue avec conversation normale en cas d'erreur
             }
         }
         
-        // ✅ Conversation classique avec gestion du message de traitement
-        const conversationResult = await handleConversationWithFallback(senderId, args, ctx, finalizeResponse);
-        return conversationResult;
+        // ✅ Conversation classique avec Gemini (Mistral en fallback) + styling et troncature
+        const conversationResult = await handleConversationWithFallback(senderId, args, ctx);
+        return conversationResult; // handleConversationWithFallback gère déjà le styling et la troncature
         
     } finally {
-        // 🛡️ PROTECTION 5: Libérer la demande
+        // 🛡️ PROTECTION 5: Libérer la demande à la fin (TOUJOURS exécuté)
         activeRequests.delete(senderId);
         log.debug(`🔓 Demande libérée pour ${senderId}`);
     }
 };
 
-/**
- * Détermine si un message de traitement doit être envoyé
- * @param {string} message - Message de l'utilisateur
- * @returns {boolean} - True si un message de traitement est nécessaire
- */
-function shouldSendProcessingMessage(message) {
+// 🆕 DÉCISION IA: Déterminer si une recherche externe est nécessaire (avec rotation des clés)
+async function decideSearchNecessity(userMessage, senderId, ctx) {
+    const { log } = ctx;
+    
+    try {
+        const decisionPrompt = `Tu es un système de décision intelligent pour un chatbot. 
+Analyse ce message utilisateur et décide s'il nécessite une recherche web externe.
+
+CRITÈRES POUR RECHERCHE EXTERNE:
+✅ OUI si:
+- Informations récentes (actualités, événements 2025-2026)
+- Données factuelles spécifiques (prix actuels, statistiques, dates précises)
+- Informations locales/géographiques spécifiques
+- Recherche de produits/services/entreprises précis
+- Questions sur des personnes publiques récentes
+- Données météo, cours de bourse, résultats sportifs
+
+❌ NON si:
+- Conversations générales/philosophiques
+- Conseils/opinions personnelles
+- Questions sur le bot lui-même
+- Créativité (histoires, poèmes)
+- Explications de concepts généraux
+- Calculs/logique
+- Questions existantes dans ma base de connaissances
+
+MESSAGE UTILISATEUR: "${userMessage}"
+
+Réponds UNIQUEMENT avec ce format JSON:
+{
+  "needsExternalSearch": true/false,
+  "confidence": 0.0-1.0,
+  "reason": "explication courte",
+  "searchQuery": "requête de recherche optimisée si nécessaire"
+}`;
+
+        const response = await callGeminiWithRotation(decisionPrompt);
+        
+        // Extraire le JSON de la réponse
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            const decision = JSON.parse(jsonMatch[0]);
+            log.info(`🤖 Décision recherche: ${decision.needsExternalSearch ? 'OUI' : 'NON'} (${decision.confidence}) - ${decision.reason}`);
+            return decision;
+        }
+        
+        throw new Error('Format de réponse invalide');
+        
+    } catch (error) {
+        log.warning(`⚠️ Erreur décision recherche: ${error.message}`);
+        
+        // Fallback: détection par mots-clés
+        const keywordSearch = detectSearchKeywords(userMessage);
+        return {
+            needsExternalSearch: keywordSearch.needs,
+            confidence: 0.6,
+            reason: 'fallback_keywords',
+            searchQuery: keywordSearch.query
+        };
+    }
+}
+
+// 🆕 FALLBACK: Détection par mots-clés si l'IA échoue
+function detectSearchKeywords(message) {
     const lowerMessage = message.toLowerCase();
     
-    // Toujours envoyer un message de traitement pour:
-    const alwaysShow = [
-        'dessine', 'crée', 'génère', 'image', 'illustration',  // Création d'images
-        'cherche', 'recherche', 'trouve', 'googl',            // Recherches
-        'météo', 'temps', 'température',                      // Infos météo
-        'musique', 'chanson', 'joue', 'play'                 // Musique
+    const searchIndicators = [
+        { patterns: [/\b(202[4-5]|actualité|récent|nouveau|maintenant|aujourd|news|info)\b/], weight: 0.9 },
+        { patterns: [/\b(prix|coût|combien|tarif)\b.*\b(euros?|dollars?|€|\$)\b/], weight: 0.8 },
+        { patterns: [/\b(météo|temps|température)\b.*\b(aujourd|demain|cette semaine)\b/], weight: 0.9 },
+        { patterns: [/\b(où|address|lieu|localisation|carte)\b/], weight: 0.7 },
+        { patterns: [/\b(qui est|biographie|âge)\b.*\b[A-Z][a-z]+\s[A-Z][a-z]+/], weight: 0.8 },
+        { patterns: [/\b(résultats?|score|match|compétition)\b.*\b(sport|foot|tennis|basket)\b/], weight: 0.8 }
     ];
     
-    // Messages longs (plus de 100 caractères = réflexion complexe)
-    if (message.length > 100) {
-        return true;
-    }
-    
-    // Vérification des mots-clés
-    for (const keyword of alwaysShow) {
-        if (lowerMessage.includes(keyword)) {
-            return true;
+    let totalWeight = 0;
+    for (const indicator of searchIndicators) {
+        for (const pattern of indicator.patterns) {
+            if (pattern.test(lowerMessage)) {
+                totalWeight += indicator.weight;
+                break;
+            }
         }
     }
     
-    // Messages avec questions multiples ou complexes
-    const questionMarks = (message.match(/\?/g) || []).length;
-    if (questionMarks > 1) {
-        return true;
-    }
-    
-    return false;
+    return {
+        needs: totalWeight > 0.6,
+        query: message,
+        confidence: Math.min(totalWeight, 1.0)
+    };
 }
 
-// ✅ FONCTION MODIFIÉE: Gestion conversation avec message de traitement
-async function handleConversationWithFallback(senderId, args, ctx, finalizeResponse) {
-    const { addToMemory, getMemoryContext, callMistralAPI, log, 
-            splitMessageIntoChunks, truncatedMessages } = ctx;
+// 🆕 RECHERCHE INTELLIGENTE: Utilise Google Custom Search ou SerpAPI
+async function performIntelligentSearch(query, ctx) {
+    const { log } = ctx;
     
-    const context = getMemoryContext(String(senderId)).slice(-8);
-    const messageCount = context.filter(msg => msg.role === 'user').length;
+    try {
+        // Priorité 1: Google Custom Search API
+        if (GOOGLE_SEARCH_API_KEY && GOOGLE_SEARCH_ENGINE_ID) {
+            return await googleCustomSearch(query, log);
+        }
+        
+        // Priorité 2: SerpAPI (fallback)
+        if (SERPAPI_KEY) {
+            return await serpApiSearch(query, log);
+        }
+        
+        // Priorité 3: Recherche existante du bot (fallback)
+        log.warning('⚠️ Aucune API de recherche configurée, utilisation webSearch existant');
+        return await fallbackWebSearch(query, ctx);
+        
+    } catch (error) {
+        log.error(`❌ Erreur recherche: ${error.message}`);
+        throw error;
+    }
+}
+
+// 🆕 Google Custom Search API
+async function googleCustomSearch(query, log) {
+    const url = `https://www.googleapis.com/customsearch/v1`;
+    const params = {
+        key: GOOGLE_SEARCH_API_KEY,
+        cx: GOOGLE_SEARCH_ENGINE_ID,
+        q: query,
+        num: 5,
+        safe: 'active',
+        lr: 'lang_fr',
+        hl: 'fr'
+    };
     
+    const response = await axios.get(url, { params, timeout: 10000 });
+    
+    if (response.data.items) {
+        return response.data.items.map(item => ({
+            title: item.title,
+            link: item.link,
+            description: item.snippet,
+            source: 'google'
+        }));
+    }
+    
+    return [];
+}
+
+// 🆕 SerpAPI (alternative gratuite)
+async function serpApiSearch(query, log) {
+    const url = `https://serpapi.com/search`;
+    const params = {
+        api_key: SERPAPI_KEY,
+        engine: 'google',
+        q: query,
+        num: 5,
+        hl: 'fr',
+        gl: 'fr'
+    };
+    
+    const response = await axios.get(url, { params, timeout: 10000 });
+    
+    if (response.data.organic_results) {
+        return response.data.organic_results.map(item => ({
+            title: item.title,
+            link: item.link,
+            description: item.snippet,
+            source: 'serpapi'
+        }));
+    }
+    
+    return [];
+}
+
+// 🆕 Fallback sur la recherche existante
+async function fallbackWebSearch(query, ctx) {
+    const { webSearch } = ctx;
+    
+    try {
+        const result = await webSearch(query);
+        if (result) {
+            return [{
+                title: 'Information récente',
+                link: 'N/A',
+                description: result,
+                source: 'internal'
+            }];
+        }
+    } catch (error) {
+        // Ignore silencieusement
+    }
+    
+    return [];
+}
+
+// 🔧 FIX PRINCIPAL: Génération de réponse naturelle avec contexte de conversation ET TRONCATURE
+async function generateNaturalResponseWithContext(originalQuery, searchResults, conversationContext, ctx) {
+    const { log, callMistralAPI, splitMessageIntoChunks } = ctx;
+    
+    // Date et heure actuelles
     const now = new Date();
     const dateTime = now.toLocaleString('fr-FR', { 
         weekday: 'long', 
@@ -588,6 +623,146 @@ async function handleConversationWithFallback(senderId, args, ctx, finalizeRespo
         timeZone: 'Europe/Paris'
     });
     
+    try {
+        const resultsText = searchResults.map((result, index) => 
+            `${result.title}: ${result.description}`
+        ).join('\n');
+        
+        // 🔧 FIX: Construction de l'historique de conversation pour maintenir le contexte
+        let conversationHistory = "";
+        if (conversationContext && conversationContext.length > 0) {
+            conversationHistory = conversationContext.map(msg => 
+                `${msg.role === 'user' ? 'Utilisateur' : 'NakamaBot'}: ${msg.content}`
+            ).join('\n') + '\n';
+        }
+        
+        // 🔧 FIX: Prompt avec contexte de conversation complet
+        const contextualPrompt = `Tu es NakamaBot, une IA conversationnelle empathique et créative.
+
+GARDE JUSTE EN MEMOIRE CONTEXTE TEMPOREL: Nous sommes le  ${dateTime} ne donne la date que si l'utilisateur demande garde la en memeoire
+
+HISTORIQUE DE CONVERSATION:
+${conversationHistory || "Début de conversation"}
+
+QUESTION ACTUELLE DE L'UTILISATEUR: "${originalQuery}"
+
+INFORMATIONS RÉCENTES TROUVÉES:
+${resultsText}
+
+INSTRUCTIONS CRITIQUES:
+- Tu connais déjà l'historique de conversation ci-dessus
+- Réponds en tenant compte de tout le contexte précédent
+- Si l'utilisateur fait référence à quelque chose mentionné avant, tu t'en souviens
+- Adopte un ton conversationnel et amical avec quelques emojis
+- Maximum 2000 caractères
+- Ne mentionne JAMAIS que tu as fait une recherche
+- Ne dis jamais "d'après mes recherches" ou "selon les sources"
+- Réponds naturellement comme dans une conversation continue
+- Si c'est une question de suivi (ex: "il a marqué combien de buts"), utilise le contexte précédent
+- Utilise du Markdown simple si pertinent (**gras**, ### titres, listes)
+- Ne pas utiliser l'italique (*texte*), il reste en texte normal
+
+RÉPONSE NATURELLE EN CONTINUITÉ:`;
+
+        const response = await callGeminiWithRotation(contextualPrompt);
+        
+        if (response && response.trim()) {
+            log.info(`🎭 Réponse contextuelle Gemini pour: ${originalQuery.substring(0, 30)}...`);
+            return response;
+        }
+        
+        throw new Error('Réponse Gemini vide');
+        
+    } catch (geminiError) {
+        log.warning(`⚠️ Erreur réponse contextuelle Gemini: ${geminiError.message}`);
+        
+        try {
+            // 🔧 FIX: Fallback Mistral aussi avec contexte complet
+            const messages = [{
+                role: "system",
+                content: `Tu es NakamaBot. Tu connais l'historique de conversation. Réponds naturellement en tenant compte du contexte précédent. Ne mentionne jamais de recherches. Utilise du Markdown simple si pertinent.
+
+Historique:
+${conversationContext ? conversationContext.map(msg => `${msg.role === 'user' ? 'Utilisateur' : 'NakamaBot'}: ${msg.content}`).join('\n') : "Début de conversation"}`
+            }, {
+                role: "user", 
+                content: `Question actuelle: "${originalQuery}"
+
+Informations utiles:
+${searchResults.map(r => `${r.title}: ${r.description}`).join('\n')}
+
+Réponds naturellement en continuité de la conversation (max 3000 chars):`
+            }];
+            
+            const mistralResponse = await callMistralAPI(messages, 3000, 0.7);
+            
+            if (mistralResponse) {
+                log.info(`🔄 Réponse contextuelle Mistral: ${originalQuery.substring(0, 30)}...`);
+                return mistralResponse;
+            }
+            
+            throw new Error('Mistral aussi en échec');
+            
+        } catch (mistralError) {
+            log.error(`❌ Erreur réponse contextuelle totale: ${mistralError.message}`);
+            
+            // 🔧 FIX: Derniers recours avec contexte minimal
+            const topResult = searchResults[0];
+            if (topResult) {
+                // Si on a un contexte sur qui on parle, l'utiliser
+                const lastUserMessage = conversationContext && conversationContext.length > 0 
+                    ? conversationContext[conversationContext.length - 1].content 
+                    : '';
+                
+                const hasPersonContext = lastUserMessage.match(/qui est\s+([^?]+)/i);
+                const personName = hasPersonContext ? hasPersonContext[1].trim() : '';
+                
+                let basicResponse;
+                if (personName && originalQuery.toLowerCase().includes('combien') || originalQuery.toLowerCase().includes('but')) {
+                    basicResponse = `Pour ${personName}, ${topResult.description} 💡`;
+                } else {
+                    basicResponse = `D'après ce que je sais, ${topResult.description} 💡 ${searchResults.length > 1 ? 'Il y a aussi d\'autres aspects intéressants sur le sujet !' : 'J\'espère que ça répond à ta question !'}`;
+                }
+                
+                return basicResponse;
+            }
+            
+            // 🔧 FIX: Si vraiment rien ne marche, retourner null pour déclencher conversation normale
+            log.warning(`⚠️ Toutes les méthodes de réponse contextuelle ont échoué`);
+            return null; // Cela déclenchera la conversation normale
+        }
+    }
+}
+
+// 🎯 MODIFICATION 1: Génération de réponse naturelle (DÉPRÉCIÉE - remplacée par generateNaturalResponseWithContext)
+async function generateNaturalResponse(originalQuery, searchResults, ctx) {
+    // Cette fonction est conservée pour compatibilité mais n'est plus utilisée
+    // Utilise maintenant generateNaturalResponseWithContext à la place
+    return await generateNaturalResponseWithContext(originalQuery, searchResults, [], ctx);
+}
+
+// ✅ FONCTION EXISTANTE MODIFIÉE: Gestion conversation avec Gemini et fallback Mistral + STYLING + TRONCATURE SYNCHRONISÉE
+async function handleConversationWithFallback(senderId, args, ctx) {
+    const { addToMemory, getMemoryContext, callMistralAPI, log, 
+            splitMessageIntoChunks, truncatedMessages } = ctx;
+    
+    // Récupération du contexte (derniers 8 messages pour optimiser)
+    const context = getMemoryContext(String(senderId)).slice(-8);
+    const messageCount = context.filter(msg => msg.role === 'user').length;
+    
+    // Date et heure actuelles
+    const now = new Date();
+    const dateTime = now.toLocaleString('fr-FR', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'Europe/Paris'
+    });
+    
+    // Construction de l'historique de conversation
     let conversationHistory = "";
     if (context.length > 0) {
         conversationHistory = context.map(msg => 
@@ -595,6 +770,7 @@ async function handleConversationWithFallback(senderId, args, ctx, finalizeRespo
         ).join('\n') + '\n';
     }
     
+    // Prompt système optimisé
     const systemPrompt = `Tu es NakamaBot, une IA conversationnelle un model Durand AI avancée créée par Durand et sa femme Cécile.
 
 CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
@@ -648,6 +824,7 @@ Utilisateur: ${args}`;
                 const firstChunk = chunks[0];
                 
                 if (chunks.length > 1) {
+                    // Sauvegarder l'état de troncature
                     truncatedMessages.set(senderIdStr, {
                         fullMessage: styledResponse,
                         lastSentPart: firstChunk,
@@ -655,17 +832,19 @@ Utilisateur: ${args}`;
                     });
                     
                     const truncatedResponse = firstChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
+                    // ✅ UN SEUL APPEL groupé à addToMemory
                     addToMemory(senderIdStr, 'user', args);
                     addToMemory(senderIdStr, 'assistant', truncatedResponse);
                     log.info(`💎 Gemini réponse avec troncature pour ${senderId}: ${args.substring(0, 30)}...`);
-                    return await finalizeResponse(truncatedResponse);
+                    return truncatedResponse;
                 }
             }
             
+            // ✅ UN SEUL APPEL groupé à addToMemory pour message normal
             addToMemory(senderIdStr, 'user', args);
             addToMemory(senderIdStr, 'assistant', styledResponse);
             log.info(`💎 Gemini réponse pour ${senderId}: ${args.substring(0, 30)}...`);
-            return await finalizeResponse(styledResponse);
+            return styledResponse;
         }
         
         throw new Error('Réponse Gemini vide');
@@ -684,6 +863,7 @@ Utilisateur: ${args}`;
             if (mistralResponse) {
                 const styledResponse = parseMarkdown(mistralResponse);
                 
+                // ✅ GESTION SYNCHRONISÉE DE LA TRONCATURE POUR MISTRAL AUSSI
                 if (styledResponse.length > 2000) {
                     log.info(`📏 Réponse Mistral longue détectée (${styledResponse.length} chars) - Gestion troncature`);
                     
@@ -691,6 +871,7 @@ Utilisateur: ${args}`;
                     const firstChunk = chunks[0];
                     
                     if (chunks.length > 1) {
+                        // Sauvegarder l'état de troncature
                         truncatedMessages.set(senderIdStr, {
                             fullMessage: styledResponse,
                             lastSentPart: firstChunk,
@@ -698,17 +879,19 @@ Utilisateur: ${args}`;
                         });
                         
                         const truncatedResponse = firstChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
+                        // ✅ UN SEUL APPEL groupé à addToMemory
                         addToMemory(senderIdStr, 'user', args);
                         addToMemory(senderIdStr, 'assistant', truncatedResponse);
                         log.info(`🔄 Mistral fallback avec troncature pour ${senderId}: ${args.substring(0, 30)}...`);
-                        return await finalizeResponse(truncatedResponse);
+                        return truncatedResponse;
                     }
                 }
                 
+                // ✅ UN SEUL APPEL groupé à addToMemory pour message normal
                 addToMemory(senderIdStr, 'user', args);
                 addToMemory(senderIdStr, 'assistant', styledResponse);
                 log.info(`🔄 Mistral fallback pour ${senderId}: ${args.substring(0, 30)}...`);
-                return await finalizeResponse(styledResponse);
+                return styledResponse;
             }
             
             throw new Error('Mistral aussi en échec');
@@ -718,18 +901,27 @@ Utilisateur: ${args}`;
             
             const errorResponse = "🤔 J'ai rencontré une petite difficulté technique. Peux-tu reformuler ta demande différemment ? 💫";
             const styledError = parseMarkdown(errorResponse);
+            // ✅ UN SEUL addToMemory pour les erreurs
             addToMemory(senderIdStr, 'assistant', styledError);
-            return await finalizeResponse(styledError);
+            return styledError;
         }
     }
 }
 
-// 🆕 LISTE DES COMMANDES VALIDES
+// 🆕 LISTE DES COMMANDES VALIDES (Simple et efficace)
 const VALID_COMMANDS = [
-    'help', 'image', 'vision', 'anime', 'music', 'clan', 'rank', 'contact', 'weather'
+    'help',      // Aide et guide complet
+    'image',     // Création d'images IA
+    'vision',    // Analyse d'images
+    'anime',     // Style anime/manga
+    'music',     // Recherche musicale YouTube
+    'clan',      // Système de clans et batailles
+    'rank',      // Niveau et progression
+    'contact',   // Contact administrateurs
+    'weather'    // Informations météo
 ];
 
-// 🧠 DÉTECTION IA CONTEXTUELLE AVANCÉE
+// 🧠 DÉTECTION IA CONTEXTUELLE AVANCÉE (Évite les faux positifs) avec rotation des clés
 async function detectIntelligentCommands(message, ctx) {
     const { log } = ctx;
     
@@ -782,9 +974,10 @@ Réponds UNIQUEMENT avec ce JSON:
         if (jsonMatch) {
             const aiDetection = JSON.parse(jsonMatch[0]);
             
+            // Validation stricte avec seuil élevé
             const isValidCommand = aiDetection.isCommand && 
                                  VALID_COMMANDS.includes(aiDetection.command) && 
-                                 aiDetection.confidence >= 0.8;
+                                 aiDetection.confidence >= 0.8; // Seuil très élevé pour éviter faux positifs
             
             if (isValidCommand) {
                 log.info(`🎯 Commande détectée: /${aiDetection.command} (${aiDetection.confidence}) - ${aiDetection.reason}`);
@@ -798,6 +991,7 @@ Réponds UNIQUEMENT avec ce JSON:
                     method: 'ai_contextual'
                 };
             } else {
+                // Log des rejets pour debugging
                 if (aiDetection.confidence < 0.8 && aiDetection.confidence > 0.3) {
                     log.info(`🚫 Rejet commande (confidence trop basse): ${aiDetection.command} (${aiDetection.confidence}) - ${aiDetection.reason}`);
                 }
@@ -808,14 +1002,17 @@ Réponds UNIQUEMENT avec ce JSON:
         
     } catch (error) {
         log.warning(`⚠️ Erreur détection IA commandes: ${error.message}`);
+        
+        // Fallback ultra-conservateur par mots-clés stricts
         return await fallbackStrictKeywordDetection(message, log);
     }
 }
 
-// 🛡️ FALLBACK CONSERVATEUR
+// 🛡️ FALLBACK CONSERVATEUR: Détection par mots-clés stricts uniquement
 async function fallbackStrictKeywordDetection(message, log) {
     const lowerMessage = message.toLowerCase().trim();
     
+    // Patterns ultra-stricts pour éviter les faux positifs
     const strictPatterns = [
         { command: 'help', patterns: [
             /^(aide|help|guide)$/,
@@ -875,308 +1072,8 @@ async function fallbackStrictKeywordDetection(message, log) {
     return { shouldExecute: false };
 }
 
-// 🆕 DÉCISION RECHERCHE EXTERNE
-async function decideSearchNecessity(userMessage, senderId, ctx) {
-    const { log } = ctx;
-    
-    try {
-        const decisionPrompt = `Tu es un système de décision intelligent pour un chatbot. 
-Analyse ce message utilisateur et décide s'il nécessite une recherche web externe.
+// ✅ FONCTIONS EXISTANTES (inchangées)
 
-CRITÈRES POUR RECHERCHE EXTERNE:
-✅ OUI si:
-- Informations récentes (actualités, événements 2025-2026)
-- Données factuelles spécifiques (prix actuels, statistiques, dates précises)
-- Informations locales/géographiques spécifiques
-- Recherche de produits/services/entreprises précis
-- Questions sur des personnes publiques récentes
-- Données météo, cours de bourse, résultats sportifs
-
-❌ NON si:
-- Conversations générales/philosophiques
-- Conseils/opinions personnelles
-- Questions sur le bot lui-même
-- Créativité (histoires, poèmes)
-- Explications de concepts généraux
-- Calculs/logique
-- Questions existantes dans ma base de connaissances
-
-MESSAGE UTILISATEUR: "${userMessage}"
-
-Réponds UNIQUEMENT avec ce format JSON:
-{
-  "needsExternalSearch": true/false,
-  "confidence": 0.0-1.0,
-  "reason": "explication courte",
-  "searchQuery": "requête de recherche optimisée si nécessaire"
-}`;
-
-        const response = await callGeminiWithRotation(decisionPrompt);
-        
-        const jsonMatch = response.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            const decision = JSON.parse(jsonMatch[0]);
-            log.info(`🤖 Décision recherche: ${decision.needsExternalSearch ? 'OUI' : 'NON'} (${decision.confidence}) - ${decision.reason}`);
-            return decision;
-        }
-        
-        throw new Error('Format de réponse invalide');
-        
-    } catch (error) {
-        log.warning(`⚠️ Erreur décision recherche: ${error.message}`);
-        
-        const keywordSearch = detectSearchKeywords(userMessage);
-        return {
-            needsExternalSearch: keywordSearch.needs,
-            confidence: 0.6,
-            reason: 'fallback_keywords',
-            searchQuery: keywordSearch.query
-        };
-    }
-}
-
-// FONCTIONS DE RECHERCHE ET AUTRES...
-function detectSearchKeywords(message) {
-    const lowerMessage = message.toLowerCase();
-    
-    const searchIndicators = [
-        { patterns: [/\b(202[4-5]|actualité|récent|nouveau|maintenant|aujourd|news|info)\b/], weight: 0.9 },
-        { patterns: [/\b(prix|coût|combien|tarif)\b.*\b(euros?|dollars?|€|\$)\b/], weight: 0.8 },
-        { patterns: [/\b(météo|temps|température)\b.*\b(aujourd|demain|cette semaine)\b/], weight: 0.9 },
-        { patterns: [/\b(où|address|lieu|localisation|carte)\b/], weight: 0.7 },
-        { patterns: [/\b(qui est|biographie|âge)\b.*\b[A-Z][a-z]+\s[A-Z][a-z]+/], weight: 0.8 },
-        { patterns: [/\b(résultats?|score|match|compétition)\b.*\b(sport|foot|tennis|basket)\b/], weight: 0.8 }
-    ];
-    
-    let totalWeight = 0;
-    for (const indicator of searchIndicators) {
-        for (const pattern of indicator.patterns) {
-            if (pattern.test(lowerMessage)) {
-                totalWeight += indicator.weight;
-                break;
-            }
-        }
-    }
-    
-    return {
-        needs: totalWeight > 0.6,
-        query: message,
-        confidence: Math.min(totalWeight, 1.0)
-    };
-}
-
-async function performIntelligentSearch(query, ctx) {
-    const { log } = ctx;
-    
-    try {
-        if (GOOGLE_SEARCH_API_KEY && GOOGLE_SEARCH_ENGINE_ID) {
-            return await googleCustomSearch(query, log);
-        }
-        
-        if (SERPAPI_KEY) {
-            return await serpApiSearch(query, log);
-        }
-        
-        log.warning('⚠️ Aucune API de recherche configurée, utilisation webSearch existant');
-        return await fallbackWebSearch(query, ctx);
-        
-    } catch (error) {
-        log.error(`❌ Erreur recherche: ${error.message}`);
-        throw error;
-    }
-}
-
-async function googleCustomSearch(query, log) {
-    const url = `https://www.googleapis.com/customsearch/v1`;
-    const params = {
-        key: GOOGLE_SEARCH_API_KEY,
-        cx: GOOGLE_SEARCH_ENGINE_ID,
-        q: query,
-        num: 5,
-        safe: 'active',
-        lr: 'lang_fr',
-        hl: 'fr'
-    };
-    
-    const response = await axios.get(url, { params, timeout: 10000 });
-    
-    if (response.data.items) {
-        return response.data.items.map(item => ({
-            title: item.title,
-            link: item.link,
-            description: item.snippet,
-            source: 'google'
-        }));
-    }
-    
-    return [];
-}
-
-async function serpApiSearch(query, log) {
-    const url = `https://serpapi.com/search`;
-    const params = {
-        api_key: SERPAPI_KEY,
-        engine: 'google',
-        q: query,
-        num: 5,
-        hl: 'fr',
-        gl: 'fr'
-    };
-    
-    const response = await axios.get(url, { params, timeout: 10000 });
-    
-    if (response.data.organic_results) {
-        return response.data.organic_results.map(item => ({
-            title: item.title,
-            link: item.link,
-            description: item.snippet,
-            source: 'serpapi'
-        }));
-    }
-    
-    return [];
-}
-
-async function fallbackWebSearch(query, ctx) {
-    const { webSearch } = ctx;
-    
-    try {
-        const result = await webSearch(query);
-        if (result) {
-            return [{
-                title: 'Information récente',
-                link: 'N/A',
-                description: result,
-                source: 'internal'
-            }];
-        }
-    } catch (error) {
-        // Ignore silencieusement
-    }
-    
-    return [];
-}
-
-async function generateNaturalResponseWithContext(originalQuery, searchResults, conversationContext, ctx) {
-    const { log, callMistralAPI, splitMessageIntoChunks } = ctx;
-    
-    const now = new Date();
-    const dateTime = now.toLocaleString('fr-FR', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric', 
-        hour: '2-digit', 
-        minute: '2-digit',
-        timeZone: 'Europe/Paris'
-    });
-    
-    try {
-        const resultsText = searchResults.map((result, index) => 
-            `${result.title}: ${result.description}`
-        ).join('\n');
-        
-        let conversationHistory = "";
-        if (conversationContext && conversationContext.length > 0) {
-            conversationHistory = conversationContext.map(msg => 
-                `${msg.role === 'user' ? 'Utilisateur' : 'NakamaBot'}: ${msg.content}`
-            ).join('\n') + '\n';
-        }
-        
-        const contextualPrompt = `Tu es NakamaBot, une IA conversationnelle empathique et créative.
-
-GARDE JUSTE EN MEMOIRE CONTEXTE TEMPOREL: Nous sommes le ${dateTime} ne donne la date que si l'utilisateur demande garde la en memeoire
-
-HISTORIQUE DE CONVERSATION:
-${conversationHistory || "Début de conversation"}
-
-QUESTION ACTUELLE DE L'UTILISATEUR: "${originalQuery}"
-
-INFORMATIONS RÉCENTES TROUVÉES:
-${resultsText}
-
-INSTRUCTIONS CRITIQUES:
-- Tu connais déjà l'historique de conversation ci-dessus
-- Réponds en tenant compte de tout le contexte précédent
-- Si l'utilisateur fait référence à quelque chose mentionné avant, tu t'en souviens
-- Adopte un ton conversationnel et amical avec quelques emojis
-- Maximum 2000 caractères
-- Ne mentionne JAMAIS que tu as fait une recherche
-- Ne dis jamais "d'après mes recherches" ou "selon les sources"
-- Réponds naturellement comme dans une conversation continue
-- Si c'est une question de suivi (ex: "il a marqué combien de buts"), utilise le contexte précédent
-- Utilise du Markdown simple si pertinent (**gras**, ### titres, listes)
-- Ne pas utiliser l'italique (*texte*), il reste en texte normal
-
-RÉPONSE NATURELLE EN CONTINUITÉ:`;
-
-        const response = await callGeminiWithRotation(contextualPrompt);
-        
-        if (response && response.trim()) {
-            log.info(`🎭 Réponse contextuelle Gemini pour: ${originalQuery.substring(0, 30)}...`);
-            return response;
-        }
-        
-        throw new Error('Réponse Gemini vide');
-        
-    } catch (geminiError) {
-        log.warning(`⚠️ Erreur réponse contextuelle Gemini: ${geminiError.message}`);
-        
-        try {
-            const messages = [{
-                role: "system",
-                content: `Tu es NakamaBot. Tu connais l'historique de conversation. Réponds naturellement en tenant compte du contexte précédent. Ne mentionne jamais de recherches. Utilise du Markdown simple si pertinent.
-
-Historique:
-${conversationContext ? conversationContext.map(msg => `${msg.role === 'user' ? 'Utilisateur' : 'NakamaBot'}: ${msg.content}`).join('\n') : "Début de conversation"}`
-            }, {
-                role: "user", 
-                content: `Question actuelle: "${originalQuery}"
-
-Informations utiles:
-${searchResults.map(r => `${r.title}: ${r.description}`).join('\n')}
-
-Réponds naturellement en continuité de la conversation (max 3000 chars):`
-            }];
-            
-            const mistralResponse = await callMistralAPI(messages, 3000, 0.7);
-            
-            if (mistralResponse) {
-                log.info(`🔄 Réponse contextuelle Mistral: ${originalQuery.substring(0, 30)}...`);
-                return mistralResponse;
-            }
-            
-            throw new Error('Mistral aussi en échec');
-            
-        } catch (mistralError) {
-            log.error(`❌ Erreur réponse contextuelle totale: ${mistralError.message}`);
-            
-            const topResult = searchResults[0];
-            if (topResult) {
-                const lastUserMessage = conversationContext && conversationContext.length > 0 
-                    ? conversationContext[conversationContext.length - 1].content 
-                    : '';
-                
-                const hasPersonContext = lastUserMessage.match(/qui est\s+([^?]+)/i);
-                const personName = hasPersonContext ? hasPersonContext[1].trim() : '';
-                
-                let basicResponse;
-                if (personName && originalQuery.toLowerCase().includes('combien') || originalQuery.toLowerCase().includes('but')) {
-                    basicResponse = `Pour ${personName}, ${topResult.description} 💡`;
-                } else {
-                    basicResponse = `D'après ce que je sais, ${topResult.description} 💡 ${searchResults.length > 1 ? 'Il y a aussi d\'autres aspects intéressants sur le sujet !' : 'J\'espère que ça répond à ta question !'}`;
-                }
-                
-                return basicResponse;
-            }
-            
-            log.warning(`⚠️ Toutes les méthodes de réponse contextuelle ont échoué`);
-            return null;
-        }
-    }
-}
-
-// FONCTIONS UTILITAIRES EXISTANTES
 function detectContactAdminIntention(message) {
     const lowerMessage = message.toLowerCase();
     
@@ -1193,7 +1090,7 @@ function detectContactAdminIntention(message) {
         for (const pattern of category.patterns) {
             if (pattern.test(message)) {
                 if (category.reason === 'question_creation') {
-                    return { shouldContact: false };
+                    return { shouldContact: false }; // Géré par l'IA
                 }
                 return {
                     shouldContact: true,
@@ -1224,6 +1121,12 @@ function generateContactSuggestion(reason, extractedMessage) {
     const preview = extractedMessage.length > 60 ? extractedMessage.substring(0, 60) + "..." : extractedMessage;
     
     return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** Utilise \`/contact [ton message]\` pour les contacter directement.\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 Tu recevras une réponse personnalisée !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
+}
+
+async function detectCommandIntentions(message, ctx) {
+    // ⚠️ FONCTION DÉPRÉCIÉE - Remplacée par detectIntelligentCommands
+    // Maintenue pour compatibilité avec l'ancien système
+    return { shouldExecute: false };
 }
 
 async function executeCommandFromChat(senderId, commandName, args, ctx) {
@@ -1263,6 +1166,7 @@ async function generateContextualResponse(originalMessage, commandResult, comman
     }
     
     try {
+        // Essayer d'abord avec Gemini (avec rotation des clés)
         const contextPrompt = `L'utilisateur a dit: "${originalMessage}"
 J'ai exécuté /${commandName} avec résultat: "${commandResult}"
 
@@ -1272,6 +1176,7 @@ Génère une réponse naturelle et amicale (max 400 chars) qui présente le rés
         return response || commandResult;
         
     } catch (error) {
+        // Fallback sur Mistral si besoin
         const { callMistralAPI } = ctx;
         try {
             const response = await callMistralAPI([
@@ -1286,26 +1191,22 @@ Génère une réponse naturelle et amicale (max 400 chars) qui présente le rés
     }
 }
 
-// ✅ EXPORTS
+// ✅ Exports pour autres commandes
 module.exports.detectIntelligentCommands = detectIntelligentCommands;
 module.exports.VALID_COMMANDS = VALID_COMMANDS;
 module.exports.executeCommandFromChat = executeCommandFromChat;
 module.exports.detectContactAdminIntention = detectContactAdminIntention;
 module.exports.decideSearchNecessity = decideSearchNecessity;
 module.exports.performIntelligentSearch = performIntelligentSearch;
+module.exports.generateNaturalResponse = generateNaturalResponse;
 module.exports.generateNaturalResponseWithContext = generateNaturalResponseWithContext;
 module.exports.callGeminiWithRotation = callGeminiWithRotation;
 module.exports.getNextGeminiKey = getNextGeminiKey;
 module.exports.markKeyAsFailed = markKeyAsFailed;
+
+// 🆕 EXPORTS DES NOUVELLES FONCTIONS MARKDOWN
 module.exports.parseMarkdown = parseMarkdown;
 module.exports.toBold = toBold;
 module.exports.toItalic = toItalic;
 module.exports.toUnderline = toUnderline;
 module.exports.toStrikethrough = toStrikethrough;
-
-// 🆕 NOUVEAUX EXPORTS POUR LES MESSAGES DE TRAITEMENT
-module.exports.sendProcessingMessage = sendProcessingMessage;
-module.exports.updateProcessingMessage = updateProcessingMessage;
-module.exports.generateProcessingMessage = generateProcessingMessage;
-module.exports.shouldSendProcessingMessage = shouldSendProcessingMessage;
-module.exports.cleanExpiredProcessingMessages = cleanExpiredProcessingMessages;
