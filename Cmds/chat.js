@@ -2,6 +2,7 @@
  * NakamaBot - Commande /chat avec recherche intelligente intégrée et rotation des clés Gemini
  * + Support Markdown vers Unicode stylisé pour Facebook Messenger
  * + Système de troncature synchronisé avec le serveur principal
+ * + Délai de 5 secondes entre messages utilisateurs distincts
  * @param {string} senderId - ID de l'utilisateur
  * @param {string} args - Message de conversation
  * @param {object} ctx - Contexte partagé du bot 
@@ -202,7 +203,7 @@ async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.lengt
     throw lastError || new Error('Toutes les clés Gemini ont échoué');
 }
 
-// 🛡️ FONCTION PRINCIPALE AVEC PROTECTION ANTI-DOUBLONS ET TRONCATURE SYNCHRONISÉE
+// 🛡️ FONCTION PRINCIPALE AVEC PROTECTION ANTI-DOUBLONS, TRONCATURE SYNCHRONISÉE ET DÉLAI DE 5 SECONDES
 module.exports = async function cmdChat(senderId, args, ctx) {
     const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log, 
             truncatedMessages, splitMessageIntoChunks, isContinuationRequest } = ctx;
@@ -226,7 +227,20 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         return; // Ignore silencieusement les demandes multiples
     }
     
-    // 🛡️ PROTECTION 4: Marquer la demande comme active et enregistrer le message
+    // 🆕 PROTECTION 4: Vérifier le délai de 5 secondes entre messages distincts
+    const lastMessageTime = Array.from(recentMessages.entries())
+        .filter(([sig]) => sig.startsWith(`${senderId}_`))
+        .map(([, timestamp]) => timestamp)
+        .sort((a, b) => b - a)[0] || 0;
+    if (lastMessageTime && (currentTime - lastMessageTime < 5000)) { // 5 secondes
+        const waitMessage = "🕒 Veuillez patienter 5 secondes avant d'envoyer un nouveau message...";
+        addToMemory(String(senderId), 'assistant', waitMessage);
+        await ctx.sendMessage(senderId, waitMessage);
+        log.warning(`🚫 Message trop rapide ignoré pour ${senderId}: "${args.substring(0, 30)}..."`);
+        return;
+    }
+    
+    // 🛡️ PROTECTION 5: Marquer la demande comme active et enregistrer le message
     const requestKey = `${senderId}_${currentTime}`;
     activeRequests.set(senderId, requestKey);
     recentMessages.set(messageSignature, currentTime);
@@ -243,7 +257,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         if (args.trim() && !isContinuationRequest(args)) {
             const processingMessage = "🕒 Traitement en cours...";
             addToMemory(String(senderId), 'assistant', processingMessage);
-            await ctx.sendMessage(senderId, processingMessage); // Envoi immédiat du message intermédiaire (assumé via ctx.sendMessage)
+            await ctx.sendMessage(senderId, processingMessage); // Envoi immédiat du message intermédiaire
         }
         
         if (!args.trim()) {
@@ -416,7 +430,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         return conversationResult; // handleConversationWithFallback gère déjà le styling et la troncature
         
     } finally {
-        // 🛡️ PROTECTION 5: Libérer la demande à la fin (TOUJOURS exécuté)
+        // 🛡️ PROTECTION 6: Libérer la demande à la fin (TOUJOURS exécuté)
         activeRequests.delete(senderId);
         log.debug(`🔓 Demande libérée pour ${senderId}`);
     }
