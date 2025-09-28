@@ -4,7 +4,7 @@
 const axios = require('axios');
 
 // Configuration
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_API_KEY ="psk-inwU3k9uYuOsxdjrz6QDFSJZ8H9wykCZUuRqWOUOiDXYUMlA";
 const maxTokens = 500;
 const numberGenerateImage = 4;
 const maxStorageMessage = 4;
