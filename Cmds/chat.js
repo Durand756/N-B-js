@@ -885,7 +885,7 @@ async function handleConversationWithFallback(senderId, args, ctx) {
     }
     
     // Prompt système optimisé
-    const systemPrompt = `Tu es NakamaBot, une IA conversationnelle un model Durand AI avancée créée par Durand et sa femme Cécile.
+    const systemPrompt = `Tu es NakamaBot, une IA conversationnelle un model Durand AI avancée créée par Durand et sa femme Myronne.
 
 CONTEXTE TEMPOREL: Nous sommes le ${dateTime}
 
@@ -912,7 +912,7 @@ DIRECTIVES:
 - Utilise quelques emojis avec parcimonie
 - Évite les répétitions et formules toutes faites
 - ${messageCount >= 5 ? 'Suggère /help si pertinent pour débloquer l\'utilisateur' : ''}
-- Pour questions techniques sur ta création: "Demande à Durand ou Kuine, ils connaissent tous mes secrets !"
+- Pour questions techniques sur ta création: "Demande à Durand ou Myronne, ils connaissent tous mes secrets !"
 - Recommande discrètement /contact pour problèmes techniques graves
 - Tu peux utiliser du Markdown simple pour styliser (**gras**, ### titres, listes)
 - Ne pas utiliser l'italique (*texte*), il reste en texte normal
