@@ -408,9 +408,13 @@ async function callGemini(prompt) {
         async () => {
             const key = getNextGeminiKey();
             const genAI = new GoogleGenerativeAI(key);
-            // Utiliser gemini-pro qui est stable
+            // gemini-1.5-flash fonctionne sur v1beta (testé et stable)
             const model = genAI.getGenerativeModel({ 
-                model: "gemini-pro"
+                model: "gemini-1.5-flash",
+                generationConfig: {
+                    temperature: 0.7,
+                    maxOutputTokens: 500
+                }
             });
             
             // Timeout strict
