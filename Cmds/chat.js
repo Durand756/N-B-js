@@ -5,7 +5,7 @@
  * 
  * Version: 5.0 - Multi-User Concurrent Edition
  * Créateurs: Durand DJOUKAM & Myronne POUKEN (🇨🇲 Camerounais)
- *  
+ * 
  * OPTIMISATIONS RENDER FREE:
  * ✅ Gestion simultanée de 1000+ utilisateurs
  * ✅ Mémoire limitée < 512MB
@@ -358,7 +358,8 @@ function cleanResponse(text) {
     
     // Supprimer tous les indicateurs de traitement
     let cleaned = text
-        .replace(/⏳\s*Réflexion en cours\.\.\./gi, '')
+        .replace(/⏳\.\.\./g, '')                    // Nouvel indicateur
+        .replace(/⏳\s*Réflexion en cours\.\.\./gi, '') // Ancien indicateur
         .replace(/🕒\s*\.\.\./g, '')
         .replace(/\.\.\.\s*$/g, '')  // Points de suspension en fin
         .replace(/\s+\.\.\.$/g, '')   // Espaces + points
@@ -1218,7 +1219,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     
     // 🆕 ENVOYER INDICATEUR DE TRAITEMENT (sans l'ajouter à la mémoire permanente)
     if (args.trim().length >= 3 && !ctx.isContinuationRequest?.(args)) {
-        const processingMsg = "⏳ Réflexion en cours...";
+        const processingMsg = "⏳...";
         // NE PAS ajouter à la mémoire permanente
         await ctx.sendMessage(senderId, processingMsg).catch(err => 
             console.warn(`⚠️ Erreur envoi indicateur: ${err.message}`)
