@@ -15,6 +15,7 @@
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
+const cheerio = require('cheerio'); // Pour parser le HTML
 
 // Configuration APIs avec rotation des clés Gemini
 const GEMINI_API_KEYS = process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.split(',').map(key => key.trim()) : [];
@@ -826,27 +827,131 @@ function detectSearchKeywords(message) {
     };
 }
 
-// 🆕 RECHERCHE INTELLIGENTE
+// 🆕 RECHERCHE DUCKDUCKGO GRATUITE (SANS API)
+async function duckDuckGoSearch(query, maxResults = 5) {
+    try {
+        const searchUrl = `https://html.duckduckgo.com/html/`;
+        
+        const response = await axios.post(searchUrl, 
+            `q=${encodeURIComponent(query)}&kl=fr-fr`,
+            {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                timeout: 10000
+            }
+        );
+        
+        if (response.status === 200) {
+            const $ = cheerio.load(response.data);
+            const results = [];
+            
+            $('.result').each((i, element) => {
+                if (i >= maxResults) return false;
+                
+                const $result = $(element);
+                const title = $result.find('.result__title').text().trim();
+                const snippet = $result.find('.result__snippet').text().trim();
+                const link = $result.find('.result__url').attr('href');
+                
+                if (title && snippet) {
+                    results.push({
+                        title: title,
+                        snippet: snippet,
+                        link: link || '',
+                        source: 'duckduckgo'
+                    });
+                }
+            });
+            
+            console.log(`✅ DuckDuckGo: ${results.length} résultats`);
+            return results;
+        }
+        
+        return null;
+    } catch (error) {
+        console.error(`❌ Erreur DuckDuckGo: ${error.message}`);
+        return null;
+    }
+}
+
+// 🆕 RECHERCHE WIKIPÉDIA (API OFFICIELLE GRATUITE)
+async function wikipediaSearch(query) {
+    try {
+        const searchUrl = `https://fr.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=3`;
+        
+        const response = await axios.get(searchUrl, {
+            headers: {
+                'User-Agent': 'NakamaBot/1.0'
+            },
+            timeout: 8000
+        });
+        
+        if (response.status === 200 && response.data.query?.search) {
+            const results = response.data.query.search.map(item => ({
+                title: item.title,
+                snippet: item.snippet.replace(/<[^>]*>/g, ''),
+                link: `https://fr.wikipedia.org/wiki/${encodeURIComponent(item.title)}`,
+                source: 'wikipedia'
+            }));
+            
+            console.log(`✅ Wikipedia: ${results.length} résultats`);
+            return results;
+        }
+        
+        return null;
+    } catch (error) {
+        console.error(`❌ Erreur Wikipedia: ${error.message}`);
+        return null;
+    }
+}
+
+// 🆕 RECHERCHE INTELLIGENTE MULTI-SOURCES (GRATUIT)
 async function performIntelligentSearch(query, ctx) {
     const { log } = ctx;
     
     try {
-        if (GOOGLE_SEARCH_API_KEYS.length > 0 && GOOGLE_SEARCH_ENGINE_IDS.length > 0 && GOOGLE_SEARCH_API_KEYS.length === GOOGLE_SEARCH_ENGINE_IDS.length) {
-            return await callGoogleSearchWithRotation(query, log);
-        } else if (GOOGLE_SEARCH_API_KEYS.length !== GOOGLE_SEARCH_ENGINE_IDS.length) {
-            log.warning('⚠️ Tailles des tableaux Google Search API ne correspondent pas');
+        log.info(`🔍 Recherche: "${query}"`);
+        
+        // 1. DuckDuckGo d'abord (gratuit, sans API)
+        let results = await duckDuckGoSearch(query, 5);
+        if (results && results.length > 0) {
+            log.info(`✅ DuckDuckGo: ${results.length} résultats`);
+            return results;
         }
         
+        // 2. Wikipedia (gratuit, API officielle)
+        results = await wikipediaSearch(query);
+        if (results && results.length > 0) {
+            log.info(`✅ Wikipedia: ${results.length} résultats`);
+            return results;
+        }
+        
+        // 3. Google Search API (si configuré)
+        if (GOOGLE_SEARCH_API_KEYS.length > 0 && GOOGLE_SEARCH_ENGINE_IDS.length > 0) {
+            results = await callGoogleSearchWithRotation(query, log);
+            if (results && results.length > 0) {
+                log.info(`✅ Google: ${results.length} résultats`);
+                return results;
+            }
+        }
+        
+        // 4. SerpAPI (si configuré)
         if (SERPAPI_KEY) {
-            return await serpApiSearch(query, log);
+            results = await serpApiSearch(query, log);
+            if (results && results.length > 0) {
+                log.info(`✅ SerpAPI: ${results.length} résultats`);
+                return results;
+            }
         }
         
-        log.warning('⚠️ Aucune API de recherche configurée');
-        return await fallbackWebSearch(query, ctx);
+        log.warning(`⚠️ Aucun résultat pour: ${query}`);
+        return null;
         
     } catch (error) {
         log.error(`❌ Erreur recherche: ${error.message}`);
-        throw error;
+        return null;
     }
 }
 
@@ -951,24 +1056,25 @@ async function generateNaturalResponseWithContext(originalQuery, searchResults, 
             ).join('\n') + '\n';
         }
         
-        // 🚀 PROMPT ULTRA-SIMPLIFIÉ
+        // 🚀 PROMPT POUR RÉPONSE BASÉE SUR VRAIES INFOS
         const contextualPrompt = `Tu es NakamaBot. On est le ${dateTime}.
 
 ${conversationHistory ? `Conversation:\n${conversationHistory}\n` : ''}
 
 Question: "${originalQuery}"
 
-Infos trouvées:
+VRAIES INFORMATIONS TROUVÉES SUR LE WEB:
 ${resultsText}
 
-Réponds de façon ULTRA NATURELLE :
-- Comme si tu connaissais déjà ces infos
-- Ne dis JAMAIS "j'ai cherché" ou "d'après mes recherches"
-- Réponse directe, courte (2-3 phrases)
-- Si question de suivi, utilise le contexte précédent
-- Max 1000 caractères
+RÈGLES CRITIQUES:
+- Utilise UNIQUEMENT les infos ci-dessus
+- Si les infos se contredisent avec tes connaissances → UTILISE LES INFOS CI-DESSUS
+- N'invente RIEN, ne suppose RIEN
+- Si les infos sont insuffisantes → dis "Je n'ai pas trouvé assez d'infos"
+- Réponds en 2-3 phrases max
+- Ne dis JAMAIS "selon les sources" ou "d'après mes recherches"
 
-Ta réponse:`;
+Ta réponse (basée UNIQUEMENT sur les infos trouvées):`;
 
         const response = await callGeminiWithRotation(contextualPrompt);
         
