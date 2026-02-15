@@ -575,7 +575,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
         }
         
         if (!args.trim()) {
-            const welcomeMsg = "💬 Salut je suis NakamaBot! Je suis là pour toi ! Dis-moi ce qui t'intéresse et on va avoir une conversation géniale ! ✨";
+            const welcomeMsg = "Salut ! 👋 Qu'est-ce que je peux faire pour toi ?";
             const styledWelcome = parseMarkdown(welcomeMsg);
             addToMemory(String(senderId), 'assistant', styledWelcome);
             return styledWelcome;
@@ -738,37 +738,30 @@ async function decideSearchNecessity(userMessage, senderId, ctx) {
     const { log } = ctx;
     
     try {
-        const decisionPrompt = `Tu es un système de décision intelligent pour un chatbot. 
-Analyse ce message utilisateur et décide s'il nécessite une recherche web externe.
+        // 🚀 NOUVEAU: Prompt ultra-simplifié qui laisse l'IA décider
+        const decisionPrompt = `Analyse cette question et décide si elle nécessite une RECHERCHE WEB.
 
-CRITÈRES POUR RECHERCHE EXTERNE:
-✅ OUI si:
-- Informations récentes (actualités, événements 2023-2026)
-- Résultats sportifs récents (CAN, Coupe, championnat, match, vainqueur, buteur)
-- Données factuelles spécifiques (prix actuels, statistiques, dates précises)
-- Informations locales/géographiques spécifiques
-- Recherche de produits/services/entreprises précis
-- Questions sur des personnes publiques récentes
-- Données météo, cours de bourse, classements sportifs
-- Questions avec "dernier", "dernière", "récent", "qui a gagné", "qui a remporté"
+Question: "${userMessage}"
 
-❌ NON si:
-- Conversations générales/philosophiques
-- Conseils/opinions personnelles
-- Questions sur le bot lui-même
-- Créativité (histoires, poèmes)
-- Explications de concepts généraux
-- Calculs/logique
-- Questions existantes dans ma base de connaissances ancienne
+Tu DOIS chercher sur le web si :
+- La question porte sur des ÉVÉNEMENTS RÉCENTS (2023-2026)
+- La question demande "qui a gagné/remporté" quelque chose récemment
+- La question concerne des RÉSULTATS sportifs, élections, actualités
+- La question demande des PRIX, STATS ou DONNÉES actuelles
+- La question utilise "dernier", "dernière", "récent", "actuel"
 
-MESSAGE UTILISATEUR: "${userMessage}"
+Tu NE cherches PAS si :
+- C'est une conversation générale
+- C'est une opinion/conseil
+- C'est une question sur le bot lui-même
+- La réponse est dans tes connaissances de base (avant 2023)
 
-Réponds UNIQUEMENT avec ce format JSON:
+Réponds UNIQUEMENT en JSON :
 {
   "needsExternalSearch": true/false,
   "confidence": 0.0-1.0,
-  "reason": "explication courte",
-  "searchQuery": "requête de recherche optimisée si nécessaire"
+  "reason": "pourquoi",
+  "searchQuery": "requête optimisée"
 }`;
 
         const response = await callGeminiWithRotation(decisionPrompt);
@@ -776,21 +769,27 @@ Réponds UNIQUEMENT avec ce format JSON:
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             const decision = JSON.parse(jsonMatch[0]);
-            log.info(`🤖 Décision recherche: ${decision.needsExternalSearch ? 'OUI' : 'NON'} (${decision.confidence}) - ${decision.reason}`);
+            log.info(`🤖 Décision: ${decision.needsExternalSearch ? 'RECHERCHE' : 'SANS RECHERCHE'} (${decision.confidence})`);
             return decision;
         }
         
-        throw new Error('Format de réponse invalide');
+        throw new Error('Format invalide');
         
     } catch (error) {
-        log.warning(`⚠️ Erreur décision recherche: ${error.message}`);
+        log.warning(`⚠️ Erreur décision: ${error.message}`);
         
-        const keywordSearch = detectSearchKeywords(userMessage);
+        // 🚀 FALLBACK ULTRA-SIMPLE: Seulement si mots-clés évidents
+        const lowerMessage = userMessage.toLowerCase();
+        const needsSearch = 
+            /\b(qui a (gagné|remporté|gagne|remporte)|vainqueur|champion|dernier|dernière|récent)\b/.test(lowerMessage) ||
+            /\b(202[3-6]|aujourd'hui|maintenant|actuel|récemment)\b/.test(lowerMessage) ||
+            /\b(CAN|champion.*league|coupe du monde|finale|match)\b/i.test(lowerMessage);
+        
         return {
-            needsExternalSearch: keywordSearch.needs,
-            confidence: 0.6,
-            reason: 'fallback_keywords',
-            searchQuery: keywordSearch.query
+            needsExternalSearch: needsSearch,
+            confidence: needsSearch ? 0.8 : 0.2,
+            reason: 'fallback_simple',
+            searchQuery: userMessage
         };
     }
 }
@@ -952,27 +951,24 @@ async function generateNaturalResponseWithContext(originalQuery, searchResults, 
             ).join('\n') + '\n';
         }
         
-        // 🚀 OPTIMISÉ: Prompt compressé et naturel
-        const contextualPrompt = `Tu es NakamaBot, IA conversationnelle amicale.
+        // 🚀 PROMPT ULTRA-SIMPLIFIÉ
+        const contextualPrompt = `Tu es NakamaBot. On est le ${dateTime}.
 
-DATE: ${dateTime} (ne mentionne que si demandé)
+${conversationHistory ? `Conversation:\n${conversationHistory}\n` : ''}
 
-${conversationHistory ? `HISTORIQUE:\n${conversationHistory}\n` : 'Début de conversation\n'}
+Question: "${originalQuery}"
 
-QUESTION ACTUELLE: "${originalQuery}"
-
-INFOS TROUVÉES:
+Infos trouvées:
 ${resultsText}
 
-STYLE:
-- Réponds NATURELLEMENT comme dans une vraie conversation
-- 2-4 phrases courtes et directes
-- Ne dis JAMAIS que tu as cherché/recherché
-- Si question de suivi (ex: "il a marqué combien"), utilise le contexte
-- Pas de formatage excessif
-- Max 1200 chars
+Réponds de façon ULTRA NATURELLE :
+- Comme si tu connaissais déjà ces infos
+- Ne dis JAMAIS "j'ai cherché" ou "d'après mes recherches"
+- Réponse directe, courte (2-3 phrases)
+- Si question de suivi, utilise le contexte précédent
+- Max 1000 caractères
 
-Ta réponse naturelle:`;
+Ta réponse:`;
 
         const response = await callGeminiWithRotation(contextualPrompt);
         
@@ -1064,30 +1060,22 @@ async function handleConversationWithFallback(senderId, args, ctx) {
         ).join('\n') + '\n';
     }
     
-    // 🚀 OPTIMISÉ: Prompt système compressé et naturel
-    const systemPrompt = `Tu es NakamaBot, IA amicale créée par Durand et Myronne.
+    // 🚀 PROMPT ULTRA-SIMPLIFIÉ ET NATUREL
+    const systemPrompt = `Tu es NakamaBot, créée par Durand et Myronne. On est le ${dateTime}.
 
-DATE: ${dateTime} (garde en mémoire, ne mentionne que si demandé)
+${conversationHistory ? `Conversation précédente:\n${conversationHistory}\n` : ''}
 
-${conversationHistory ? `CONTEXTE PRÉCÉDENT:\n${conversationHistory}\n` : ''}
+Réponds de façon ULTRA NATURELLE comme un vrai ami :
+- Phrases courtes et simples (pas de présentation robotique)
+- Pas de formatage fancy ou listes
+- 1-2 emojis MAX
+- Si tu ne sais pas quelque chose de récent → DIS-LE CLAIREMENT
+- Jamais de "Je suis une IA" ou "Je suis NakamaBot" sauf si on te le demande explicitement
+- Max 600 caractères
 
-STYLE DE RÉPONSE:
-- Ton NATUREL et CONVERSATIONNEL (comme un ami)
-- Pas de liste à puces ni de formatage excessif
-- Réponses COURTES et DIRECTES (2-4 phrases max sauf si détails demandés)
-- Emojis modérés (1-2 par réponse)
-- Pas de "NakamaBot:" en préfixe
-- Évite les formulations robotiques ("Voici", "Je peux", "N'hésite pas")
-${messageCount >= 5 ? '- Suggère /help si l\'utilisateur semble perdu' : ''}
+Message: ${args}
 
-CAPACITÉS (mentionne seulement si pertinent):
-Images, Analyse, Anime, Musique, Clans, Stats
-
-Max 800 chars. Réponds naturellement sans formatage Markdown excessif.
-
-Message utilisateur: ${args}
-
-Ta réponse (courte et naturelle):`;
+Ta réponse naturelle:`;
 
     const senderIdStr = String(senderId);
 
@@ -1211,35 +1199,27 @@ async function detectIntelligentCommands(message, ctx) {
     try {
         const commandsList = VALID_COMMANDS.map(cmd => `/${cmd}`).join(', ');
         
-        const detectionPrompt = `Système de détection de commandes NakamaBot. Évite faux positifs.
+        const detectionPrompt = `Analyse ce message et décide si c'est une COMMANDE.
 
-COMMANDES: ${commandsList}
+Message: "${message}"
 
-MESSAGE: "${message}"
+Commandes disponibles: /help, /image, /vision, /anime, /music, /clan, /rank, /contact, /weather
 
-VRAIS INTENTIONS (0.8-1.0):
-✅ help: "aide", "help", "que peux-tu faire"
-✅ image: "dessine", "crée image", "génère"
-✅ vision: "regarde image", "analyse photo"
-✅ anime: "transforme anime", "style anime"
-✅ music: "joue musique", "trouve YouTube"
-✅ clan: "rejoindre clan", "bataille"
-✅ rank: "mon niveau", "mes stats"
-✅ contact: "contacter admin", "signaler"
-✅ weather: "météo", "quel temps"
+C'est une commande SI ET SEULEMENT SI :
+- L'utilisateur veut UTILISER une fonctionnalité spécifique
+- Il y a un VERBE D'ACTION clair (dessine, crée, joue, trouve, regarde, etc.)
 
-FAUSSES (0.0-0.3):
-❌ Questions générales
-❌ Conversations
-❌ Descriptions
+Ce N'EST PAS une commande si :
+- C'est juste une conversation
+- L'utilisateur mentionne un mot sans vouloir l'utiliser
 
-JSON:
+JSON uniquement:
 {
   "isCommand": true/false,
   "command": "nom",
   "confidence": 0.0-1.0,
   "extractedArgs": "args",
-  "reason": "raison"
+  "reason": "pourquoi"
 }`;
 
         const response = await callGeminiWithRotation(detectionPrompt);
