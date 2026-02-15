@@ -1,54 +1,85 @@
 /**
- * NakamaBot - Commande /chat OPTIMISÉE pour 40K+ utilisateurs
- * + Recherche intelligente intégrée et rotation des clés Gemini
- * + Support Markdown vers Unicode stylisé pour Facebook Messenger
- * + Système de troncature synchronisé avec le serveur principal
- * + Délai de 5 secondes entre messages utilisateurs distincts
- * + LRU Cache pour gestion mémoire optimale
- * + Circuit Breaker pour APIs
- * + Rate Limiting avancé
- * + Batch Processing pour sauvegardes
- * + 🔧 FIX: Modèle Gemini corrigé (gemini-2.0-flash-thinking-exp-01-21)
- * + 🔧 FIX: Fallback Mistral dans generateNaturalResponseWithContext
- * @param {string} senderId - ID de l'utilisateur
- * @param {string} args - Message de conversation
- * @param {object} ctx - Contexte partagé du bot 
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 🤖 NAKAMABOT - COMMANDE /CHAT HYPER-OPTIMISÉE POUR RENDER FREE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * Version: 5.0 - Multi-User Concurrent Edition
+ * Créateurs: Durand DJOUKAM & Myronne POUKEN (🇨🇲 Camerounais)
+ * 
+ * OPTIMISATIONS RENDER FREE:
+ * ✅ Gestion simultanée de 1000+ utilisateurs
+ * ✅ Mémoire limitée < 512MB
+ * ✅ Timeouts agressifs (5-10s)
+ * ✅ Rate limiting strict
+ * ✅ Circuit breakers intelligents
+ * ✅ Queue de traitement FIFO
+ * ✅ Cache LRU optimisé
+ * ✅ Garbage collection proactive
+ * ✅ Prompts ultra-compressés
+ * ✅ Contexte minimal (3 messages max)
+ * 
+ * CONTACT CRÉATEURS:
+ * - Durand DJOUKAM: [Numéro fourni sur demande explicite]
+ * - Myronne POUKEN: [Numéro fourni sur demande explicite]
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
-const cheerio = require('cheerio');
 
-// Configuration APIs avec rotation des clés Gemini
-const GEMINI_API_KEYS = process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.split(',').map(key => key.trim()) : [];
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔐 CONFIGURATION & CONSTANTES
+// ═══════════════════════════════════════════════════════════════════════════
 
-// Configuration APIs avec rotation des clés Google Search
-const GOOGLE_SEARCH_API_KEYS = process.env.GOOGLE_SEARCH_API_KEYS ? process.env.GOOGLE_SEARCH_API_KEYS.split(',').map(key => key.trim()) : [];
-const GOOGLE_SEARCH_ENGINE_IDS = process.env.GOOGLE_SEARCH_ENGINE_IDS ? process.env.GOOGLE_SEARCH_ENGINE_IDS.split(',').map(id => id.trim()) : [];
+const GEMINI_API_KEYS = process.env.GEMINI_API_KEY ? 
+    process.env.GEMINI_API_KEY.split(',').map(k => k.trim()) : [];
 
-// Configuration des délais
-const SEARCH_RETRY_DELAY = 3000;
-const SEARCH_GLOBAL_COOLDOWN = 5000;
+const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || "";
 
-// Fallback: SerpAPI
-const SERPAPI_KEY = process.env.SERPAPI_KEY;
+// Informations créateurs (affichées uniquement sur demande explicite)
+const CREATORS_INFO = {
+    durand: {
+        fullName: "Durand DJOUKAM",
+        nationality: "Camerounais 🇨🇲",
+        phone: "+237 XXX XXX XXX" // Remplacer par le vrai numéro
+    },
+    myronne: {
+        fullName: "Myronne POUKEN",
+        nationality: "Camerounaise 🇨🇲",
+        phone: "+237 XXX XXX XXX" // Remplacer par le vrai numéro
+    }
+};
 
-// État global pour la rotation des clés Gemini
-let currentGeminiKeyIndex = 0;
-const failedKeys = new Set();
+// Constantes d'optimisation Render Free
+const CONFIG = {
+    MAX_CONTEXT_MESSAGES: 3,        // Contexte minimal
+    MAX_MESSAGE_LENGTH: 500,        // Limite par message
+    RATE_LIMIT_WINDOW: 60000,       // 1 minute
+    RATE_LIMIT_MAX: 10,             // 10 messages/min
+    REQUEST_TIMEOUT: 10000,         // 10 secondes
+    GEMINI_TIMEOUT: 8000,           // 8 secondes Gemini
+    MISTRAL_TIMEOUT: 10000,         // 10 secondes Mistral
+    QUEUE_MAX_SIZE: 500,            // File d'attente max
+    CACHE_MAX_SIZE: 1000,           // Cache LRU max
+    MIN_MESSAGE_INTERVAL: 2000,     // 2s entre messages
+    CIRCUIT_BREAKER_THRESHOLD: 3,   // 3 échecs = ouverture
+    CIRCUIT_BREAKER_TIMEOUT: 20000, // 20s avant réessai
+    GC_INTERVAL: 120000,            // GC toutes les 2 minutes
+    CLEANUP_AGE: 300000             // Nettoyage > 5 minutes
+};
 
-// État global pour la rotation des clés Google Search
-let currentSearchKeyIndex = 0;
-const failedSearchKeys = new Set();
+// ═══════════════════════════════════════════════════════════════════════════
+// 📊 STRUCTURES DE DONNÉES OPTIMISÉES
+// ═══════════════════════════════════════════════════════════════════════════
 
-// ========================================
-// 🚀 OPTIMISATION 1: LRU CACHE SYSTÈME
-// ========================================
-
-class LRUCache {
-    constructor(maxSize = 1000) {
+/**
+ * Cache LRU ultra-optimisé pour Render Free
+ */
+class OptimizedLRUCache {
+    constructor(maxSize = CONFIG.CACHE_MAX_SIZE) {
         this.maxSize = maxSize;
         this.cache = new Map();
+        this.accessCount = 0;
     }
     
     set(key, value) {
@@ -56,128 +87,166 @@ class LRUCache {
             this.cache.delete(key);
         }
         
-        this.cache.set(key, value);
+        this.cache.set(key, {
+            value,
+            timestamp: Date.now()
+        });
         
+        // Éviction immédiate si dépassement
         if (this.cache.size > this.maxSize) {
             const firstKey = this.cache.keys().next().value;
             this.cache.delete(firstKey);
         }
+        
+        // Cleanup périodique
+        this.accessCount++;
+        if (this.accessCount % 100 === 0) {
+            this.cleanup();
+        }
     }
     
     get(key) {
-        if (!this.cache.has(key)) return undefined;
+        const entry = this.cache.get(key);
+        if (!entry) return undefined;
         
-        const value = this.cache.get(key);
+        // Vérifier expiration
+        if (Date.now() - entry.timestamp > CONFIG.CLEANUP_AGE) {
+            this.cache.delete(key);
+            return undefined;
+        }
+        
+        // Refresh position
         this.cache.delete(key);
-        this.cache.set(key, value);
-        return value;
+        this.cache.set(key, entry);
+        return entry.value;
     }
     
     has(key) {
-        return this.cache.has(key);
+        const entry = this.cache.get(key);
+        if (!entry) return false;
+        if (Date.now() - entry.timestamp > CONFIG.CLEANUP_AGE) {
+            this.cache.delete(key);
+            return false;
+        }
+        return true;
     }
     
     delete(key) {
         return this.cache.delete(key);
     }
     
+    cleanup() {
+        const now = Date.now();
+        const toDelete = [];
+        
+        for (const [key, entry] of this.cache.entries()) {
+            if (now - entry.timestamp > CONFIG.CLEANUP_AGE) {
+                toDelete.push(key);
+            }
+        }
+        
+        toDelete.forEach(key => this.cache.delete(key));
+        
+        if (toDelete.length > 0) {
+            console.log(`🧹 Cache cleanup: ${toDelete.length} entrées supprimées`);
+        }
+    }
+    
     clear() {
         this.cache.clear();
+        this.accessCount = 0;
     }
     
     get size() {
         return this.cache.size;
     }
-    
-    entries() {
-        return this.cache.entries();
-    }
 }
 
-// ========================================
-// 🚀 OPTIMISATION 2: RATE LIMITER AVANCÉ
-// ========================================
-
+/**
+ * Rate Limiter par utilisateur
+ */
 class UserRateLimiter {
-    constructor(windowMs = 60000, maxRequests = 10) {
-        this.windowMs = windowMs;
-        this.maxRequests = maxRequests;
-        this.users = new LRUCache(5000);
+    constructor() {
+        this.users = new OptimizedLRUCache(2000);
     }
     
     isAllowed(userId) {
         const now = Date.now();
         const userRequests = this.users.get(userId) || [];
         
-        const recentRequests = userRequests.filter(
-            timestamp => now - timestamp < this.windowMs
+        // Nettoyer anciennes requêtes
+        const recent = userRequests.filter(
+            t => now - t < CONFIG.RATE_LIMIT_WINDOW
         );
         
-        if (recentRequests.length >= this.maxRequests) {
+        if (recent.length >= CONFIG.RATE_LIMIT_MAX) {
             return false;
         }
         
-        recentRequests.push(now);
-        this.users.set(userId, recentRequests);
+        recent.push(now);
+        this.users.set(userId, recent);
         return true;
+    }
+    
+    getRemaining(userId) {
+        const now = Date.now();
+        const userRequests = this.users.get(userId) || [];
+        const recent = userRequests.filter(
+            t => now - t < CONFIG.RATE_LIMIT_WINDOW
+        );
+        return Math.max(0, CONFIG.RATE_LIMIT_MAX - recent.length);
     }
     
     reset(userId) {
         this.users.delete(userId);
     }
-    
-    getRemainingRequests(userId) {
-        const now = Date.now();
-        const userRequests = this.users.get(userId) || [];
-        const recentRequests = userRequests.filter(
-            timestamp => now - timestamp < this.windowMs
-        );
-        return Math.max(0, this.maxRequests - recentRequests.length);
-    }
 }
 
-// ========================================
-// 🚀 OPTIMISATION 3: CIRCUIT BREAKER
-// ========================================
-
+/**
+ * Circuit Breaker pour APIs
+ */
 class CircuitBreaker {
-    constructor(threshold = 5, timeout = 60000, name = 'Unknown') {
-        this.failureCount = 0;
-        this.threshold = threshold;
-        this.timeout = timeout;
-        this.state = 'CLOSED';
-        this.nextAttempt = Date.now();
+    constructor(name) {
         this.name = name;
+        this.state = 'CLOSED';
+        this.failures = 0;
+        this.lastFailure = 0;
+        this.successCount = 0;
     }
     
     async execute(fn, fallback) {
         if (this.state === 'OPEN') {
-            if (Date.now() < this.nextAttempt) {
-                console.log(`⚠️ Circuit breaker ${this.name} OPEN, utilisation du fallback`);
+            if (Date.now() - this.lastFailure > CONFIG.CIRCUIT_BREAKER_TIMEOUT) {
+                this.state = 'HALF_OPEN';
+                console.log(`🔄 ${this.name} circuit: HALF_OPEN`);
+            } else {
+                console.log(`⚠️ ${this.name} circuit: OPEN (utilisation fallback)`);
                 return fallback ? await fallback() : null;
             }
-            this.state = 'HALF_OPEN';
         }
         
         try {
-            const result = await Promise.race([
-                fn(),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Timeout')), 15000)
-                )
-            ]);
+            const result = await fn();
             
-            this.failureCount = 0;
-            this.state = 'CLOSED';
+            // Succès
+            this.failures = 0;
+            this.successCount++;
+            
+            if (this.state === 'HALF_OPEN' && this.successCount >= 2) {
+                this.state = 'CLOSED';
+                console.log(`✅ ${this.name} circuit: CLOSED (rétabli)`);
+            }
+            
             return result;
             
         } catch (error) {
-            this.failureCount++;
+            this.failures++;
+            this.lastFailure = Date.now();
+            this.successCount = 0;
             
-            if (this.failureCount >= this.threshold) {
+            if (this.failures >= CONFIG.CIRCUIT_BREAKER_THRESHOLD) {
                 this.state = 'OPEN';
-                this.nextAttempt = Date.now() + this.timeout;
-                console.error(`❌ Circuit breaker ${this.name} OUVERT (${this.failureCount} échecs)`);
+                console.error(`❌ ${this.name} circuit: OPEN (${this.failures} échecs)`);
             }
             
             if (fallback) {
@@ -189,1247 +258,620 @@ class CircuitBreaker {
     
     getState() {
         return {
+            name: this.name,
             state: this.state,
-            failureCount: this.failureCount,
-            threshold: this.threshold,
-            nextAttempt: this.nextAttempt
+            failures: this.failures,
+            successCount: this.successCount
         };
     }
 }
 
-// ========================================
-// 🚀 OPTIMISATION 4: BATCH SAVE QUEUE
-// ========================================
-
-class SaveQueue {
-    constructor(batchDelay = 5000) {
-        this.queue = new Set();
-        this.batchDelay = batchDelay;
-        this.timer = null;
-        this.processing = false;
+/**
+ * Queue de traitement FIFO pour gérer la charge
+ */
+class ProcessingQueue {
+    constructor(maxSize = CONFIG.QUEUE_MAX_SIZE) {
+        this.maxSize = maxSize;
+        this.queue = [];
+        this.processing = new Set();
     }
     
-    add(userId) {
-        this.queue.add(userId);
-        this.scheduleFlush();
+    add(userId, task) {
+        if (this.queue.length >= this.maxSize) {
+            console.warn(`⚠️ Queue pleine (${this.maxSize}), requête rejetée`);
+            return false;
+        }
+        
+        if (this.processing.has(userId)) {
+            console.warn(`⚠️ Utilisateur ${userId} déjà en traitement`);
+            return false;
+        }
+        
+        this.queue.push({ userId, task, timestamp: Date.now() });
+        return true;
     }
     
-    scheduleFlush() {
-        if (this.timer) return;
+    async process() {
+        if (this.queue.length === 0) return;
         
-        this.timer = setTimeout(() => {
-            this.flush();
-        }, this.batchDelay);
+        const { userId, task } = this.queue.shift();
+        this.processing.add(userId);
+        
+        try {
+            await task();
+        } finally {
+            this.processing.delete(userId);
+        }
     }
     
-    async flush() {
-        if (this.processing || this.queue.size === 0) return;
-        
-        this.processing = true;
-        this.timer = null;
-        
-        const usersToSave = Array.from(this.queue);
-        this.queue.clear();
-        
-        console.log(`💾 Batch save de ${usersToSave.length} utilisateurs`);
-        
-        this.processing = false;
+    isProcessing(userId) {
+        return this.processing.has(userId);
     }
     
     get size() {
-        return this.queue.size;
+        return this.queue.length;
+    }
+    
+    get activeCount() {
+        return this.processing.size;
     }
 }
 
-// État global
-const activeRequests = new LRUCache(5000);
-const recentMessages = new LRUCache(10000);
+// ═══════════════════════════════════════════════════════════════════════════
+// 🌍 INSTANCES GLOBALES
+// ═══════════════════════════════════════════════════════════════════════════
 
-const rateLimiter = new UserRateLimiter(60000, 12);
-const geminiCircuit = new CircuitBreaker(3, 30000, 'Gemini');
-const mistralCircuit = new CircuitBreaker(3, 30000, 'Mistral');
-const saveQueue = new SaveQueue(5000);
+const activeRequests = new OptimizedLRUCache(1000);
+const recentMessages = new OptimizedLRUCache(2000);
+const rateLimiter = new UserRateLimiter();
+const geminiCircuit = new CircuitBreaker('Gemini');
+const mistralCircuit = new CircuitBreaker('Mistral');
+const processingQueue = new ProcessingQueue();
 
-// ========================================
-// 🎨 FONCTIONS MARKDOWN → UNICODE
-// ========================================
+let currentGeminiKeyIndex = 0;
+const failedGeminiKeys = new Set();
 
-const UNICODE_MAPPINGS = {
-    bold: {
-        'a': '𝗮', 'b': '𝗯', 'c': '𝗰', 'd': '𝗱', 'e': '𝗲', 'f': '𝗳', 'g': '𝗴', 'h': '𝗵', 'i': '𝗶', 'j': '𝗷', 'k': '𝗸', 'l': '𝗹', 'm': '𝗺',
-        'n': '𝗻', 'o': '𝗼', 'p': '𝗽', 'q': '𝗾', 'r': '𝗿', 's': '𝘀', 't': '𝘁', 'u': '𝘂', 'v': '𝘃', 'w': '𝘄', 'x': '𝘅', 'y': '𝘆', 'z': '𝘇',
-        'A': '𝗔', 'B': '𝗕', 'C': '𝗖', 'D': '𝗗', 'E': '𝗘', 'F': '𝗙', 'G': '𝗚', 'H': '𝗛', 'I': '𝗜', 'J': '𝗝', 'K': '𝗞', 'L': '𝗟', 'M': '𝗠',
-        'N': '𝗡', 'O': '𝗢', 'P': '𝗣', 'Q': '𝗤', 'R': '𝗥', 'S': '𝗦', 'T': '𝗧', 'U': '𝗨', 'V': '𝗩', 'W': '𝗪', 'X': '𝗫', 'Y': '𝗬', 'Z': '𝗭',
-        '0': '𝟬', '1': '𝟭', '2': '𝟮', '3': '𝟯', '4': '𝟰', '5': '𝟱', '6': '𝟲', '7': '𝟳', '8': '𝟴', '9': '𝟵'
-    }
+// ═══════════════════════════════════════════════════════════════════════════
+// 🎨 MARKDOWN → UNICODE (Version compacte)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const BOLD_MAP = {
+    'a':'𝗮','b':'𝗯','c':'𝗰','d':'𝗱','e':'𝗲','f':'𝗳','g':'𝗴','h':'𝗵','i':'𝗶','j':'𝗷',
+    'k':'𝗸','l':'𝗹','m':'𝗺','n':'𝗻','o':'𝗼','p':'𝗽','q':'𝗾','r':'𝗿','s':'𝘀','t':'𝘁',
+    'u':'𝘂','v':'𝘃','w':'𝘄','x':'𝘅','y':'𝘆','z':'𝘇',
+    'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝',
+    'K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧',
+    'U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭',
+    '0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵'
 };
 
 function toBold(str) {
-    return str.split('').map(char => UNICODE_MAPPINGS.bold[char] || char).join('');
-}
-
-function toItalic(str) {
-    return str;
-}
-
-function toUnderline(str) {
-    return str.split('').map(char => char + '\u0332').join('');
-}
-
-function toStrikethrough(str) {
-    return str.split('').map(char => char + '\u0336').join('');
+    return str.split('').map(c => BOLD_MAP[c] || c).join('');
 }
 
 function parseMarkdown(text) {
-    if (!text || typeof text !== 'string') {
-        return text;
-    }
-
+    if (!text || typeof text !== 'string') return text;
+    
     let parsed = text;
-
-    parsed = parsed.replace(/^###\s+(.+)$/gm, (match, title) => {
-        return `🔹 ${toBold(title.trim())}`;
-    });
-
-    parsed = parsed.replace(/\*\*([^*]+)\*\*/g, (match, content) => {
-        return toBold(content);
-    });
-
-    parsed = parsed.replace(/__([^_]+)__/g, (match, content) => {
-        return toUnderline(content);
-    });
-
-    parsed = parsed.replace(/~~([^~]+)~~/g, (match, content) => {
-        return toStrikethrough(content);
-    });
-
-    parsed = parsed.replace(/^[\s]*[-*]\s+(.+)$/gm, (match, content) => {
-        return `• ${content.trim()}`;
-    });
-
+    
+    // Titres
+    parsed = parsed.replace(/^###\s+(.+)$/gm, (_, t) => `🔹 ${toBold(t.trim())}`);
+    
+    // Gras
+    parsed = parsed.replace(/\*\*([^*]+)\*\*/g, (_, c) => toBold(c));
+    
+    // Listes
+    parsed = parsed.replace(/^[\s]*[-*]\s+(.+)$/gm, (_, c) => `• ${c.trim()}`);
+    
     return parsed;
 }
 
-// ========================================
-// 🔑 GESTION ROTATION CLÉS GEMINI
-// ========================================
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔑 GESTION GEMINI (Rotation optimisée)
+// ═══════════════════════════════════════════════════════════════════════════
 
 function getNextGeminiKey() {
     if (GEMINI_API_KEYS.length === 0) {
         throw new Error('Aucune clé Gemini configurée');
     }
     
-    if (failedKeys.size >= GEMINI_API_KEYS.length) {
-        failedKeys.clear();
+    // Reset si toutes échouées
+    if (failedGeminiKeys.size >= GEMINI_API_KEYS.length) {
+        failedGeminiKeys.clear();
         currentGeminiKeyIndex = 0;
     }
     
+    // Trouver clé valide
     let attempts = 0;
     while (attempts < GEMINI_API_KEYS.length) {
         const key = GEMINI_API_KEYS[currentGeminiKeyIndex];
         currentGeminiKeyIndex = (currentGeminiKeyIndex + 1) % GEMINI_API_KEYS.length;
         
-        if (!failedKeys.has(key)) {
+        if (!failedGeminiKeys.has(key)) {
             return key;
         }
         attempts++;
     }
     
-    failedKeys.clear();
-    currentGeminiKeyIndex = 0;
+    // Dernier recours
+    failedGeminiKeys.clear();
     return GEMINI_API_KEYS[0];
 }
 
-function markKeyAsFailed(apiKey) {
-    failedKeys.add(apiKey);
+function markGeminiKeyFailed(key) {
+    failedGeminiKeys.add(key);
 }
 
-// 🔧 FIX: Fonction callGeminiWithRotation avec modèle corrigé
-async function callGeminiWithRotation(prompt, maxRetries = GEMINI_API_KEYS.length) {
+async function callGemini(prompt) {
     return await geminiCircuit.execute(
         async () => {
-            let lastError = null;
+            const key = getNextGeminiKey();
+            const genAI = new GoogleGenerativeAI(key);
+            const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
             
-            for (let attempt = 0; attempt < maxRetries; attempt++) {
-                try {
-                    const apiKey = getNextGeminiKey();
-                    const genAI = new GoogleGenerativeAI(apiKey);
-                    
-                    // 🔧 FIX: Modèle corrigé - gemini-2.0-flash-thinking-exp-01-21
-                    const model = genAI.getGenerativeModel({ 
-                        model: "gemini-2.0-flash-thinking-exp-01-21"
-                    });
-                    
-                    const result = await model.generateContent(prompt);
-                    const response = result.response.text();
-                    
-                    if (response && response.trim()) {
-                        failedKeys.delete(apiKey);
-                        return response;
-                    }
-                    
-                    throw new Error('Réponse Gemini vide');
-                    
-                } catch (error) {
-                    lastError = error;
-                    
-                    // 🔧 FIX: Détecter aussi les erreurs 404
-                    if (error.message.includes('API_KEY') || 
-                        error.message.includes('quota') || 
-                        error.message.includes('limit') || 
-                        error.message.includes('404') || 
-                        error.message.includes('not found')) {
-                        const currentKey = GEMINI_API_KEYS[(currentGeminiKeyIndex - 1 + GEMINI_API_KEYS.length) % GEMINI_API_KEYS.length];
-                        markKeyAsFailed(currentKey);
-                    }
-                    
-                    if (attempt === maxRetries - 1) {
-                        throw lastError;
-                    }
-                }
+            // Timeout strict
+            const response = await Promise.race([
+                model.generateContent(prompt),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Timeout Gemini')), CONFIG.GEMINI_TIMEOUT)
+                )
+            ]);
+            
+            const text = response.response.text();
+            if (!text || !text.trim()) {
+                throw new Error('Réponse vide');
             }
             
-            throw lastError || new Error('Toutes les clés Gemini ont échoué');
+            failedGeminiKeys.delete(key);
+            return text.trim();
         },
         null
     );
 }
 
-// ========================================
-// 🔍 ROTATION GOOGLE SEARCH
-// ========================================
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔄 GESTION MISTRAL (Fallback)
+// ═══════════════════════════════════════════════════════════════════════════
 
-function getNextSearchPair() {
-    if (GOOGLE_SEARCH_API_KEYS.length === 0 || GOOGLE_SEARCH_ENGINE_IDS.length === 0 || GOOGLE_SEARCH_API_KEYS.length !== GOOGLE_SEARCH_ENGINE_IDS.length) {
-        throw new Error('Configuration Google Search invalide');
+async function callMistral(messages, maxTokens = 200) {
+    if (!MISTRAL_API_KEY) {
+        throw new Error('Clé Mistral manquante');
     }
     
-    if (failedSearchKeys.size >= GOOGLE_SEARCH_API_KEYS.length) {
-        failedSearchKeys.clear();
-        currentSearchKeyIndex = 0;
-    }
-    
-    let attempts = 0;
-    while (attempts < GOOGLE_SEARCH_API_KEYS.length) {
-        const apiKey = GOOGLE_SEARCH_API_KEYS[currentSearchKeyIndex];
-        const engineId = GOOGLE_SEARCH_ENGINE_IDS[currentSearchKeyIndex];
-        currentSearchKeyIndex = (currentSearchKeyIndex + 1) % GOOGLE_SEARCH_API_KEYS.length;
-        
-        if (!failedSearchKeys.has(apiKey)) {
-            return { apiKey, engineId };
-        }
-        attempts++;
-    }
-    
-    failedSearchKeys.clear();
-    currentSearchKeyIndex = 0;
-    return { apiKey: GOOGLE_SEARCH_API_KEYS[0], engineId: GOOGLE_SEARCH_ENGINE_IDS[0] };
-}
-
-function markSearchKeyAsFailed(apiKey) {
-    failedSearchKeys.add(apiKey);
-}
-
-async function callGoogleSearchWithRotation(query, log, maxRetries = GOOGLE_SEARCH_API_KEYS.length) {
-    let lastError = null;
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        if (attempt > 0) {
-            await new Promise(resolve => setTimeout(resolve, SEARCH_RETRY_DELAY));
-            log.info(`⌛ Délai de ${SEARCH_RETRY_DELAY / 1000} secondes avant retry #${attempt}`);
-        }
-        
-        try {
-            const { apiKey, engineId } = getNextSearchPair();
-            const results = await googleCustomSearch(query, log, apiKey, engineId);
-            
-            if (results && results.length > 0) {
-                failedSearchKeys.delete(apiKey);
-                return results;
-            }
-            
-            throw new Error('Résultats Google Search vides');
-            
-        } catch (error) {
-            lastError = error;
-            
-            if (error.message.includes('API_KEY') || error.message.includes('quota') || error.message.includes('limit') || error.response?.status === 429 || error.response?.status === 403) {
-                const currentKey = GOOGLE_SEARCH_API_KEYS[(currentSearchKeyIndex - 1 + GOOGLE_SEARCH_API_KEYS.length) % GOOGLE_SEARCH_API_KEYS.length];
-                markSearchKeyAsFailed(currentKey);
-            }
-            
-            if (attempt === maxRetries - 1) {
-                throw lastError;
-            }
-        }
-    }
-    
-    throw lastError || new Error('Toutes les clés Google Search ont échoué');
-}
-
-// ========================================
-// 🛡️ FONCTION PRINCIPALE
-// ========================================
-
-module.exports = async function cmdChat(senderId, args, ctx) {
-    const { addToMemory, getMemoryContext, callMistralAPI, webSearch, log, 
-            truncatedMessages, splitMessageIntoChunks, isContinuationRequest } = ctx;
-    
-    if (!rateLimiter.isAllowed(senderId)) {
-        const remaining = rateLimiter.getRemainingRequests(senderId);
-        log.warning(`🚫 Rate limit atteint pour ${senderId} (${remaining} restants)`);
-        return "⏰ Tu envoies trop de messages ! Attends un peu (max 12/minute)... 💕";
-    }
-    
-    const messageSignature = `${senderId}_${args.trim().toLowerCase()}`;
-    const currentTime = Date.now();
-    
-    if (recentMessages.has(messageSignature)) {
-        const lastProcessed = recentMessages.get(messageSignature);
-        if (currentTime - lastProcessed < 30000) {
-            log.warning(`🚫 Message dupliqué ignoré pour ${senderId}: "${args.substring(0, 30)}..."`);
-            return;
-        }
-    }
-    
-    if (activeRequests.has(senderId)) {
-        log.warning(`🚫 Demande en cours ignorée pour ${senderId}`);
-        return;
-    }
-    
-    const userMessages = [];
-    for (const [sig, timestamp] of recentMessages.entries()) {
-        if (sig.startsWith(`${senderId}_`)) {
-            userMessages.push(timestamp);
-        }
-    }
-    
-    const lastMessageTime = userMessages.length > 0 ? Math.max(...userMessages) : 0;
-    if (lastMessageTime && (currentTime - lastMessageTime < 5000)) {
-        const waitMessage = "🕒 Veuillez patienter 5 secondes avant d'envoyer un nouveau message...";
-        addToMemory(String(senderId), 'assistant', waitMessage);
-        await ctx.sendMessage(senderId, waitMessage);
-        log.warning(`🚫 Message trop rapide ignoré pour ${senderId}`);
-        return;
-    }
-    
-    const requestKey = `${senderId}_${currentTime}`;
-    activeRequests.set(senderId, requestKey);
-    recentMessages.set(messageSignature, currentTime);
-    
-    try {
-        if (args.trim() && !isContinuationRequest(args)) {
-            const processingMessage = "⏳...";
-            addToMemory(String(senderId), 'assistant', processingMessage);
-            await ctx.sendMessage(senderId, processingMessage);
-        }
-        
-        if (!args.trim()) {
-            const welcomeMsg = "Salut ! 👋 Qu'est-ce que je peux faire pour toi ?";
-            const styledWelcome = parseMarkdown(welcomeMsg);
-            addToMemory(String(senderId), 'assistant', styledWelcome);
-            return styledWelcome;
-        }
-        
-        const senderIdStr = String(senderId);
-        if (isContinuationRequest(args)) {
-            const truncatedData = truncatedMessages.get(senderIdStr);
-            if (truncatedData) {
-                const { fullMessage, lastSentPart } = truncatedData;
-                
-                const lastSentIndex = fullMessage.indexOf(lastSentPart) + lastSentPart.length;
-                const remainingMessage = fullMessage.substring(lastSentIndex);
-                
-                if (remainingMessage.trim()) {
-                    const chunks = splitMessageIntoChunks(remainingMessage, 2000);
-                    const nextChunk = parseMarkdown(chunks[0]);
-                    
-                    if (chunks.length > 1) {
-                        truncatedMessages.set(senderIdStr, {
-                            fullMessage: fullMessage,
-                            lastSentPart: lastSentPart + chunks[0],
-                            timestamp: new Date().toISOString()
-                        });
-                        
-                        const continuationMsg = nextChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
-                        addToMemory(senderIdStr, 'user', args);
-                        addToMemory(senderIdStr, 'assistant', continuationMsg);
-                        return continuationMsg;
-                    } else {
-                        truncatedMessages.delete(senderIdStr);
-                        addToMemory(senderIdStr, 'user', args);
-                        addToMemory(senderIdStr, 'assistant', nextChunk);
-                        return nextChunk;
-                    }
-                } else {
-                    truncatedMessages.delete(senderIdStr);
-                    const endMsg = "✅ C'est tout ! Y a-t-il autre chose que je puisse faire pour toi ? 💫";
-                    addToMemory(senderIdStr, 'user', args);
-                    addToMemory(senderIdStr, 'assistant', endMsg);
-                    return endMsg;
-                }
-            } else {
-                const noTruncMsg = "🤔 Il n'y a pas de message en cours à continuer. Pose-moi une nouvelle question ! 💡";
-                addToMemory(senderIdStr, 'user', args);
-                addToMemory(senderIdStr, 'assistant', noTruncMsg);
-                return noTruncMsg;
-            }
-        }
-        
-        const contactIntention = detectContactAdminIntention(args);
-        if (contactIntention.shouldContact) {
-            log.info(`📞 Intention contact admin détectée pour ${senderId}: ${contactIntention.reason}`);
-            const contactSuggestion = generateContactSuggestion(contactIntention.reason, contactIntention.extractedMessage);
-            const styledContact = parseMarkdown(contactSuggestion);
-            
-            addToMemory(String(senderId), 'user', args);
-            addToMemory(String(senderId), 'assistant', styledContact);
-            return styledContact;
-        }
-        
-        const intelligentCommand = await detectIntelligentCommands(args, ctx);
-        if (intelligentCommand.shouldExecute) {
-            log.info(`🧠 Détection IA intelligente: /${intelligentCommand.command} (${intelligentCommand.confidence}) pour ${senderId}`);
-            
-            try {
-                const commandResult = await executeCommandFromChat(senderId, intelligentCommand.command, intelligentCommand.args, ctx);
-                
-                if (commandResult.success) {
-                    if (typeof commandResult.result === 'object' && commandResult.result.type === 'image') {
-                        addToMemory(String(senderId), 'user', args);
-                        return commandResult.result;
-                    }
-                    
-                    const contextualResponse = await generateContextualResponse(args, commandResult.result, intelligentCommand.command, ctx);
-                    const styledResponse = parseMarkdown(contextualResponse);
-                    
-                    addToMemory(String(senderId), 'user', args);
-                    addToMemory(String(senderId), 'assistant', styledResponse);
-                    return styledResponse;
-                } else {
-                    log.warning(`⚠️ Échec exécution commande /${intelligentCommand.command}: ${commandResult.error}`);
-                }
-            } catch (error) {
-                log.error(`❌ Erreur exécution commande IA: ${error.message}`);
-            }
-        } 
-        
-        const searchDecision = await decideSearchNecessity(args, senderId, ctx);
-        
-        if (searchDecision.needsExternalSearch) {
-            log.info(`🔍 Recherche externe nécessaire pour ${senderId}: ${searchDecision.reason}`);
-            
-            try {
-                const conversationContext = getMemoryContext(String(senderId)).slice(-4);
-                
-                const searchResults = await performIntelligentSearch(searchDecision.searchQuery, ctx);
-                
-                if (searchResults && searchResults.length > 0) {
-                    log.info(`📊 ${searchResults.length} résultats trouvés pour analyse`);
-                    searchResults.forEach((r, i) => {
-                        log.debug(`[${i+1}] ${r.title} - ${(r.snippet || r.description || '').substring(0, 80)}...`);
-                    });
-                    
-                    const naturalResponse = await generateNaturalResponseWithContext(args, searchResults, conversationContext, ctx);
-                    
-                    if (naturalResponse) {
-                        const styledNatural = parseMarkdown(naturalResponse);
-                        
-                        if (styledNatural.length > 2000) {
-                            log.info(`📏 Message de recherche long détecté (${styledNatural.length} chars)`);
-                            
-                            const chunks = splitMessageIntoChunks(styledNatural, 2000);
-                            const firstChunk = chunks[0];
-                            
-                            if (chunks.length > 1) {
-                                truncatedMessages.set(senderIdStr, {
-                                    fullMessage: styledNatural,
-                                    lastSentPart: firstChunk,
-                                    timestamp: new Date().toISOString()
-                                });
-                                
-                                const truncatedResponse = firstChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
-                                addToMemory(String(senderId), 'user', args);
-                                addToMemory(String(senderId), 'assistant', truncatedResponse);
-                                log.info(`🔍✅ Recherche terminée avec troncature pour ${senderId}`);
-                                return truncatedResponse;
-                            }
+    return await mistralCircuit.execute(
+        async () => {
+            const response = await Promise.race([
+                axios.post(
+                    "https://api.mistral.ai/v1/chat/completions",
+                    {
+                        model: "mistral-small-latest",
+                        messages: messages,
+                        max_tokens: maxTokens,
+                        temperature: 0.7
+                    },
+                    {
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${MISTRAL_API_KEY}`
                         }
-                        
-                        addToMemory(String(senderId), 'user', args);
-                        addToMemory(String(senderId), 'assistant', styledNatural);
-                        log.info(`🔍✅ Recherche terminée avec succès pour ${senderId}`);
-                        return styledNatural;
                     }
-                } else {
-                    log.warning(`⚠️ Aucun résultat de recherche pour: ${searchDecision.searchQuery}`);
-                }
-            } catch (searchError) {
-                log.error(`❌ Erreur recherche intelligente pour ${senderId}: ${searchError.message}`);
+                ),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Timeout Mistral')), CONFIG.MISTRAL_TIMEOUT)
+                )
+            ]);
+            
+            if (response.status === 200) {
+                return response.data.choices[0].message.content;
             }
-        }
-        
-        const conversationResult = await handleConversationWithFallback(senderId, args, ctx);
-        return conversationResult;
-        
-    } finally {
-        activeRequests.delete(senderId);
-        saveQueue.add(senderId);
-        log.debug(`🔓 Demande libérée pour ${senderId}`);
-    }
-};
+            
+            throw new Error(`Mistral erreur: ${response.status}`);
+        },
+        null
+    );
+}
 
-// ========================================
-// 🤖 DÉCISION RECHERCHE
-// ========================================
+// ═══════════════════════════════════════════════════════════════════════════
+// 🧠 DÉTECTION DEMANDE CONTACT CRÉATEURS
+// ═══════════════════════════════════════════════════════════════════════════
 
-async function decideSearchNecessity(userMessage, senderId, ctx) {
-    const { log } = ctx;
+function detectCreatorContactRequest(message) {
+    const lower = message.toLowerCase();
     
-    try {
-        const decisionPrompt = `Analyse cette question et décide si elle nécessite une RECHERCHE WEB.
-
-Question: "${userMessage}"
-
-Tu DOIS chercher sur le web si :
-- La question porte sur des ÉVÉNEMENTS RÉCENTS (2023-2026)
-- La question demande "qui a gagné/remporté" quelque chose récemment
-- La question concerne des RÉSULTATS sportifs, élections, actualités
-- La question demande des PRIX, STATS ou DONNÉES actuelles
-- La question utilise "dernier", "dernière", "récent", "actuel"
-
-Tu NE cherches PAS si :
-- C'est une conversation générale
-- C'est une opinion/conseil
-- C'est une question sur le bot lui-même
-- La réponse est dans tes connaissances de base (avant 2023)
-
-Réponds UNIQUEMENT en JSON :
-{
-  "needsExternalSearch": true/false,
-  "confidence": 0.0-1.0,
-  "reason": "pourquoi",
-  "searchQuery": "requête optimisée"
-}`;
-
-        const response = await callGeminiWithRotation(decisionPrompt);
-        
-        const jsonMatch = response.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            const decision = JSON.parse(jsonMatch[0]);
-            log.info(`🤖 Décision: ${decision.needsExternalSearch ? 'RECHERCHE' : 'SANS RECHERCHE'} (${decision.confidence})`);
-            return decision;
-        }
-        
-        throw new Error('Format invalide');
-        
-    } catch (error) {
-        log.warning(`⚠️ Erreur décision: ${error.message}`);
-        
-        const lowerMessage = userMessage.toLowerCase();
-        const needsSearch = 
-            /\b(qui a (gagné|remporté|gagne|remporte)|vainqueur|champion|dernier|dernière|récent)\b/.test(lowerMessage) ||
-            /\b(202[3-6]|aujourd'hui|maintenant|actuel|récemment)\b/.test(lowerMessage) ||
-            /\b(CAN|champion.*league|coupe du monde|finale|match)\b/i.test(lowerMessage);
-        
+    // Recherche noms de famille explicites
+    const explicitDurand = /djoukam/i.test(message);
+    const explicitMyronne = /pouken/i.test(message);
+    
+    // Recherche demande de contact
+    const contactPatterns = [
+        /contact.*(?:durand|myronne|créateur|développeur)/i,
+        /(?:numéro|téléphone|appeler).*(?:durand|myronne)/i,
+        /(?:durand|myronne).*(?:numéro|téléphone|contact)/i,
+        /comment.*contacter.*(?:durand|myronne)/i
+    ];
+    
+    const isContactRequest = contactPatterns.some(p => p.test(message));
+    
+    if (!isContactRequest) {
+        return { shouldProvideContact: false };
+    }
+    
+    // Contact explicite avec nom de famille
+    if (explicitDurand || explicitMyronne) {
         return {
-            needsExternalSearch: needsSearch,
-            confidence: needsSearch ? 0.8 : 0.2,
-            reason: 'fallback_simple',
-            searchQuery: userMessage
+            shouldProvideContact: true,
+            forDurand: explicitDurand || /durand.*djoukam/i.test(message),
+            forMyronne: explicitMyronne || /myronne.*pouken/i.test(message),
+            explicit: true
         };
     }
-}
-
-// ========================================
-// 🔍 RECHERCHE WEB
-// ========================================
-
-async function duckDuckGoSearch(query, maxResults = 5) {
-    try {
-        const searchUrl = `https://html.duckduckgo.com/html/`;
-        
-        const response = await axios.post(searchUrl, 
-            `q=${encodeURIComponent(query)}&kl=fr-fr`,
-            {
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                },
-                timeout: 10000
-            }
-        );
-        
-        if (response.status === 200) {
-            const $ = cheerio.load(response.data);
-            const results = [];
-            
-            $('.result__body').each((i, element) => {
-                if (i >= maxResults) return false;
-                
-                const $result = $(element);
-                const title = $result.find('.result__a').text().trim();
-                const snippet = $result.find('.result__snippet').text().trim();
-                const url = $result.find('.result__a').attr('href');
-                
-                if (title && snippet) {
-                    results.push({
-                        title: title,
-                        snippet: snippet,
-                        description: snippet,
-                        link: url || '',
-                        source: 'duckduckgo'
-                    });
-                    console.log(`📄 DDG ${i+1}: ${title.substring(0, 60)}... - ${snippet.substring(0, 100)}...`);
-                }
-            });
-            
-            console.log(`✅ DuckDuckGo: ${results.length} résultats trouvés`);
-            return results.length > 0 ? results : null;
-        }
-        
-        return null;
-    } catch (error) {
-        console.error(`❌ Erreur DuckDuckGo: ${error.message}`);
-        return null;
-    }
-}
-
-async function wikipediaSearch(query) {
-    try {
-        const searchUrl = `https://fr.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=3`;
-        
-        const response = await axios.get(searchUrl, {
-            headers: {
-                'User-Agent': 'NakamaBot/1.0'
-            },
-            timeout: 8000
-        });
-        
-        if (response.status === 200 && response.data.query?.search) {
-            const results = response.data.query.search.map(item => ({
-                title: item.title,
-                snippet: item.snippet.replace(/<[^>]*>/g, ''),
-                description: item.snippet.replace(/<[^>]*>/g, ''),
-                link: `https://fr.wikipedia.org/wiki/${encodeURIComponent(item.title)}`,
-                source: 'wikipedia'
-            }));
-            
-            console.log(`✅ Wikipedia: ${results.length} résultats`);
-            return results;
-        }
-        
-        return null;
-    } catch (error) {
-        console.error(`❌ Erreur Wikipedia: ${error.message}`);
-        return null;
-    }
-}
-
-async function performIntelligentSearch(query, ctx) {
-    const { log } = ctx;
     
-    try {
-        log.info(`🔍 Recherche: "${query}"`);
-        
-        let results = await duckDuckGoSearch(query, 5);
-        if (results && results.length > 0) {
-            log.info(`✅ DuckDuckGo: ${results.length} résultats`);
-            return results;
-        }
-        
-        results = await wikipediaSearch(query);
-        if (results && results.length > 0) {
-            log.info(`✅ Wikipedia: ${results.length} résultats`);
-            return results;
-        }
-        
-        if (GOOGLE_SEARCH_API_KEYS.length > 0 && GOOGLE_SEARCH_ENGINE_IDS.length > 0) {
-            results = await callGoogleSearchWithRotation(query, log);
-            if (results && results.length > 0) {
-                log.info(`✅ Google: ${results.length} résultats`);
-                return results;
-            }
-        }
-        
-        if (SERPAPI_KEY) {
-            results = await serpApiSearch(query, log);
-            if (results && results.length > 0) {
-                log.info(`✅ SerpAPI: ${results.length} résultats`);
-                return results;
-            }
-        }
-        
-        log.warning(`⚠️ Aucun résultat pour: ${query}`);
-        return null;
-        
-    } catch (error) {
-        log.error(`❌ Erreur recherche: ${error.message}`);
-        return null;
-    }
-}
-
-async function googleCustomSearch(query, log, apiKey, cx) {
-    const url = `https://www.googleapis.com/customsearch/v1`;
-    const params = {
-        key: apiKey,
-        cx: cx,
-        q: query,
-        num: 5,
-        safe: 'active',
-        lr: 'lang_fr',
-        hl: 'fr'
-    };
-    
-    const response = await axios.get(url, { params, timeout: 10000 });
-    
-    if (response.data.items) {
-        return response.data.items.map(item => ({
-            title: item.title,
-            link: item.link,
-            description: item.snippet,
-            snippet: item.snippet,
-            source: 'google'
-        }));
+    // Contact avec prénom seulement (suggestion d'utiliser nom complet)
+    if (/(?:durand|myronne)/i.test(message) && isContactRequest) {
+        return {
+            shouldProvideContact: true,
+            forDurand: /durand/i.test(message),
+            forMyronne: /myronne/i.test(message),
+            explicit: false
+        };
     }
     
-    return [];
+    return { shouldProvideContact: false };
 }
 
-async function serpApiSearch(query, log) {
-    const url = `https://serpapi.com/search`;
-    const params = {
-        api_key: SERPAPI_KEY,
-        engine: 'google',
-        q: query,
-        num: 5,
-        hl: 'fr',
-        gl: 'fr'
-    };
-    
-    const response = await axios.get(url, { params, timeout: 10000 });
-    
-    if (response.data.organic_results) {
-        return response.data.organic_results.map(item => ({
-            title: item.title,
-            link: item.link,
-            description: item.snippet,
-            snippet: item.snippet,
-            source: 'serpapi'
-        }));
+function generateCreatorContactResponse(detection) {
+    if (!detection.shouldProvideContact) {
+        return null;
     }
     
-    return [];
+    // Si pas explicite avec nom de famille
+    if (!detection.explicit) {
+        let response = "📞 **Contact Créateurs**\n\n";
+        
+        if (detection.forDurand && detection.forMyronne) {
+            response += `Tu veux contacter nos créateurs ?\n\n`;
+            response += `Pour obtenir leurs coordonnées, précise leur **nom complet** :\n`;
+            response += `• **Durand DJOUKAM**\n`;
+            response += `• **Myronne POUKEN**\n\n`;
+        } else if (detection.forDurand) {
+            response += `Tu veux contacter Durand ?\n\n`;
+            response += `Pour obtenir ses coordonnées, utilise son **nom complet** : **Durand DJOUKAM**\n\n`;
+        } else if (detection.forMyronne) {
+            response += `Tu veux contacter Myronne ?\n\n`;
+            response += `Pour obtenir ses coordonnées, utilise son **nom complet** : **Myronne POUKEN**\n\n`;
+        }
+        
+        response += `💡 Exemple : "Je veux contacter Durand DJOUKAM"`;
+        
+        return parseMarkdown(response);
+    }
+    
+    // Réponse avec coordonnées complètes
+    let response = "📞 **Coordonnées Créateurs NakamaBot**\n\n";
+    
+    if (detection.forDurand) {
+        response += `👨‍💻 **${CREATORS_INFO.durand.fullName}**\n`;
+        response += `🇨🇲 ${CREATORS_INFO.durand.nationality}\n`;
+        response += `📱 ${CREATORS_INFO.durand.phone}\n\n`;
+    }
+    
+    if (detection.forMyronne) {
+        response += `👩‍💻 **${CREATORS_INFO.myronne.fullName}**\n`;
+        response += `🇨🇲 ${CREATORS_INFO.myronne.nationality}\n`;
+        response += `📱 ${CREATORS_INFO.myronne.phone}\n\n`;
+    }
+    
+    response += `💡 N'hésite pas à les contacter pour toute question ! 💕`;
+    
+    return parseMarkdown(response);
 }
 
-// ========================================
-// 💬 GÉNÉRATION RÉPONSE AVEC CONTEXTE
-// ========================================
+// ═══════════════════════════════════════════════════════════════════════════
+// 💬 CONVERSATION PRINCIPALE
+// ═══════════════════════════════════════════════════════════════════════════
 
-// 🔧 FIX: Fonction generateNaturalResponseWithContext avec fallback Mistral complet
-async function generateNaturalResponseWithContext(originalQuery, searchResults, conversationContext, ctx) {
-    const { log, callMistralAPI } = ctx;
+async function handleConversation(senderId, message, ctx) {
+    const { addToMemory, getMemoryContext } = ctx;
     
+    // Contexte ultra-réduit (3 messages max)
+    const context = getMemoryContext(String(senderId)).slice(-CONFIG.MAX_CONTEXT_MESSAGES);
+    
+    // Date actuelle
     const now = new Date();
-    const dateTime = now.toLocaleString('fr-FR', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric', 
-        hour: '2-digit', 
-        minute: '2-digit',
-        timeZone: 'Europe/Paris'
+    const dateStr = now.toLocaleDateString('fr-FR', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
     });
     
-    try {
-        const resultsText = searchResults.slice(0, 2).map((result, index) => 
-            `[${index + 1}] ${result.title.substring(0, 80)}\n${(result.snippet || result.description || '').substring(0, 150)}`
-        ).join('\n\n');
-        
-        console.log(`📊 ${searchResults.length} résultats formatés pour l'IA`);
-        console.log(`📝 Extrait: ${resultsText.substring(0, 200)}...`);
-        
-        let conversationHistory = "";
-        if (conversationContext && conversationContext.length > 0) {
-            conversationHistory = conversationContext.map(msg => 
-                `${msg.role === 'user' ? 'Utilisateur' : 'NakamaBot'}: ${msg.content.substring(0, 100)}`
-            ).join('\n') + '\n';
-        }
-        
-        const contextualPrompt = `Tu es NakamaBot. On est le ${dateTime}.
-
-${conversationHistory ? `Conversation:\n${conversationHistory}\n` : ''}
-
-Question: "${originalQuery.substring(0, 150)}"
-
-VRAIES INFORMATIONS TROUVÉES SUR LE WEB:
-${resultsText}
-
-RÈGLES CRITIQUES:
-- Utilise UNIQUEMENT les infos ci-dessus
-- Si les infos se contredisent avec tes connaissances → UTILISE LES INFOS CI-DESSUS
-- N'invente RIEN, ne suppose RIEN
-- Si les infos sont insuffisantes → dis "Je n'ai pas trouvé assez d'infos"
-- Réponds en 2-3 phrases max (max 400 chars)
-- Ne dis JAMAIS "selon les sources" ou "d'après mes recherches"
-
-Ta réponse (basée UNIQUEMENT sur les infos trouvées):`;
-
-        const response = await callGeminiWithRotation(contextualPrompt);
-        
-        if (response && response.trim()) {
-            let cleanResponse = response.trim();
-            if (cleanResponse.startsWith('NakamaBot:')) {
-                cleanResponse = cleanResponse.substring('NakamaBot:'.length).trim();
-            }
-            if (cleanResponse.startsWith('NakamaBot :')) {
-                cleanResponse = cleanResponse.substring('NakamaBot :'.length).trim();
-            }
-            
-            log.info(`🎭 Réponse contextuelle Gemini`);
-            return cleanResponse;
-        }
-        
-        throw new Error('Réponse Gemini vide');
-        
-    } catch (geminiError) {
-        log.warning(`⚠️ Erreur Gemini: ${geminiError.message}`);
-        
-        // 🔧 FIX: Fallback Mistral complet avec Circuit Breaker
-        try {
-            const resultsText = searchResults.slice(0, 2).map(r => 
-                `${r.title.substring(0, 60)}: ${(r.description || r.snippet || '').substring(0, 120)}`
-            ).join('\n');
-            
-            const conversationHistory = conversationContext && conversationContext.length > 0 
-                ? conversationContext.map(msg => `${msg.role === 'user' ? 'U' : 'A'}: ${msg.content.substring(0, 80)}`).join('\n')
-                : "Début";
-            
-            const messages = [{
-                role: "system",
-                content: `Tu es NakamaBot. Réponds naturellement avec les infos fournies. Max 400 chars.\n\nHist:\n${conversationHistory}`
-            }, {
-                role: "user", 
-                content: `Q: "${originalQuery.substring(0, 100)}"\n\nINFOS:\n${resultsText}\n\nRéponds naturellement (infos ci-dessus UNIQUEMENT):`
-            }];
-            
-            const mistralResponse = await mistralCircuit.execute(
-                async () => await callMistralAPI(messages, 400, 0.7),
-                null
-            );
-            
-            if (mistralResponse && mistralResponse.trim()) {
-                log.info(`🔄 Réponse contextuelle Mistral`);
-                return mistralResponse.trim();
-            }
-            
-            throw new Error('Mistral échec');
-            
-        } catch (mistralError) {
-            log.error(`❌ Erreur totale génération réponse: ${mistralError.message}`);
-            
-            // Fallback ultime: retourner le premier résultat
-            const topResult = searchResults[0];
-            if (topResult) {
-                return `D'après ce que je sais, ${(topResult.description || topResult.snippet || '').substring(0, 200)} 💡`;
-            }
-            
-            return null;
-        }
-    }
-}
-
-// ========================================
-// 💬 CONVERSATION NORMALE
-// ========================================
-
-async function handleConversationWithFallback(senderId, args, ctx) {
-    const { addToMemory, getMemoryContext, callMistralAPI, log, 
-            splitMessageIntoChunks, truncatedMessages } = ctx;
-    
-    const context = getMemoryContext(String(senderId)).slice(-4);
-    const messageCount = context.filter(msg => msg.role === 'user').length;
-    
-    const now = new Date();
-    const dateTime = now.toLocaleString('fr-FR', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric', 
-        hour: '2-digit', 
-        minute: '2-digit',
-        timeZone: 'Europe/Paris'
-    });
-    
-    let conversationHistory = "";
+    // Historique conversation
+    let history = "";
     if (context.length > 0) {
-        conversationHistory = context.map(msg => 
-            `${msg.role === 'user' ? 'Utilisateur' : 'Assistant'}: ${msg.content.substring(0, 100)}`
+        history = context.map(m => 
+            `${m.role === 'user' ? 'User' : 'Bot'}: ${m.content.substring(0, 200)}`
         ).join('\n') + '\n';
     }
     
-    const systemPrompt = `Tu es NakamaBot, créée par Durand et Myronne. On est le ${dateTime}.
+    // Prompt ultra-compressé
+    const prompt = `Date: ${dateStr}
+Créateurs: Durand (Camerounais 🇨🇲) & Myronne (Camerounaise 🇨🇲)
 
-${conversationHistory ? `Conversation précédente:\n${conversationHistory}\n` : ''}
+${history}User: ${message}
 
-Réponds de façon ULTRA NATURELLE comme un vrai ami :
-- Phrases courtes et simples (pas de présentation robotique)
-- Pas de formatage fancy ou listes
-- 1-2 emojis MAX
-- Si tu ne sais pas quelque chose de récent → DIS-LE CLAIREMENT
-- Jamais de "Je suis une IA" ou "Je suis NakamaBot" sauf si on te le demande explicitement
-- Max 600 caractères
-
-Message: ${args.substring(0, 300)}
-
-Ta réponse naturelle:`;
-
-    const senderIdStr = String(senderId);
+Réponds naturellement, court (max 400 chars), 1 emoji max. Si récent/actuel → dis que tu ne sais pas.`;
 
     try {
-        const geminiResponse = await callGeminiWithRotation(systemPrompt);
+        // Tentative Gemini
+        const response = await callGemini(prompt);
         
-        if (geminiResponse && geminiResponse.trim()) {
-            let cleanResponse = geminiResponse.trim();
-            if (cleanResponse.startsWith('NakamaBot:')) {
-                cleanResponse = cleanResponse.substring('NakamaBot:'.length).trim();
-            }
-            if (cleanResponse.startsWith('NakamaBot :')) {
-                cleanResponse = cleanResponse.substring('NakamaBot :'.length).trim();
-            }
+        if (response) {
+            // Nettoyer préfixes
+            let clean = response.replace(/^(NakamaBot|Bot)\s*:\s*/i, '').trim();
+            const styled = parseMarkdown(clean);
             
-            const styledResponse = parseMarkdown(cleanResponse);
-            
-            if (styledResponse.length > 2000) {
-                log.info(`📏 Réponse longue (${styledResponse.length} chars)`);
-                
-                const chunks = splitMessageIntoChunks(styledResponse, 2000);
-                const firstChunk = chunks[0];
-                
-                if (chunks.length > 1) {
-                    truncatedMessages.set(senderIdStr, {
-                        fullMessage: styledResponse,
-                        lastSentPart: firstChunk,
-                        timestamp: new Date().toISOString()
-                    });
-                    
-                    const truncatedResponse = firstChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
-                    addToMemory(senderIdStr, 'user', args.substring(0, 500));
-                    addToMemory(senderIdStr, 'assistant', truncatedResponse.substring(0, 500));
-                    log.info(`💎 Gemini avec troncature`);
-                    return truncatedResponse;
-                }
+            // Tronquer si nécessaire
+            if (styled.length > 2000) {
+                const truncated = styled.substring(0, 1950) + "\n\n...";
+                addToMemory(String(senderId), 'user', message.substring(0, CONFIG.MAX_MESSAGE_LENGTH));
+                addToMemory(String(senderId), 'assistant', truncated);
+                return truncated;
             }
             
-            addToMemory(senderIdStr, 'user', args.substring(0, 500));
-            addToMemory(senderIdStr, 'assistant', styledResponse.substring(0, 500));
-            log.info(`💎 Gemini OK`);
-            return styledResponse;
+            addToMemory(String(senderId), 'user', message.substring(0, CONFIG.MAX_MESSAGE_LENGTH));
+            addToMemory(String(senderId), 'assistant', styled);
+            return styled;
         }
         
-        throw new Error('Réponse Gemini vide');
+        throw new Error('Gemini vide');
         
     } catch (geminiError) {
-        log.warning(`⚠️ Gemini échec: ${geminiError.message}`);
+        console.warn(`⚠️ Gemini échec: ${geminiError.message}`);
         
         try {
-            const messages = [{ role: "system", content: systemPrompt.substring(0, 1000) }];
-            messages.push(...context);
-            messages.push({ role: "user", content: args.substring(0, 300) });
+            // Fallback Mistral
+            const messages = [
+                { role: "system", content: `Bot créé par Durand & Myronne (🇨🇲). Réponds court et naturel.` },
+                ...context,
+                { role: "user", content: message }
+            ];
             
-            const mistralResponse = await mistralCircuit.execute(
-                async () => await callMistralAPI(messages, 600, 0.75),
-                null
-            );
+            const mistralResponse = await callMistral(messages, 300);
             
             if (mistralResponse) {
-                const styledResponse = parseMarkdown(mistralResponse);
+                const styled = parseMarkdown(mistralResponse);
                 
-                if (styledResponse.length > 2000) {
-                    log.info(`📏 Mistral long (${styledResponse.length} chars)`);
-                    
-                    const chunks = splitMessageIntoChunks(styledResponse, 2000);
-                    const firstChunk = chunks[0];
-                    
-                    if (chunks.length > 1) {
-                        truncatedMessages.set(senderIdStr, {
-                            fullMessage: styledResponse,
-                            lastSentPart: firstChunk,
-                            timestamp: new Date().toISOString()
-                        });
-                        
-                        const truncatedResponse = firstChunk + "\n\n📝 *Tape \"continue\" pour la suite...*";
-                        addToMemory(senderIdStr, 'user', args.substring(0, 500));
-                        addToMemory(senderIdStr, 'assistant', truncatedResponse.substring(0, 500));
-                        log.info(`🔄 Mistral avec troncature`);
-                        return truncatedResponse;
-                    }
+                if (styled.length > 2000) {
+                    const truncated = styled.substring(0, 1950) + "\n\n...";
+                    addToMemory(String(senderId), 'user', message.substring(0, CONFIG.MAX_MESSAGE_LENGTH));
+                    addToMemory(String(senderId), 'assistant', truncated);
+                    return truncated;
                 }
                 
-                addToMemory(senderIdStr, 'user', args.substring(0, 500));
-                addToMemory(senderIdStr, 'assistant', styledResponse.substring(0, 500));
-                log.info(`🔄 Mistral OK`);
-                return styledResponse;
+                addToMemory(String(senderId), 'user', message.substring(0, CONFIG.MAX_MESSAGE_LENGTH));
+                addToMemory(String(senderId), 'assistant', styled);
+                return styled;
             }
             
-            throw new Error('Mistral échec');
+            throw new Error('Mistral vide');
             
         } catch (mistralError) {
-            log.error(`❌ Erreur totale: ${mistralError.message}`);
+            console.error(`❌ Erreur totale: ${mistralError.message}`);
             
-            const errorResponse = "🤔 Petite difficulté technique. Reformule différemment ? 💫";
-            const styledError = parseMarkdown(errorResponse);
-            addToMemory(senderIdStr, 'assistant', styledError);
-            return styledError;
+            const error = "Petite difficulté technique... Réessaie ? 💫";
+            addToMemory(String(senderId), 'assistant', error);
+            return error;
         }
     }
 }
 
-// ========================================
-// 🎯 DÉTECTION COMMANDES
-// ========================================
+// ═══════════════════════════════════════════════════════════════════════════
+// 🛡️ PROTECTIONS & VALIDATIONS
+// ═══════════════════════════════════════════════════════════════════════════
 
-const VALID_COMMANDS = [
-    'help', 'image', 'vision', 'anime', 'music', 
-    'clan', 'rank', 'contact', 'weather'
-];
+function validateMessage(message) {
+    if (!message || typeof message !== 'string') {
+        return { valid: false, error: "Message vide" };
+    }
+    
+    if (message.trim().length === 0) {
+        return { valid: false, error: "Message vide" };
+    }
+    
+    if (message.length > 2000) {
+        return { valid: false, error: "Message trop long (max 2000 chars)" };
+    }
+    
+    return { valid: true };
+}
 
-async function detectIntelligentCommands(message, ctx) {
-    const { log } = ctx;
+function isDuplicate(senderId, message) {
+    const signature = `${senderId}_${message.trim().toLowerCase().substring(0, 100)}`;
+    const now = Date.now();
+    
+    if (recentMessages.has(signature)) {
+        const lastTime = recentMessages.get(signature);
+        if (now - lastTime < 30000) { // 30 secondes
+            return true;
+        }
+    }
+    
+    recentMessages.set(signature, now);
+    return false;
+}
+
+function isRequestActive(senderId) {
+    return activeRequests.has(String(senderId));
+}
+
+function markRequestActive(senderId) {
+    activeRequests.set(String(senderId), Date.now());
+}
+
+function markRequestInactive(senderId) {
+    activeRequests.delete(String(senderId));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🚀 FONCTION PRINCIPALE EXPORTÉE
+// ═══════════════════════════════════════════════════════════════════════════
+
+module.exports = async function cmdChat(senderId, args, ctx) {
+    const startTime = Date.now();
+    
+    // Validation message
+    const validation = validateMessage(args);
+    if (!validation.valid) {
+        console.log(`❌ Message invalide: ${validation.error}`);
+        return "Message invalide. Réessaie avec un vrai message ! 💕";
+    }
+    
+    // Rate limiting
+    if (!rateLimiter.isAllowed(senderId)) {
+        const remaining = rateLimiter.getRemaining(senderId);
+        console.log(`🚫 Rate limit: ${senderId} (${remaining} restants)`);
+        return `⏰ Trop de messages ! Attends un peu (${CONFIG.RATE_LIMIT_MAX}/min max) 💕`;
+    }
+    
+    // Détection doublons
+    if (isDuplicate(senderId, args)) {
+        console.log(`🚫 Doublon ignoré: ${senderId}`);
+        return;
+    }
+    
+    // Vérifier requête active
+    if (isRequestActive(senderId)) {
+        console.log(`🚫 Requête déjà active: ${senderId}`);
+        return "Traitement en cours... Patience ! 💫";
+    }
+    
+    // Marquer actif
+    markRequestActive(senderId);
     
     try {
-        const detectionPrompt = `Analyse ce message et décide si c'est une COMMANDE.
-
-Message: "${message.substring(0, 150)}"
-
-Commandes disponibles: /help, /image, /vision, /anime, /music, /clan, /rank, /contact, /weather
-
-C'est une commande SI ET SEULEMENT SI :
-- L'utilisateur veut UTILISER une fonctionnalité spécifique
-- Il y a un VERBE D'ACTION clair (dessine, crée, joue, trouve, regarde, etc.)
-
-Ce N'EST PAS une commande si :
-- C'est juste une conversation
-- L'utilisateur mentionne un mot sans vouloir l'utiliser
-
-JSON uniquement:
-{
-  "isCommand": true/false,
-  "command": "nom",
-  "confidence": 0.0-1.0,
-  "extractedArgs": "args",
-  "reason": "pourquoi"
-}`;
-
-        const response = await callGeminiWithRotation(detectionPrompt);
-        
-        const jsonMatch = response.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            const aiDetection = JSON.parse(jsonMatch[0]);
-            
-            const isValidCommand = aiDetection.isCommand && 
-                                 VALID_COMMANDS.includes(aiDetection.command) && 
-                                 aiDetection.confidence >= 0.8;
-            
-            if (isValidCommand) {
-                log.info(`🎯 Commande: /${aiDetection.command} (${aiDetection.confidence})`);
-                
-                return {
-                    shouldExecute: true,
-                    command: aiDetection.command,
-                    args: aiDetection.extractedArgs,
-                    confidence: aiDetection.confidence,
-                    method: 'ai_contextual'
-                };
+        // Détection contact créateurs
+        const contactDetection = detectCreatorContactRequest(args);
+        if (contactDetection.shouldProvideContact) {
+            console.log(`📞 Demande contact créateur: ${senderId}`);
+            const contactResponse = generateCreatorContactResponse(contactDetection);
+            if (contactResponse) {
+                ctx.addToMemory(String(senderId), 'user', args.substring(0, CONFIG.MAX_MESSAGE_LENGTH));
+                ctx.addToMemory(String(senderId), 'assistant', contactResponse);
+                return contactResponse;
             }
         }
         
-        return { shouldExecute: false };
+        // Message bienvenue si vide
+        if (args.trim().length < 3) {
+            const welcome = "Salut ! 👋 Que puis-je faire pour toi ?";
+            ctx.addToMemory(String(senderId), 'assistant', welcome);
+            return welcome;
+        }
+        
+        // Gestion continuation
+        if (ctx.isContinuationRequest && ctx.isContinuationRequest(args)) {
+            // Géré par le système de troncature du serveur
+            return null;
+        }
+        
+        // Traitement principal
+        const response = await handleConversation(senderId, args, ctx);
+        
+        const elapsed = Date.now() - startTime;
+        console.log(`✅ Réponse ${senderId} (${elapsed}ms)`);
+        
+        return response;
         
     } catch (error) {
-        log.warning(`⚠️ Erreur détection IA: ${error.message}`);
-        return await fallbackStrictKeywordDetection(message, log);
-    }
-}
-
-async function fallbackStrictKeywordDetection(message, log) {
-    const lowerMessage = message.toLowerCase().trim();
-    
-    const strictPatterns = [
-        { command: 'help', patterns: [/^(aide|help|guide)$/] },
-        { command: 'image', patterns: [/^dessine(-moi)?\s+/, /^(crée|génère)\s+(une\s+)?(image|dessin)/] },
-        { command: 'vision', patterns: [/^regarde\s+(cette\s+)?(image|photo)/, /^(analyse|décris)\s+(cette\s+)?(image|photo)/] },
-        { command: 'music', patterns: [/^(joue|lance|play)\s+/, /^(trouve|cherche)\s+.*\s+(musique|chanson)/] },
-        { command: 'clan', patterns: [/^(rejoindre|créer|mon)\s+clan/, /^bataille\s+de\s+clan/] },
-        { command: 'rank', patterns: [/^(mon\s+)?(niveau|rang|stats|progression)/, /^mes\s+(stats|points)/] },
-        { command: 'contact', patterns: [/^contacter\s+(admin|administrateur)/, /^signaler\s+problème/] },
-        { command: 'weather', patterns: [/^(météo|quel\s+temps|température)/] }
-    ];
-    
-    for (const { command, patterns } of strictPatterns) {
-        for (const pattern of patterns) {
-            if (pattern.test(lowerMessage)) {
-                log.info(`🔑 Fallback: /${command}`);
-                return {
-                    shouldExecute: true,
-                    command: command,
-                    args: message,
-                    confidence: 0.9,
-                    method: 'fallback_strict'
-                };
-            }
+        console.error(`❌ Erreur chat ${senderId}: ${error.message}`);
+        
+        const errorMsg = "Oups ! Petite erreur... Réessaie ? 💫";
+        ctx.addToMemory(String(senderId), 'assistant', errorMsg);
+        return errorMsg;
+        
+    } finally {
+        // Toujours libérer
+        markRequestInactive(senderId);
+        
+        // Stats
+        const elapsed = Date.now() - startTime;
+        if (elapsed > 5000) {
+            console.warn(`⚠️ Requête lente: ${senderId} (${elapsed}ms)`);
         }
     }
-    
-    return { shouldExecute: false };
-}
+};
 
-// ========================================
-// 📞 CONTACT ADMIN
-// ========================================
+// ═══════════════════════════════════════════════════════════════════════════
+// 🧹 NETTOYAGE AUTOMATIQUE (Render Free)
+// ═══════════════════════════════════════════════════════════════════════════
 
-function detectContactAdminIntention(message) {
-    const lowerMessage = message.toLowerCase();
-    
-    const contactPatterns = [
-        { patterns: [/(?:contacter|parler|écrire).*?(?:admin|administrateur|créateur|durand)/i], reason: 'contact_direct' },
-        { patterns: [/(?:problème|bug|erreur).*?(?:grave|urgent|important)/i], reason: 'probleme_technique' },
-        { patterns: [/(?:signaler|reporter|dénoncer)/i], reason: 'signalement' },
-        { patterns: [/(?:suggestion|propose|idée).*?(?:amélioration|nouvelle)/i], reason: 'suggestion' },
-        { patterns: [/(?:qui a créé|créateur|développeur).*?(?:bot|nakamabot)/i], reason: 'question_creation' },
-        { patterns: [/(?:plainte|réclamation|pas content|mécontent)/i], reason: 'plainte' }
-    ];
-    
-    for (const category of contactPatterns) {
-        for (const pattern of category.patterns) {
-            if (pattern.test(message)) {
-                if (category.reason === 'question_creation') {
-                    return { shouldContact: false };
-                }
-                return {
-                    shouldContact: true,
-                    reason: category.reason,
-                    extractedMessage: message
-                };
-            }
-        }
-    }
-    
-    return { shouldContact: false };
-}
+let cleanupInterval = null;
 
-function generateContactSuggestion(reason, extractedMessage) {
-    const reasonMessages = {
-        'contact_direct': { title: "💌 **Contact Admin**", message: "Je vois que tu veux contacter les administrateurs !" },
-        'probleme_technique': { title: "🔧 **Problème Technique**", message: "Problème technique détecté !" },
-        'signalement': { title: "🚨 **Signalement**", message: "Tu veux signaler quelque chose d'important !" },
-        'suggestion': { title: "💡 **Suggestion**", message: "Tu as une suggestion d'amélioration !" },
-        'plainte': { title: "📝 **Réclamation**", message: "Tu as une réclamation à formuler !" }
-    };
+function startAutoCleanup() {
+    if (cleanupInterval) return;
     
-    const reasonData = reasonMessages[reason] || {
-        title: "📞 **Contact Admin**",
-        message: "Il semble que tu aies besoin de contacter les administrateurs !"
-    };
-    
-    const preview = extractedMessage.length > 60 ? extractedMessage.substring(0, 60) + "..." : extractedMessage;
-    
-    return `${reasonData.title}\n\n${reasonData.message}\n\n💡 **Solution :** Utilise \`/contact [ton message]\` pour les contacter directement.\n\n📝 **Ton message :** "${preview}"\n\n⚡ **Limite :** 2 messages par jour\n📨 Tu recevras une réponse personnalisée !\n\n💕 En attendant, je peux t'aider avec d'autres choses ! Tape /help pour voir mes fonctionnalités !`;
-}
-
-// ========================================
-// ⚙️ EXÉCUTION COMMANDES
-// ========================================
-
-async function executeCommandFromChat(senderId, commandName, args, ctx) {
-    try {
-        const COMMANDS = global.COMMANDS || new Map();
-        
-        if (!COMMANDS.has(commandName)) {
-            const path = require('path');
-            const fs = require('fs');
-            const commandPath = path.join(__dirname, `${commandName}.js`);
-            
-            if (fs.existsSync(commandPath)) {
-                delete require.cache[require.resolve(commandPath)];
-                const commandModule = require(commandPath);
-                
-                if (typeof commandModule === 'function') {
-                    const result = await commandModule(senderId, args, ctx);
-                    return { success: true, result };
-                }
-            }
-        } else {
-            const commandFunction = COMMANDS.get(commandName);
-            const result = await commandFunction(senderId, args, ctx);
-            return { success: true, result };
-        }
-        
-        return { success: false, error: `Commande ${commandName} non trouvée` };
-        
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-}
-
-async function generateContextualResponse(originalMessage, commandResult, commandName, ctx) {
-    if (typeof commandResult === 'object' && commandResult.type === 'image') {
-        return commandResult;
-    }
-    
-    try {
-        const contextPrompt = `Utilisateur: "${originalMessage.substring(0, 100)}"\nExécuté: /${commandName}\nRésultat: "${commandResult.toString().substring(0, 200)}"\n\nRéponds naturellement (max 300 chars). Markdown: **gras**, ### titres (pas italique).`;
-
-        const response = await callGeminiWithRotation(contextPrompt);
-        return response || commandResult;
-        
-    } catch (error) {
-        const { callMistralAPI } = ctx;
+    cleanupInterval = setInterval(() => {
         try {
-            const response = await mistralCircuit.execute(
-                async () => await callMistralAPI([
-                    { role: "system", content: "Réponds naturellement. Markdown simple." },
-                    { role: "user", content: `User: "${originalMessage.substring(0, 80)}"\nRésultat: "${commandResult.toString().substring(0, 150)}"\nPrésente (max 200 chars)` }
-                ], 200, 0.7),
-                null
-            );
+            activeRequests.cleanup();
+            recentMessages.cleanup();
             
-            return response || commandResult;
-        } catch (mistralError) {
-            return commandResult;
+            // Force GC si disponible
+            if (global.gc && Math.random() < 0.1) {
+                global.gc();
+                console.log('🧹 GC forcé');
+            }
+            
+            console.log(`🧹 Cleanup: ${activeRequests.size} actifs, ${recentMessages.size} récents`);
+            
+        } catch (error) {
+            console.error(`❌ Erreur cleanup: ${error.message}`);
         }
+    }, CONFIG.GC_INTERVAL);
+}
+
+function stopAutoCleanup() {
+    if (cleanupInterval) {
+        clearInterval(cleanupInterval);
+        cleanupInterval = null;
     }
 }
 
-// ========================================
-// 📤 EXPORTS
-// ========================================
+// Démarrer au chargement
+startAutoCleanup();
 
-module.exports.detectIntelligentCommands = detectIntelligentCommands;
-module.exports.VALID_COMMANDS = VALID_COMMANDS;
-module.exports.executeCommandFromChat = executeCommandFromChat;
-module.exports.detectContactAdminIntention = detectContactAdminIntention;
-module.exports.decideSearchNecessity = decideSearchNecessity;
-module.exports.performIntelligentSearch = performIntelligentSearch;
-module.exports.generateNaturalResponseWithContext = generateNaturalResponseWithContext;
-module.exports.callGeminiWithRotation = callGeminiWithRotation;
-module.exports.getNextGeminiKey = getNextGeminiKey;
-module.exports.markKeyAsFailed = markKeyAsFailed;
+// ═══════════════════════════════════════════════════════════════════════════
+// 📤 EXPORTS
+// ═══════════════════════════════════════════════════════════════════════════
 
 module.exports.parseMarkdown = parseMarkdown;
 module.exports.toBold = toBold;
-module.exports.toItalic = toItalic;
-module.exports.toUnderline = toUnderline;
-module.exports.toStrikethrough = toStrikethrough;
+module.exports.callGemini = callGemini;
+module.exports.callMistral = callMistral;
+module.exports.detectCreatorContactRequest = detectCreatorContactRequest;
+module.exports.generateCreatorContactResponse = generateCreatorContactResponse;
 
-module.exports.LRUCache = LRUCache;
+// Exports système
+module.exports.OptimizedLRUCache = OptimizedLRUCache;
 module.exports.UserRateLimiter = UserRateLimiter;
 module.exports.CircuitBreaker = CircuitBreaker;
-module.exports.SaveQueue = SaveQueue;
-
+module.exports.ProcessingQueue = ProcessingQueue;
 module.exports.rateLimiter = rateLimiter;
 module.exports.geminiCircuit = geminiCircuit;
 module.exports.mistralCircuit = mistralCircuit;
-module.exports.saveQueue = saveQueue;
-module.exports.activeRequests = activeRequests;
-module.exports.recentMessages = recentMessages;
+module.exports.startAutoCleanup = startAutoCleanup;
+module.exports.stopAutoCleanup = stopAutoCleanup;
+
+// Exports stats
+module.exports.getStats = () => ({
+    activeRequests: activeRequests.size,
+    recentMessages: recentMessages.size,
+    geminiState: geminiCircuit.getState(),
+    mistralState: mistralCircuit.getState(),
+    queueSize: processingQueue.size,
+    queueActive: processingQueue.activeCount,
+    config: CONFIG
+});
+
+console.log('✅ Commande /chat v5.0 chargée (Render Free Optimized)');
+console.log(`👥 Créateurs: Durand DJOUKAM & Myronne POUKEN (🇨🇲 Camerounais)`);
+console.log(`⚙️ Config: ${CONFIG.RATE_LIMIT_MAX} msgs/min, ${CONFIG.MAX_CONTEXT_MESSAGES} contexte, ${CONFIG.REQUEST_TIMEOUT}ms timeout`);
