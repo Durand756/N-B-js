@@ -103,29 +103,64 @@ async function getPostComments(postId, pageAccessToken) {
 }
 
 /**
- * Vérifie si un commentaire a déjà une réponse
+ * Vérifie si la PAGE a déjà répondu à un commentaire
  */
-async function hasReply(commentId, pageAccessToken) {
+async function hasPageReply(commentId, pageId, pageAccessToken) {
     try {
         const response = await axios.get(
             `https://graph.facebook.com/v18.0/${commentId}/comments`,
             {
                 params: {
                     access_token: pageAccessToken,
-                    limit: 1
+                    fields: 'from',
+                    limit: 100
                 },
                 timeout: 5000
             }
         );
         
-        return response.data.data && response.data.data.length > 0;
+        // Vérifier si la page a répondu
+        if (response.data.data && response.data.data.length > 0) {
+            for (const reply of response.data.data) {
+                // Si une réponse vient de la page elle-même
+                if (reply.from && reply.from.id === pageId) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     } catch (error) {
+        console.error(`⚠️ Erreur vérification réponse: ${error.message}`);
         return false;
     }
 }
 
 /**
- * Récupère tous les commentaires non répondus
+ * Récupère l'ID de la page
+ */
+async function getPageId(pageAccessToken) {
+    try {
+        const response = await axios.get(
+            `https://graph.facebook.com/v18.0/me`,
+            {
+                params: {
+                    access_token: pageAccessToken,
+                    fields: 'id'
+                },
+                timeout: 5000
+            }
+        );
+        
+        return response.data.id;
+    } catch (error) {
+        console.error(`❌ Erreur récupération ID page: ${error.message}`);
+        return null;
+    }
+}
+
+/**
+ * Récupère tous les commentaires non répondus par la page
  */
 async function getUnrepliedComments(pageAccessToken, log) {
     const cacheKey = 'unreplied_comments';
@@ -142,15 +177,32 @@ async function getUnrepliedComments(pageAccessToken, log) {
     
     log.info(`🔍 Récupération des commentaires non répondus...`);
     
+    // Récupérer l'ID de la page
+    const pageId = await getPageId(pageAccessToken);
+    if (!pageId) {
+        log.error(`❌ Impossible de récupérer l'ID de la page`);
+        return [];
+    }
+    
+    log.info(`✅ ID de la page: ${pageId}`);
+    
     const posts = await getRecentPosts(pageAccessToken);
+    log.info(`📝 ${posts.length} posts récupérés`);
+    
     const unrepliedComments = [];
     
     for (const post of posts) {
         const comments = await getPostComments(post.id, pageAccessToken);
+        log.info(`💬 Post ${post.id}: ${comments.length} commentaires`);
         
         for (const comment of comments) {
-            // Vérifier si pas de réponse
-            const replied = await hasReply(comment.id, pageAccessToken);
+            // Ignorer les commentaires de la page elle-même
+            if (comment.from.id === pageId) {
+                continue;
+            }
+            
+            // Vérifier si la page a déjà répondu
+            const replied = await hasPageReply(comment.id, pageId, pageAccessToken);
             
             if (!replied) {
                 unrepliedComments.push({
@@ -162,6 +214,10 @@ async function getUnrepliedComments(pageAccessToken, log) {
                     message: comment.message,
                     createdTime: comment.created_time
                 });
+                
+                log.debug(`➕ Commentaire non répondu: ${comment.from.name} - "${comment.message.substring(0, 50)}..."`);
+            } else {
+                log.debug(`✅ Déjà répondu: ${comment.from.name}`);
             }
         }
     }
@@ -389,7 +445,8 @@ function formatCommentsList(comments, maxDisplay = 10) {
     message += `\n**Commandes disponibles:**\n`;
     message += `• \`/reply auto\` - Répond automatiquement à tous\n`;
     message += `• \`/reply [ID]\` - Répond à un commentaire spécifique\n`;
-    message += `• \`/reply stats\` - Voir les statistiques`;
+    message += `• \`/reply stats\` - Voir les statistiques\n`;
+    message += `• \`/reply debug\` - Diagnostic complet`;
     
     return message;
 }
@@ -428,6 +485,63 @@ module.exports = async function cmdReply(senderId, args, ctx) {
     const command = args.trim().toLowerCase();
     
     try {
+        // ═══════════════════════════════════════════════════════════════════
+        // 🐛 COMMANDE: /reply debug
+        // ═══════════════════════════════════════════════════════════════════
+        if (command === 'debug') {
+            await sendMessage(senderId, "🐛 Mode debug activé...");
+            
+            let debugMsg = `🔍 **Diagnostic Complet**\n\n`;
+            
+            // Vérifier token
+            debugMsg += `✅ Token: ${PAGE_ACCESS_TOKEN ? 'Configuré' : '❌ Manquant'}\n`;
+            
+            // Récupérer ID page
+            const pageId = await getPageId(PAGE_ACCESS_TOKEN);
+            debugMsg += `✅ ID Page: ${pageId || '❌ Erreur'}\n\n`;
+            
+            // Récupérer posts
+            const posts = await getRecentPosts(PAGE_ACCESS_TOKEN);
+            debugMsg += `📝 **Posts récents:** ${posts.length}\n\n`;
+            
+            if (posts.length > 0) {
+                const firstPost = posts[0];
+                debugMsg += `Post le plus récent:\n`;
+                debugMsg += `ID: ${firstPost.id}\n`;
+                debugMsg += `Message: "${(firstPost.message || '').substring(0, 100)}..."\n\n`;
+                
+                // Récupérer commentaires du premier post
+                const comments = await getPostComments(firstPost.id, PAGE_ACCESS_TOKEN);
+                debugMsg += `💬 **Commentaires:** ${comments.length}\n\n`;
+                
+                if (comments.length > 0) {
+                    debugMsg += `Détails des 3 premiers:\n\n`;
+                    
+                    for (let i = 0; i < Math.min(3, comments.length); i++) {
+                        const comment = comments[i];
+                        const isPageComment = comment.from.id === pageId;
+                        const replied = await hasPageReply(comment.id, pageId, PAGE_ACCESS_TOKEN);
+                        
+                        debugMsg += `${i + 1}. ${comment.from.name} (${comment.from.id})\n`;
+                        debugMsg += `   Est la page: ${isPageComment ? 'OUI' : 'NON'}\n`;
+                        debugMsg += `   Page a répondu: ${replied ? 'OUI' : 'NON'}\n`;
+                        debugMsg += `   Message: "${comment.message.substring(0, 80)}..."\n\n`;
+                    }
+                } else {
+                    debugMsg += `Aucun commentaire trouvé sur ce post.\n\n`;
+                }
+            } else {
+                debugMsg += `Aucun post récent trouvé.\n\n`;
+            }
+            
+            // Vider cache
+            commentCache.clear();
+            debugMsg += `\n🗑️ Cache vidé.\n`;
+            debugMsg += `\n💡 Réessaie \`/reply\` maintenant !`;
+            
+            return debugMsg;
+        }
+        
         // ═══════════════════════════════════════════════════════════════════
         // 📊 COMMANDE: /reply stats
         // ═══════════════════════════════════════════════════════════════════
