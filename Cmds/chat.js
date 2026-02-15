@@ -569,7 +569,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     try {
         // 🆕 AJOUT : Message de traitement
         if (args.trim() && !isContinuationRequest(args)) {
-            const processingMessage = "🕒 Traitement en cours...";
+            const processingMessage = "⏳...";
             addToMemory(String(senderId), 'assistant', processingMessage);
             await ctx.sendMessage(senderId, processingMessage);
         }
@@ -743,12 +743,14 @@ Analyse ce message utilisateur et décide s'il nécessite une recherche web exte
 
 CRITÈRES POUR RECHERCHE EXTERNE:
 ✅ OUI si:
-- Informations récentes (actualités, événements 2025-2026)
+- Informations récentes (actualités, événements 2023-2026)
+- Résultats sportifs récents (CAN, Coupe, championnat, match, vainqueur, buteur)
 - Données factuelles spécifiques (prix actuels, statistiques, dates précises)
 - Informations locales/géographiques spécifiques
 - Recherche de produits/services/entreprises précis
 - Questions sur des personnes publiques récentes
-- Données météo, cours de bourse, résultats sportifs
+- Données météo, cours de bourse, classements sportifs
+- Questions avec "dernier", "dernière", "récent", "qui a gagné", "qui a remporté"
 
 ❌ NON si:
 - Conversations générales/philosophiques
@@ -757,7 +759,7 @@ CRITÈRES POUR RECHERCHE EXTERNE:
 - Créativité (histoires, poèmes)
 - Explications de concepts généraux
 - Calculs/logique
-- Questions existantes dans ma base de connaissances
+- Questions existantes dans ma base de connaissances ancienne
 
 MESSAGE UTILISATEUR: "${userMessage}"
 
@@ -798,12 +800,14 @@ function detectSearchKeywords(message) {
     const lowerMessage = message.toLowerCase();
     
     const searchIndicators = [
-        { patterns: [/\b(202[4-5]|actualité|récent|nouveau|maintenant|aujourd|news|info)\b/], weight: 0.9 },
+        { patterns: [/\b(202[3-6]|actualité|récent|nouveau|maintenant|aujourd|news|info|dernière?|dernier)\b/], weight: 0.9 },
         { patterns: [/\b(prix|coût|combien|tarif)\b.*\b(euros?|dollars?|€|\$)\b/], weight: 0.8 },
         { patterns: [/\b(météo|temps|température)\b.*\b(aujourd|demain|cette semaine)\b/], weight: 0.9 },
         { patterns: [/\b(où|address|lieu|localisation|carte)\b/], weight: 0.7 },
         { patterns: [/\b(qui est|biographie|âge)\b.*\b[A-Z][a-z]+\s[A-Z][a-z]+/], weight: 0.8 },
-        { patterns: [/\b(résultats?|score|match|compétition)\b.*\b(sport|foot|tennis|basket)\b/], weight: 0.8 }
+        { patterns: [/\b(résultats?|score|match|compétition|gagné|remporté|vainqueur|champion)\b.*\b(sport|foot|tennis|basket|CAN|coupe|finale)\b/], weight: 0.9 },
+        { patterns: [/\b(CAN|coupe d'afrique|championnat|tournoi|ligue|équipe nationale)\b/i], weight: 0.95 },
+        { patterns: [/\b(buteur|but|goal|marqué)\b.*\b(dernier|dernière|récent|actuel)\b/], weight: 0.9 }
     ];
     
     let totalWeight = 0;
@@ -948,33 +952,42 @@ async function generateNaturalResponseWithContext(originalQuery, searchResults, 
             ).join('\n') + '\n';
         }
         
-        // 🚀 OPTIMISÉ: Prompt compressé
-        const contextualPrompt = `Tu es NakamaBot, IA empathique et créative.
+        // 🚀 OPTIMISÉ: Prompt compressé et naturel
+        const contextualPrompt = `Tu es NakamaBot, IA conversationnelle amicale.
 
-CONTEXTE: ${dateTime} (garde en mémoire)
+DATE: ${dateTime} (ne mentionne que si demandé)
 
-HISTORIQUE:
-${conversationHistory || "Début"}
+${conversationHistory ? `HISTORIQUE:\n${conversationHistory}\n` : 'Début de conversation\n'}
 
-QUESTION: "${originalQuery}"
+QUESTION ACTUELLE: "${originalQuery}"
 
-INFOS:
+INFOS TROUVÉES:
 ${resultsText}
 
-INSTRUCTIONS:
-- Contexte précédent connu
-- Ton conversationnel, emojis modérés
-- Max 1500 chars
-- Ne mentionne JAMAIS de recherche
-- Markdown: **gras**, ### titres (pas italique)
+STYLE:
+- Réponds NATURELLEMENT comme dans une vraie conversation
+- 2-4 phrases courtes et directes
+- Ne dis JAMAIS que tu as cherché/recherché
+- Si question de suivi (ex: "il a marqué combien"), utilise le contexte
+- Pas de formatage excessif
+- Max 1200 chars
 
-RÉPONSE:`;
+Ta réponse naturelle:`;
 
         const response = await callGeminiWithRotation(contextualPrompt);
         
         if (response && response.trim()) {
+            // 🔧 FIX: Supprimer le préfixe "NakamaBot:" si présent
+            let cleanResponse = response.trim();
+            if (cleanResponse.startsWith('NakamaBot:')) {
+                cleanResponse = cleanResponse.substring('NakamaBot:'.length).trim();
+            }
+            if (cleanResponse.startsWith('NakamaBot :')) {
+                cleanResponse = cleanResponse.substring('NakamaBot :'.length).trim();
+            }
+            
             log.info(`🎭 Réponse contextuelle Gemini`);
-            return response;
+            return cleanResponse;
         }
         
         throw new Error('Réponse Gemini vide');
@@ -1051,24 +1064,30 @@ async function handleConversationWithFallback(senderId, args, ctx) {
         ).join('\n') + '\n';
     }
     
-    // 🚀 OPTIMISÉ: Prompt système compressé
-    const systemPrompt = `Tu es NakamaBot, IA créée par Durand et Myronne.
+    // 🚀 OPTIMISÉ: Prompt système compressé et naturel
+    const systemPrompt = `Tu es NakamaBot, IA amicale créée par Durand et Myronne.
 
-CONTEXTE: ${dateTime}
+DATE: ${dateTime} (garde en mémoire, ne mentionne que si demandé)
 
-CAPACITÉS: Images, Analyse, Anime, Musique, Clans, Stats
+${conversationHistory ? `CONTEXTE PRÉCÉDENT:\n${conversationHistory}\n` : ''}
 
-RÈGLES:
-- Max 1500 chars
-- Français/contexte
-- Emojis modérés
-${messageCount >= 5 ? '- Suggère /help si besoin' : ''}
-- Support: Durand/Myronne
-- Markdown: **gras**, ### titres (pas italique)
+STYLE DE RÉPONSE:
+- Ton NATUREL et CONVERSATIONNEL (comme un ami)
+- Pas de liste à puces ni de formatage excessif
+- Réponses COURTES et DIRECTES (2-4 phrases max sauf si détails demandés)
+- Emojis modérés (1-2 par réponse)
+- Pas de "NakamaBot:" en préfixe
+- Évite les formulations robotiques ("Voici", "Je peux", "N'hésite pas")
+${messageCount >= 5 ? '- Suggère /help si l\'utilisateur semble perdu' : ''}
 
-${conversationHistory ? `Historique:\n${conversationHistory}` : ''}
+CAPACITÉS (mentionne seulement si pertinent):
+Images, Analyse, Anime, Musique, Clans, Stats
 
-User: ${args}`;
+Max 800 chars. Réponds naturellement sans formatage Markdown excessif.
+
+Message utilisateur: ${args}
+
+Ta réponse (courte et naturelle):`;
 
     const senderIdStr = String(senderId);
 
@@ -1076,7 +1095,16 @@ User: ${args}`;
         const geminiResponse = await callGeminiWithRotation(systemPrompt);
         
         if (geminiResponse && geminiResponse.trim()) {
-            const styledResponse = parseMarkdown(geminiResponse);
+            // 🔧 FIX: Supprimer le préfixe "NakamaBot:" si présent
+            let cleanResponse = geminiResponse.trim();
+            if (cleanResponse.startsWith('NakamaBot:')) {
+                cleanResponse = cleanResponse.substring('NakamaBot:'.length).trim();
+            }
+            if (cleanResponse.startsWith('NakamaBot :')) {
+                cleanResponse = cleanResponse.substring('NakamaBot :'.length).trim();
+            }
+            
+            const styledResponse = parseMarkdown(cleanResponse);
             
             if (styledResponse.length > 2000) {
                 log.info(`📏 Réponse longue (${styledResponse.length} chars)`);
