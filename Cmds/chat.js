@@ -42,7 +42,7 @@ const CREATORS_INFO = {
     durand: {
         fullName: "Durand DJOUKAM",
         nationality: "Camerounais 🇨🇲",
-        phone: "+237 651 104 356" // Remplacer par le vrai numéro
+        phone: "+237 XXX XXX XXX" // Remplacer par le vrai numéro
     },
     myronne: {
         fullName: "Myronne POUKEN",
@@ -408,7 +408,10 @@ async function callGemini(prompt) {
         async () => {
             const key = getNextGeminiKey();
             const genAI = new GoogleGenerativeAI(key);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            // Utiliser gemini-1.5-flash-latest qui fonctionne avec v1beta
+            const model = genAI.getGenerativeModel({ 
+                model: "gemini-1.5-flash-latest"
+            });
             
             // Timeout strict
             const response = await Promise.race([
@@ -585,36 +588,71 @@ Réponds UNIQUEMENT en JSON:
   "reason": "explication brève"
 }`;
 
-        const response = await callGemini(detectionPrompt);
+        let response = null;
         
-        // Parser réponse JSON
-        const jsonMatch = response.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            const decision = JSON.parse(jsonMatch[0]);
+        // Tentative Gemini d'abord
+        try {
+            response = await callGemini(detectionPrompt);
+        } catch (geminiError) {
+            console.warn(`⚠️ Gemini échec détection, tentative Mistral: ${geminiError.message}`);
             
-            console.log(`🤖 Décision recherche: ${decision.needsSearch ? 'OUI' : 'NON'} (${decision.confidence})`);
-            console.log(`📝 Raison: ${decision.reason}`);
-            
-            return decision;
+            // Fallback Mistral
+            try {
+                const messages = [
+                    {
+                        role: "system",
+                        content: "Tu es un système de détection. Réponds UNIQUEMENT en JSON."
+                    },
+                    {
+                        role: "user",
+                        content: detectionPrompt
+                    }
+                ];
+                
+                response = await callMistral(messages, 200);
+            } catch (mistralError) {
+                console.warn(`⚠️ Mistral échec aussi: ${mistralError.message}`);
+            }
         }
         
-        throw new Error('Format JSON invalide');
+        if (response) {
+            // Parser réponse JSON
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const decision = JSON.parse(jsonMatch[0]);
+                
+                console.log(`🤖 Décision recherche: ${decision.needsSearch ? 'OUI' : 'NON'} (${decision.confidence})`);
+                console.log(`📝 Raison: ${decision.reason}`);
+                
+                return decision;
+            }
+        }
+        
+        throw new Error('Aucune IA disponible');
         
     } catch (error) {
         console.warn(`⚠️ Erreur détection recherche: ${error.message}`);
         
-        // Fallback simple par mots-clés
+        // Fallback simple par mots-clés (très fiable)
         const lower = userMessage.toLowerCase();
-        const needsSearch = 
-            /\b(qui a (gagné|gagne|remporté|remporte)|vainqueur|champion|dernier|dernière|récent)\b/.test(lower) ||
-            /\b(202[4-6]|aujourd'hui|maintenant|actuel|récemment)\b/.test(lower) ||
-            /\b(résultat|score|finale|compétition|tournoi|coupe|championnat)\b/.test(lower);
+        
+        // Patterns très spécifiques pour événements récents
+        const definiteSearchPatterns = [
+            /\b(qui a (gagné|gagne|remporté|remporte))\b.*\b(dernier|dernière|récent|actuel|202[4-6])\b/,
+            /\b(dernier|dernière)\b.*\b(vainqueur|champion|gagnant|finale)\b/,
+            /\b(résultat|score|classement)\b.*\b(202[4-6]|actuel|récent|dernier|aujourd'hui)\b/,
+            /\b(coupe|championnat|tournoi|compétition)\b.*\b(202[4-6]|actuel|récent|dernier)\b/
+        ];
+        
+        const needsSearch = definiteSearchPatterns.some(pattern => pattern.test(lower));
+        
+        console.log(`🔑 Fallback keywords: ${needsSearch ? 'RECHERCHE' : 'NORMAL'}`);
         
         return {
             needsSearch,
-            confidence: needsSearch ? 0.8 : 0.3,
+            confidence: needsSearch ? 0.9 : 0.3,
             searchQuery: userMessage,
-            reason: 'fallback_keywords'
+            reason: 'fallback_keywords_advanced'
         };
     }
 }
@@ -657,24 +695,60 @@ RÈGLES CRITIQUES:
 
 Ta réponse basée sur les infos trouvées:`;
 
-        const response = await callGemini(prompt);
+        // Tentative Gemini d'abord
+        let response = null;
         
-        if (response) {
-            // Nettoyer préfixes
-            let clean = response.replace(/^(NakamaBot|Bot)\s*:\s*/i, '').trim();
-            console.log(`✅ Réponse générée avec recherche web`);
-            return clean;
+        try {
+            response = await callGemini(prompt);
+            
+            if (response) {
+                // Nettoyer préfixes
+                let clean = response.replace(/^(NakamaBot|Bot)\s*:\s*/i, '').trim();
+                console.log(`✅ Réponse générée avec recherche web (Gemini)`);
+                return clean;
+            }
+        } catch (geminiError) {
+            console.warn(`⚠️ Gemini échec, tentative Mistral: ${geminiError.message}`);
         }
         
-        throw new Error('Réponse vide');
+        // Fallback Mistral si Gemini échoue
+        try {
+            const messages = [
+                {
+                    role: "system",
+                    content: `Tu es NakamaBot. Réponds UNIQUEMENT avec les infos web fournies. Court et naturel. Max 400 chars.`
+                },
+                {
+                    role: "user",
+                    content: `Question: "${userMessage}"\n\nInfos web trouvées:\n${resultsText}\n\nRéponds naturellement en utilisant CES infos (pas tes connaissances):`
+                }
+            ];
+            
+            response = await callMistral(messages, 300);
+            
+            if (response) {
+                console.log(`✅ Réponse générée avec recherche web (Mistral)`);
+                return response;
+            }
+        } catch (mistralError) {
+            console.error(`❌ Mistral échec aussi: ${mistralError.message}`);
+        }
+        
+        // Dernier recours : résumé simple du premier résultat
+        const topResult = searchResults[0];
+        if (topResult) {
+            return `D'après les dernières infos, ${topResult.snippet} 💡`;
+        }
+        
+        throw new Error('Toutes les IAs ont échoué');
         
     } catch (error) {
         console.error(`❌ Erreur génération avec recherche: ${error.message}`);
         
-        // Fallback simple
+        // Fallback final très simple
         const topResult = searchResults[0];
         if (topResult) {
-            return `D'après les dernières infos, ${topResult.snippet} 💡`;
+            return `Voici ce que j'ai trouvé : ${topResult.snippet.substring(0, 200)} 💡`;
         }
         
         return null;
