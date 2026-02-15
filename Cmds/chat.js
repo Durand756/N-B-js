@@ -26,6 +26,7 @@
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
+const cheerio = require("cheerio");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🔐 CONFIGURATION & CONSTANTES
@@ -41,7 +42,7 @@ const CREATORS_INFO = {
     durand: {
         fullName: "Durand DJOUKAM",
         nationality: "Camerounais 🇨🇲",
-        phone: "+237 XXX XXX XXX" // Remplacer par le vrai numéro
+        phone: "+237 651 104 356" // Remplacer par le vrai numéro
     },
     myronne: {
         fullName: "Myronne POUKEN",
@@ -407,7 +408,7 @@ async function callGemini(prompt) {
         async () => {
             const key = getNextGeminiKey();
             const genAI = new GoogleGenerativeAI(key);
-            const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
             
             // Timeout strict
             const response = await Promise.race([
@@ -469,6 +470,215 @@ async function callMistral(messages, maxTokens = 200) {
         },
         null
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔍 RECHERCHE DUCKDUCKGO (GRATUITE)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const searchCache = new OptimizedLRUCache(500);
+const SEARCH_CACHE_TTL = 1800000; // 30 minutes
+
+/**
+ * Recherche DuckDuckGo HTML (gratuit, sans API)
+ */
+async function searchDuckDuckGo(query, maxResults = 5) {
+    const cacheKey = `ddg_${query.toLowerCase()}`;
+    
+    // Vérifier cache
+    const cached = searchCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
+        console.log(`💾 Cache hit DuckDuckGo: ${query}`);
+        return cached.results;
+    }
+    
+    try {
+        console.log(`🔍 DuckDuckGo recherche: "${query}"`);
+        
+        const response = await Promise.race([
+            axios.post(
+                'https://html.duckduckgo.com/html/',
+                `q=${encodeURIComponent(query)}&kl=fr-fr`,
+                {
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    }
+                }
+            ),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout recherche')), 8000)
+            )
+        ]);
+        
+        if (response.status !== 200) {
+            console.warn(`⚠️ DuckDuckGo erreur: ${response.status}`);
+            return null;
+        }
+        
+        const $ = cheerio.load(response.data);
+        const results = [];
+        
+        $('.result').slice(0, maxResults).each((i, elem) => {
+            const $result = $(elem);
+            const title = $result.find('.result__title').text().trim();
+            const snippet = $result.find('.result__snippet').text().trim();
+            const link = $result.find('.result__url').attr('href') || 
+                        $result.find('.result__a').attr('href') || '';
+            
+            if (title && snippet) {
+                results.push({
+                    title,
+                    snippet,
+                    link,
+                    source: 'duckduckgo'
+                });
+            }
+        });
+        
+        if (results.length > 0) {
+            searchCache.set(cacheKey, {
+                results,
+                timestamp: Date.now()
+            });
+            
+            console.log(`✅ DuckDuckGo: ${results.length} résultats trouvés`);
+            return results;
+        }
+        
+        console.warn(`⚠️ DuckDuckGo: aucun résultat pour "${query}"`);
+        return null;
+        
+    } catch (error) {
+        console.error(`❌ Erreur DuckDuckGo: ${error.message}`);
+        return null;
+    }
+}
+
+/**
+ * Détection IA intelligente des requêtes nécessitant une recherche web
+ */
+async function needsWebSearch(userMessage) {
+    try {
+        const detectionPrompt = `Analyse cette question et décide si elle nécessite une RECHERCHE WEB récente.
+
+Question: "${userMessage}"
+
+NÉCESSITE une recherche si :
+- Événements/résultats récents (2024-2026)
+- "qui a gagné", "vainqueur", "champion", "dernier", "dernière"
+- Sports, actualités, élections, compétitions
+- Prix, stats, données actuelles
+- "récent", "actuel", "maintenant", "aujourd'hui"
+
+NE NÉCESSITE PAS si :
+- Conversation générale
+- Concepts/définitions de base
+- Questions sur le bot
+- Histoires anciennes (avant 2023)
+
+Réponds UNIQUEMENT en JSON:
+{
+  "needsSearch": true/false,
+  "confidence": 0.0-1.0,
+  "searchQuery": "requête optimisée pour recherche",
+  "reason": "explication brève"
+}`;
+
+        const response = await callGemini(detectionPrompt);
+        
+        // Parser réponse JSON
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            const decision = JSON.parse(jsonMatch[0]);
+            
+            console.log(`🤖 Décision recherche: ${decision.needsSearch ? 'OUI' : 'NON'} (${decision.confidence})`);
+            console.log(`📝 Raison: ${decision.reason}`);
+            
+            return decision;
+        }
+        
+        throw new Error('Format JSON invalide');
+        
+    } catch (error) {
+        console.warn(`⚠️ Erreur détection recherche: ${error.message}`);
+        
+        // Fallback simple par mots-clés
+        const lower = userMessage.toLowerCase();
+        const needsSearch = 
+            /\b(qui a (gagné|gagne|remporté|remporte)|vainqueur|champion|dernier|dernière|récent)\b/.test(lower) ||
+            /\b(202[4-6]|aujourd'hui|maintenant|actuel|récemment)\b/.test(lower) ||
+            /\b(résultat|score|finale|compétition|tournoi|coupe|championnat)\b/.test(lower);
+        
+        return {
+            needsSearch,
+            confidence: needsSearch ? 0.8 : 0.3,
+            searchQuery: userMessage,
+            reason: 'fallback_keywords'
+        };
+    }
+}
+
+/**
+ * Génère une réponse naturelle avec les résultats de recherche
+ */
+async function generateResponseWithSearch(userMessage, searchResults, context) {
+    if (!searchResults || searchResults.length === 0) {
+        return null;
+    }
+    
+    try {
+        // Formater les résultats
+        const resultsText = searchResults.map((r, i) => 
+            `[${i+1}] ${r.title}\n${r.snippet}`
+        ).join('\n\n');
+        
+        // Contexte conversation
+        let history = "";
+        if (context && context.length > 0) {
+            history = context.map(m => 
+                `${m.role === 'user' ? 'User' : 'Bot'}: ${m.content.substring(0, 150)}`
+            ).join('\n') + '\n';
+        }
+        
+        const prompt = `${history}Question: "${userMessage}"
+
+INFORMATIONS TROUVÉES SUR LE WEB (2026):
+${resultsText}
+
+RÈGLES CRITIQUES:
+- Utilise UNIQUEMENT les infos ci-dessus
+- Ces infos sont PLUS RÉCENTES que tes connaissances
+- Si contradictions → UTILISE LES INFOS WEB
+- N'invente RIEN
+- Réponds court (max 400 chars)
+- Ne dis JAMAIS "selon les sources" ou "d'après mes recherches"
+- Réponds naturellement comme si tu connaissais ces infos
+
+Ta réponse basée sur les infos trouvées:`;
+
+        const response = await callGemini(prompt);
+        
+        if (response) {
+            // Nettoyer préfixes
+            let clean = response.replace(/^(NakamaBot|Bot)\s*:\s*/i, '').trim();
+            console.log(`✅ Réponse générée avec recherche web`);
+            return clean;
+        }
+        
+        throw new Error('Réponse vide');
+        
+    } catch (error) {
+        console.error(`❌ Erreur génération avec recherche: ${error.message}`);
+        
+        // Fallback simple
+        const topResult = searchResults[0];
+        if (topResult) {
+            return `D'après les dernières infos, ${topResult.snippet} 💡`;
+        }
+        
+        return null;
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -585,6 +795,40 @@ async function handleConversation(senderId, message, ctx) {
         day: 'numeric'
     });
     
+    // 🆕 DÉTECTION RECHERCHE WEB NÉCESSAIRE
+    let searchResults = null;
+    const searchDecision = await needsWebSearch(message);
+    
+    if (searchDecision.needsSearch && searchDecision.confidence >= 0.7) {
+        console.log(`🔍 Recherche requise: "${searchDecision.searchQuery}"`);
+        searchResults = await searchDuckDuckGo(searchDecision.searchQuery, 5);
+        
+        if (searchResults && searchResults.length > 0) {
+            console.log(`✅ ${searchResults.length} résultats trouvés, génération réponse...`);
+            
+            // Générer réponse avec résultats de recherche
+            const searchResponse = await generateResponseWithSearch(message, searchResults, context);
+            
+            if (searchResponse) {
+                const styled = parseMarkdown(searchResponse);
+                
+                // Tronquer si nécessaire
+                if (styled.length > 2000) {
+                    const truncated = styled.substring(0, 1950) + "\n\n...";
+                    addToMemory(String(senderId), 'user', message.substring(0, CONFIG.MAX_MESSAGE_LENGTH));
+                    addToMemory(String(senderId), 'assistant', truncated);
+                    return truncated;
+                }
+                
+                addToMemory(String(senderId), 'user', message.substring(0, CONFIG.MAX_MESSAGE_LENGTH));
+                addToMemory(String(senderId), 'assistant', styled);
+                return styled;
+            }
+        } else {
+            console.warn(`⚠️ Pas de résultats de recherche pour: "${searchDecision.searchQuery}"`);
+        }
+    }
+    
     // Historique conversation
     let history = "";
     if (context.length > 0) {
@@ -599,7 +843,7 @@ Créateurs: Durand (Camerounais 🇨🇲) & Myronne (Camerounaise 🇨🇲)
 
 ${history}User: ${message}
 
-Réponds naturellement, court (max 400 chars), 1 emoji max. Si récent/actuel → dis que tu ne sais pas.`;
+Réponds naturellement, court (max 400 chars), 1 emoji max. Si récent/actuel (2024-2026) → dis clairement que tu ne sais pas car tes infos s'arrêtent début 2025.`;
 
     try {
         // Tentative Gemini
@@ -631,7 +875,7 @@ Réponds naturellement, court (max 400 chars), 1 emoji max. Si récent/actuel �
         try {
             // Fallback Mistral
             const messages = [
-                { role: "system", content: `Bot créé par Durand & Myronne (🇨🇲). Réponds court et naturel.` },
+                { role: "system", content: `Bot créé par Durand & Myronne (🇨🇲). Réponds court et naturel. Infos jusqu'à début 2025.` },
                 ...context,
                 { role: "user", content: message }
             ];
@@ -849,6 +1093,11 @@ module.exports.callGemini = callGemini;
 module.exports.callMistral = callMistral;
 module.exports.detectCreatorContactRequest = detectCreatorContactRequest;
 module.exports.generateCreatorContactResponse = generateCreatorContactResponse;
+
+// Exports recherche web
+module.exports.searchDuckDuckGo = searchDuckDuckGo;
+module.exports.needsWebSearch = needsWebSearch;
+module.exports.generateResponseWithSearch = generateResponseWithSearch;
 
 // Exports système
 module.exports.OptimizedLRUCache = OptimizedLRUCache;
