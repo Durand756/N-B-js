@@ -20,6 +20,18 @@ const ADMIN_IDS = new Set(
     (process.env.ADMIN_IDS || "").split(",").map(id => id.trim()).filter(id => id)
 );
 
+// ✅ NOUVEAU: Configuration Google Search API avec rotation
+const GOOGLE_API_KEYS = (process.env.GOOGLE_API_KEYS || "").split(",").map(key => key.trim()).filter(key => key);
+const GOOGLE_SEARCH_ENGINE_IDS = (process.env.GOOGLE_SEARCH_ENGINE_IDS || "").split(",").map(id => id.trim()).filter(id => id);
+
+// Variables pour la rotation des clés Google
+let currentGoogleKeyIndex = 0;
+let currentSearchEngineIndex = 0;
+const googleKeyUsage = new Map(); // Suivre l'utilisation des clés
+const GOOGLE_DAILY_LIMIT = 100; // Limite par clé par jour
+const GOOGLE_RETRY_DELAY = 5000; // Délai entre les tentatives (augmenté pour éviter 429)
+const userSpamData = new Map(); // Tracker anti-spam par user
+
 // Mémoire du bot (stockage local temporaire + sauvegarde permanente GitHub)
 const userMemory = new Map();
 const userList = new Set();
@@ -123,6 +135,291 @@ function isContinuationRequest(message) {
     ];
     
     return continuationPatterns.some(pattern => pattern.test(lowerMessage));
+}
+
+// === GESTION GOOGLE SEARCH API AVEC ROTATION ===
+
+/**
+ * Obtient la prochaine clé Google API disponible
+ * @returns {Object|null} - {apiKey, searchEngineId, keyIndex, engineIndex} ou null
+ */
+function getNextGoogleKey() {
+    if (GOOGLE_API_KEYS.length === 0 || GOOGLE_SEARCH_ENGINE_IDS.length === 0) {
+        log.warning("⚠️ Aucune clé Google Search API configurée");
+        return null;
+    }
+    
+    const today = new Date().toDateString();
+    
+    // ✅ CORRECTION: Essayer toutes les combinaisons sans distinction de taille
+    const totalKeys = GOOGLE_API_KEYS.length;
+    const totalEngines = GOOGLE_SEARCH_ENGINE_IDS.length;
+    const totalCombinations = totalKeys * totalEngines;
+    
+    // Essayer toutes les combinaisons possibles
+    for (let attempt = 0; attempt < totalCombinations; attempt++) {
+        const keyIndex = (currentGoogleKeyIndex + Math.floor(attempt / totalEngines)) % totalKeys;
+        const engineIndex = (currentSearchEngineIndex + (attempt % totalEngines)) % totalEngines;
+        
+        const apiKey = GOOGLE_API_KEYS[keyIndex];
+        const searchEngineId = GOOGLE_SEARCH_ENGINE_IDS[engineIndex];
+        const keyId = `${keyIndex}-${engineIndex}-${today}`;
+        
+        const usage = googleKeyUsage.get(keyId) || 0;
+        
+        if (usage < GOOGLE_DAILY_LIMIT) {
+            log.debug(`🔑 Utilisation clé Google ${keyIndex}/${engineIndex}: ${usage}/${GOOGLE_DAILY_LIMIT}`);
+            return {
+                apiKey,
+                searchEngineId,
+                keyIndex,
+                engineIndex,
+                keyId,
+                usage
+            };
+        }
+    }
+    
+    log.error("❌ Toutes les clés Google Search API ont atteint leur limite quotidienne");
+    return null;
+}
+
+/**
+ * Met à jour l'usage d'une clé Google et fait tourner les indices
+ * @param {string} keyId - ID de la clé utilisée
+ * @param {number} keyIndex - Index de la clé
+ * @param {number} engineIndex - Index du moteur
+ * @param {boolean} success - Si la requête a réussi
+ */
+function updateGoogleKeyUsage(keyId, keyIndex, engineIndex, success) {
+    if (success) {
+        googleKeyUsage.set(keyId, (googleKeyUsage.get(keyId) || 0) + 1);
+        log.debug(`📈 Usage clé Google ${keyIndex}/${engineIndex}: ${googleKeyUsage.get(keyId)}/${GOOGLE_DAILY_LIMIT}`);
+    }
+    
+    // Faire tourner les indices pour la prochaine utilisation
+    currentSearchEngineIndex = (currentSearchEngineIndex + 1) % GOOGLE_SEARCH_ENGINE_IDS.length;
+    if (currentSearchEngineIndex === 0) {
+        currentGoogleKeyIndex = (currentGoogleKeyIndex + 1) % GOOGLE_API_KEYS.length;
+    }
+}
+
+/**
+ * Effectue une recherche Google avec rotation des clés
+ * @param {string} query - Requête de recherche
+ * @param {number} numResults - Nombre de résultats (défaut: 5)
+ * @returns {Array|null} - Résultats de recherche ou null
+ */
+async function googleSearch(query, numResults = 5) {
+    if (!query || typeof query !== 'string') {
+        log.warning("⚠️ Requête de recherche vide");
+        return null;
+    }
+    
+    const googleKey = getNextGoogleKey();
+    if (!googleKey) {
+        return null;
+    }
+    
+    const { apiKey, searchEngineId, keyIndex, engineIndex, keyId } = googleKey;
+    
+    try {
+        log.info(`🔍 Recherche Google avec clé ${keyIndex}/${engineIndex}: "${query.substring(0, 50)}..."`);
+        
+        // ✅ CORRECTION: Ajouter un délai pour éviter le rate limiting (augmenté à 1000ms)
+        await sleep(1000);
+        
+        const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
+            params: {
+                key: apiKey,
+                cx: searchEngineId,
+                q: query,
+                num: Math.min(numResults, 10), // Maximum 10 résultats par requête
+                safe: 'active',
+                lr: 'lang_fr', // Priorité au français
+                gl: 'fr' // Géolocalisation France
+            },
+            timeout: 15000 // ✅ CORRECTION: Timeout plus long
+        });
+        
+        if (response.status === 200 && response.data.items) {
+            updateGoogleKeyUsage(keyId, keyIndex, engineIndex, true);
+            
+            const results = response.data.items.map(item => ({
+                title: item.title,
+                link: item.link,
+                snippet: item.snippet,
+                displayLink: item.displayLink
+            }));
+            
+            log.info(`✅ ${results.length} résultats Google trouvés avec clé ${keyIndex}/${engineIndex}`);
+            return results;
+        } else {
+            log.warning(`⚠️ Réponse Google vide avec clé ${keyIndex}/${engineIndex}`);
+            return null;
+        }
+        
+    } catch (error) {
+        if (error.response) {
+            const status = error.response.status;
+            const errorData = error.response.data;
+            
+            if (status === 403) {
+                if (errorData.error?.errors?.[0]?.reason === 'dailyLimitExceeded') {
+                    log.warning(`⚠️ Limite quotidienne atteinte pour clé Google ${keyIndex}/${engineIndex}`);
+                    // Marquer cette clé comme épuisée
+                    googleKeyUsage.set(keyId, GOOGLE_DAILY_LIMIT);
+                    
+                    // ✅ CORRECTION: Essayer avec la clé suivante SEULEMENT s'il y en a d'autres
+                    const totalCombinations = GOOGLE_API_KEYS.length * GOOGLE_SEARCH_ENGINE_IDS.length;
+                    if (totalCombinations > 1) {
+                        log.info("🔄 Tentative avec clé suivante...");
+                        await sleep(GOOGLE_RETRY_DELAY);
+                        return await googleSearch(query, numResults);
+                    } else {
+                        log.warning("⚠️ Une seule combinaison clé/moteur disponible et épuisée");
+                        return null;
+                    }
+                } else if (errorData.error?.errors?.[0]?.reason === 'keyInvalid') {
+                    log.error(`❌ Clé Google API invalide ${keyIndex}/${engineIndex}`);
+                } else {
+                    log.error(`❌ Erreur Google API 403 avec clé ${keyIndex}/${engineIndex}: ${JSON.stringify(errorData)}`);
+                }
+            } else if (status === 429) {
+                log.warning(`⚠️ Rate limit Google avec clé ${keyIndex}/${engineIndex}, retry avec délai plus long...`);
+                
+                // ✅ AMÉLIORATION: Boucle de retry avec backoff exponentiel (jusqu'à 3 tentatives)
+                let retrySuccess = false;
+                let retryDelay = GOOGLE_RETRY_DELAY;
+                for (let retryAttempt = 1; retryAttempt <= 3; retryAttempt++) {
+                    await sleep(retryDelay);
+                    try {
+                        const retryResponse = await axios.get('https://www.googleapis.com/customsearch/v1', {
+                            params: {
+                                key: apiKey,
+                                cx: searchEngineId,
+                                q: query,
+                                num: Math.min(numResults, 10),
+                                safe: 'active',
+                                lr: 'lang_fr',
+                                gl: 'fr'
+                            },
+                            timeout: 20000
+                        });
+                        
+                        if (retryResponse.status === 200 && retryResponse.data.items) {
+                            updateGoogleKeyUsage(keyId, keyIndex, engineIndex, true);
+                            
+                            const results = retryResponse.data.items.map(item => ({
+                                title: item.title,
+                                link: item.link,
+                                snippet: item.snippet,
+                                displayLink: item.displayLink
+                            }));
+                            
+                            log.info(`✅ ${results.length} résultats Google trouvés avec clé ${keyIndex}/${engineIndex} (retry ${retryAttempt})`);
+                            retrySuccess = true;
+                            return results;
+                        }
+                    } catch (retryError) {
+                        log.warning(`⚠️ Échec retry ${retryAttempt} pour clé ${keyIndex}/${engineIndex}: ${retryError.message}`);
+                        retryDelay *= 2; // Backoff exponentiel
+                    }
+                }
+                
+                if (!retrySuccess) {
+                    // Essayer la clé suivante si disponible
+                    const totalCombinations = GOOGLE_API_KEYS.length * GOOGLE_SEARCH_ENGINE_IDS.length;
+                    if (totalCombinations > 1) {
+                        log.info("🔄 Tentative avec clé suivante après rate limit...");
+                        await sleep(1000); // Délai supplémentaire avant de switcher
+                        return await googleSearch(query, numResults);
+                    }
+                }
+                return null;
+            } else {
+                log.error(`❌ Erreur Google API ${status} avec clé ${keyIndex}/${engineIndex}: ${error.message}`);
+            }
+        } else {
+            log.error(`❌ Erreur réseau Google Search: ${error.message}`);
+        }
+        
+        updateGoogleKeyUsage(keyId, keyIndex, engineIndex, false);
+        return null;
+    }
+}
+
+// ✅ RECHERCHE WEB AMÉLIORÉE avec Google Search API + fallback Mistral + gestion rate limiting
+async function webSearch(query) {
+    if (!query || typeof query !== 'string') {
+        return "Oh non ! Je n'ai pas compris ta recherche... 🤔";
+    }
+    
+    try {
+        // ✅ CORRECTION: Vérifier si Google Search est disponible avant d'essayer
+        if (GOOGLE_API_KEYS.length === 0 || GOOGLE_SEARCH_ENGINE_IDS.length === 0) {
+            log.info(`🔄 Google Search non configuré, utilisation de Mistral pour: "${query}"`);
+            return await fallbackMistralSearch(query);
+        }
+        
+        // Essayer d'abord avec Google Search API
+        const googleResults = await googleSearch(query, 5);
+        
+        if (googleResults && googleResults.length > 0) {
+            // Formater les résultats Google pour une réponse amicale
+            let response = `🔍 J'ai trouvé ça pour "${query}" :\n\n`;
+            
+            googleResults.slice(0, 3).forEach((result, index) => {
+                response += `${index + 1}. **${result.title}**\n`;
+                response += `${result.snippet}\n`;
+                response += `🔗 ${result.link}\n\n`;
+            });
+            
+            if (googleResults.length > 3) {
+                response += `... et ${googleResults.length - 3} autres résultats ! 📚\n`;
+            }
+            
+            response += "\n💡 Besoin de plus d'infos ? N'hésite pas à me poser des questions ! 💕";
+            return response;
+        } else {
+            // ✅ CORRECTION: Fallback propre vers Mistral
+            log.info(`🔄 Google Search échoué, fallback Mistral pour: "${query}"`);
+            return await fallbackMistralSearch(query);
+        }
+        
+    } catch (error) {
+        log.error(`❌ Erreur recherche complète: ${error.message}`);
+        
+        // ✅ CORRECTION: Si erreur 429, passer directement au fallback
+        if (error.response?.status === 429) {
+            log.info(`🔄 Rate limit détecté, utilisation du fallback Mistral pour: "${query}"`);
+            return await fallbackMistralSearch(query);
+        }
+        
+        return "Oh non ! Une petite erreur de recherche... Désolée ! 💕";
+    }
+}
+
+// ✅ NOUVELLE FONCTION: Fallback Mistral séparée pour éviter la duplication
+async function fallbackMistralSearch(query) {
+    try {
+        const searchContext = `Recherche web pour '${query}' en 2025. Je peux répondre avec mes connaissances de 2025.`;
+        const messages = [{
+            role: "system",
+            content: `Tu es NakamaBot, une assistante IA très gentille et amicale qui aide avec les recherches. Nous sommes en 2025. Réponds à cette recherche: '${query}' avec tes connaissances de 2025. Si tu ne sais pas, dis-le gentiment. Réponds en français avec une personnalité amicale et bienveillante, maximum 400 caractères.`
+        }];
+        
+        const mistralResult = await callMistralAPI(messages, 200, 0.3);
+        
+        if (mistralResult) {
+            return `🤖 Voici ce que je sais sur "${query}" :\n\n${mistralResult}\n\n💕 (Recherche basée sur mes connaissances - Pour des infos plus récentes, réessaie plus tard !)`;
+        } else {
+            return `😔 Désolée, je n'arrive pas à trouver d'infos sur "${query}" pour le moment... Réessaie plus tard ? 💕`;
+        }
+    } catch (error) {
+        log.error(`❌ Erreur fallback Mistral: ${error.message}`);
+        return `😔 Désolée, impossible de rechercher "${query}" maintenant... Réessaie plus tard ? 💕`;
+    }
 }
 
 // === GESTION GITHUB API ===
@@ -240,18 +537,25 @@ async function saveDataToGitHub() {
             // 🆕 NOUVEAU: Sauvegarder les messages tronqués
             truncatedMessages: Object.fromEntries(truncatedMessages),
             
+            // ✅ NOUVEAU: Sauvegarder l'usage des clés Google
+            googleKeyUsage: Object.fromEntries(googleKeyUsage),
+            currentGoogleKeyIndex,
+            currentSearchEngineIndex,
+            
             // Données des clans et autres commandes
             clanData: commandContext.clanData || null,
             commandData: Object.fromEntries(clanData),
             
             lastUpdate: new Date().toISOString(),
-            version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
+            version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation + Google Search",
             totalUsers: userList.size,
             totalConversations: userMemory.size,
             totalImages: userLastImage.size,
             totalTruncated: truncatedMessages.size,
             totalClans: commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0,
             totalUsersWithExp: rankCommand ? Object.keys(rankCommand.getExpData()).length : 0,
+            totalGoogleKeys: GOOGLE_API_KEYS.length,
+            totalSearchEngines: GOOGLE_SEARCH_ENGINE_IDS.length,
             bot: "NakamaBot",
             creator: "Durand"
         };
@@ -289,7 +593,7 @@ async function saveDataToGitHub() {
                 if (response.status === 200 || response.status === 201) {
                     const clanCount = commandContext.clanData ? Object.keys(commandContext.clanData.clans || {}).length : 0;
                     const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
-                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs, ${clanCount} clans, ${expDataCount} exp, ${truncatedMessages.size} trunc)`);
+                    log.info(`💾 Données sauvegardées sur GitHub (${userList.size} users, ${userMemory.size} convs, ${userLastImage.size} imgs, ${clanCount} clans, ${expDataCount} exp, ${truncatedMessages.size} trunc, ${GOOGLE_API_KEYS.length} Google keys)`);
                     success = true;
                 } else {
                     log.error(`❌ Erreur sauvegarde GitHub: ${response.status}`);
@@ -392,6 +696,30 @@ async function loadDataFromGitHub() {
                     }
                 });
                 log.info(`✅ ${Object.keys(data.truncatedMessages).length} messages tronqués chargés depuis GitHub`);
+            }
+
+            // ✅ NOUVEAU: Charger les données anti-spam
+            if (data.userSpamData && typeof data.userSpamData === 'object') {
+                Object.entries(data.userSpamData).forEach(([userId, spamInfo]) => {
+                    userSpamData.set(userId, spamInfo);
+                });
+                log.info(`✅ ${Object.keys(data.userSpamData).length} données anti-spam chargées depuis GitHub`);
+            }
+
+            // ✅ NOUVEAU: Charger l'usage des clés Google
+            if (data.googleKeyUsage && typeof data.googleKeyUsage === 'object') {
+                Object.entries(data.googleKeyUsage).forEach(([keyId, usage]) => {
+                    googleKeyUsage.set(keyId, usage);
+                });
+                log.info(`✅ ${Object.keys(data.googleKeyUsage).length} données d'usage Google chargées depuis GitHub`);
+            }
+
+            // Charger les indices des clés Google
+            if (typeof data.currentGoogleKeyIndex === 'number') {
+                currentGoogleKeyIndex = data.currentGoogleKeyIndex;
+            }
+            if (typeof data.currentSearchEngineIndex === 'number') {
+                currentSearchEngineIndex = data.currentSearchEngineIndex;
             }
 
             // ✅ NOUVEAU: Charger les données d'expérience
@@ -571,22 +899,6 @@ async function analyzeImageWithVision(imageUrl) {
     } catch (error) {
         log.error(`❌ Erreur analyse image: ${error.message}`);
         return null;
-    }
-}
-
-// Recherche web simulée
-async function webSearch(query) {
-    try {
-        const searchContext = `Recherche web pour '${query}' en 2025. Je peux répondre avec mes connaissances de 2025.`;
-        const messages = [{
-            role: "system",
-            content: `Tu es NakamaBot, une assistante IA très gentille et amicale qui aide avec les recherches. Nous sommes en 2025. Réponds à cette recherche: '${query}' avec tes connaissances de 2025. Si tu ne sais pas, dis-le gentiment. Réponds en français avec une personnalité amicale et bienveillante, maximum 300 caractères.`
-        }];
-        
-        return await callMistralAPI(messages, 150, 0.3);
-    } catch (error) {
-        log.error(`❌ Erreur recherche: ${error.message}`);
-        return "Oh non ! Une petite erreur de recherche... Désolée ! 💕";
     }
 }
 
@@ -814,6 +1126,14 @@ const commandContext = {
     GITHUB_USERNAME,
     GITHUB_REPO,
     ADMIN_IDS,
+    
+    // ✅ NOUVEAU: Variables Google Search
+    GOOGLE_API_KEYS,
+    GOOGLE_SEARCH_ENGINE_IDS,
+    googleKeyUsage,
+    currentGoogleKeyIndex,
+    currentSearchEngineIndex,
+    
     userMemory,
     userList,
     userLastImage,
@@ -832,6 +1152,7 @@ const commandContext = {
     callMistralAPI,
     analyzeImageWithVision,
     webSearch,
+    googleSearch, // ✅ NOUVEAU: Accès direct à Google Search
     addToMemory,
     getMemoryContext,
     isAdmin,
@@ -841,6 +1162,8 @@ const commandContext = {
     // 🆕 AJOUT: Fonctions de gestion de troncature
     splitMessageIntoChunks,
     isContinuationRequest,
+
+    userSpamData, // ✅ NOUVEAU: Tracker anti-spam
     
     // Fonctions de sauvegarde GitHub
     saveDataToGitHub,
@@ -892,6 +1215,57 @@ function loadCommands() {
     }
     
     log.info(`🎉 ${COMMANDS.size} commandes chargées avec succès !`);
+}
+
+// === FONCTION ANTI-SPAM ===
+function isSpam(senderId, message) {
+    if (isAdmin(senderId)) return false; // Les admins bypass l'anti-spam
+    
+    // Normaliser le message pour ignorer les accents et casse
+    const normalized = message.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    
+    // Détection spécifique pour les patterns connus
+    if (normalized === 'du brood' || normalized.includes('le blocage est lance')) {
+        return true;
+    }
+    
+    let spamInfo = userSpamData.get(senderId);
+    if (!spamInfo) {
+        spamInfo = {
+            lastMsg: '',
+            repeatCount: 0,
+            messages: [], // Timestamps des messages récents
+            lastCleanup: Date.now()
+        };
+    }
+    
+    const now = Date.now();
+    
+    // Nettoyage des anciens timestamps (garder seulement les 60 dernières secondes)
+    spamInfo.messages = spamInfo.messages.filter(ts => now - ts < 60000);
+    spamInfo.messages.push(now);
+    
+    // Rate limiting: > 10 messages en 60s = spam
+    if (spamInfo.messages.length > 10) {
+        userSpamData.set(senderId, spamInfo);
+        return true;
+    }
+    
+    // Détection de répétition
+    const normLast = spamInfo.lastMsg.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (normalized === normLast) {
+        spamInfo.repeatCount++;
+        if (spamInfo.repeatCount >= 3) {
+            userSpamData.set(senderId, spamInfo);
+            return true;
+        }
+    } else {
+        spamInfo.repeatCount = 1;
+        spamInfo.lastMsg = message;
+    }
+    
+    userSpamData.set(senderId, spamInfo);
+    return false;
 }
 
 async function processCommand(senderId, messageText) {
@@ -987,7 +1361,7 @@ app.get('/', (req, res) => {
     const expDataCount = rankCommand ? Object.keys(rankCommand.getExpData()).length : 0;
     
     res.json({
-        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation Online ! 💖",
+        status: "🤖 NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation + Google Search Online ! 💖",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: "2025",
@@ -998,13 +1372,15 @@ app.get('/', (req, res) => {
         clans_total: clanCount,
         users_with_exp: expDataCount,
         truncated_messages: truncatedMessages.size,
-        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
+        google_api_keys: GOOGLE_API_KEYS.length,
+        google_search_engines: GOOGLE_SEARCH_ENGINE_IDS.length,
+        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation + Google Search",
         storage: {
             type: "GitHub API",
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
             auto_save: "Every 5 minutes",
-            includes: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages"]
+            includes: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages", "google_key_usage"]
         },
         features: [
             "Génération d'images IA",
@@ -1016,8 +1392,9 @@ app.get('/', (req, res) => {
             "Cartes de rang personnalisées",
             "Gestion intelligente des messages longs",
             "Continuation automatique des réponses",
+            "Recherche Google avec rotation de clés",
+            "Fallback recherche IA",
             "Broadcast admin",
-            "Recherche 2025",
             "Stats réservées admin",
             "Sauvegarde permanente GitHub"
         ],
@@ -1040,7 +1417,7 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// ✅ WEBHOOK PRINCIPAL MODIFIÉ - AJOUT D'EXPÉRIENCE ET NOTIFICATIONS DE NIVEAU
+// ✅ WEBHOOK PRINCIPAL CORRIGÉ - BLACKLIST FIX
 app.post('/webhook', async (req, res) => {
     try {
         const data = req.body;
@@ -1069,6 +1446,46 @@ app.post('/webhook', async (req, res) => {
                         saveDataImmediate();
                     }
                     
+                    // ✅ CORRECTION BLACKLIST: Vérification du blocage avec gestion correcte
+                    if (!isAdmin(senderIdStr)) {
+                        const blockMode = clanData.get('blockMode');
+                        const blockMsg = clanData.get('blockMessage');
+                        
+                        // ✅ FIX: Récupérer la blacklist correctement depuis clanData (Map)
+                        const blacklist = clanData.get('blacklist');
+                        if (blacklist && blacklist instanceof Map) {
+                            const blacklistMsg = blacklist.get(senderIdStr);
+                            if (blacklistMsg) {
+                                const sendResult = await sendMessage(senderId, blacklistMsg);
+                                if (sendResult.success) {
+                                    log.info(`🚫 Blacklist bloqué pour ${senderId}`);
+                                }
+                                continue; // Ignorer le message
+                            }
+                        }
+                        
+                        // Puis le blocage général
+                        if (blockMode && blockMsg) {
+                            let isBlocked = false;
+                            
+                            if (blockMode === 'all') {
+                                isBlocked = true;
+                            } else if (blockMode === 'new' && wasNewUser) {
+                                isBlocked = true;
+                            } else if (blockMode === 'old' && !wasNewUser) {
+                                isBlocked = true;
+                            }
+                            
+                            if (isBlocked) {
+                                const sendResult = await sendMessage(senderId, blockMsg);
+                                if (sendResult.success) {
+                                    log.info(`🚫 Message bloqué pour ${senderId} (mode: ${blockMode})`);
+                                }
+                                continue; // Passer à l'événement suivant
+                            }
+                        }
+                    }
+                    
                     if (event.message.attachments) {
                         for (const attachment of event.message.attachments) {
                             if (attachment.type === 'image') {
@@ -1090,7 +1507,7 @@ app.post('/webhook', async (req, res) => {
                                     
                                     saveDataImmediate();
                                     
-                                    const response = "📸 Super ! J'ai bien reçu ton image ! ✨\n\n🎭 Tape /anime pour la transformer en style anime !\n👁️ Tape /vision pour que je te dise ce que je vois !\n\n💕 Ou continue à me parler normalement !";
+                                    const response = "✅";
                                     
                                     const sendResult = await sendMessage(senderId, response);
                                     if (sendResult.success) {
@@ -1106,6 +1523,12 @@ app.post('/webhook', async (req, res) => {
                     
                     if (messageText) {
                         log.info(`📨 Message de ${senderId}: ${messageText.substring(0, 50)}...`);
+                        
+                        // ✅ NOUVEAU: Vérification anti-spam
+                        if (isSpam(senderIdStr, messageText)) {
+                            log.info(`🚫 Spam détecté de ${senderId}: ${messageText.substring(0, 50)}...`);
+                            continue; // Ignorer le message sans réponse
+                        }
                         
                         // ✅ NOUVEAU: Ajouter de l'expérience pour chaque message
                         if (messageText && rankCommand) {
@@ -1156,6 +1579,48 @@ app.post('/webhook', async (req, res) => {
     }
     
     res.status(200).json({ status: "ok" });
+});
+
+// ✅ NOUVELLE ROUTE: Statistiques Google Search
+app.get('/google-stats', (req, res) => {
+    const today = new Date().toDateString();
+    const keyStats = [];
+    
+    for (let keyIndex = 0; keyIndex < GOOGLE_API_KEYS.length; keyIndex++) {
+        for (let engineIndex = 0; engineIndex < GOOGLE_SEARCH_ENGINE_IDS.length; engineIndex++) {
+            const keyId = `${keyIndex}-${engineIndex}-${today}`;
+            const usage = googleKeyUsage.get(keyId) || 0;
+            const remaining = GOOGLE_DAILY_LIMIT - usage;
+            
+            keyStats.push({
+                keyIndex,
+                engineIndex,
+                searchEngineId: GOOGLE_SEARCH_ENGINE_IDS[engineIndex],
+                usage,
+                remaining,
+                limit: GOOGLE_DAILY_LIMIT,
+                percentage: Math.round((usage / GOOGLE_DAILY_LIMIT) * 100)
+            });
+        }
+    }
+    
+    res.json({
+        success: true,
+        date: today,
+        currentKeyIndex: currentGoogleKeyIndex,
+        currentEngineIndex: currentSearchEngineIndex,
+        totalKeys: GOOGLE_API_KEYS.length,
+        totalEngines: GOOGLE_SEARCH_ENGINE_IDS.length,
+        totalCombinations: GOOGLE_API_KEYS.length * GOOGLE_SEARCH_ENGINE_IDS.length,
+        keyStats: keyStats,
+        summary: {
+            totalUsage: keyStats.reduce((sum, stat) => sum + stat.usage, 0),
+            totalRemaining: keyStats.reduce((sum, stat) => sum + stat.remaining, 0),
+            averageUsage: Math.round(keyStats.reduce((sum, stat) => sum + stat.percentage, 0) / keyStats.length),
+            exhaustedKeys: keyStats.filter(stat => stat.remaining <= 0).length
+        },
+        timestamp: new Date().toISOString()
+    });
 });
 
 // Route pour créer un nouveau repository GitHub
@@ -1259,6 +1724,72 @@ app.get('/test-github', async (req, res) => {
     }
 });
 
+// ✅ NOUVELLE ROUTE: Tester les clés Google Search
+app.get('/test-google', async (req, res) => {
+    try {
+        if (GOOGLE_API_KEYS.length === 0 || GOOGLE_SEARCH_ENGINE_IDS.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: "Configuration Google Search manquante",
+                missing: {
+                    apiKeys: GOOGLE_API_KEYS.length === 0,
+                    searchEngines: GOOGLE_SEARCH_ENGINE_IDS.length === 0
+                },
+                instructions: [
+                    "Ajoutez GOOGLE_API_KEYS (séparées par des virgules)",
+                    "Ajoutez GOOGLE_SEARCH_ENGINE_IDS (séparés par des virgules)",
+                    "Obtenez vos clés sur https://console.developers.google.com"
+                ]
+            });
+        }
+
+        const testQuery = "test search";
+        const results = await googleSearch(testQuery, 3);
+
+        if (results && results.length > 0) {
+            res.json({
+                success: true,
+                message: "Google Search API fonctionne !",
+                testQuery: testQuery,
+                resultsFound: results.length,
+                sampleResult: results[0],
+                configuration: {
+                    totalApiKeys: GOOGLE_API_KEYS.length,
+                    totalSearchEngines: GOOGLE_SEARCH_ENGINE_IDS.length,
+                    totalCombinations: GOOGLE_API_KEYS.length * GOOGLE_SEARCH_ENGINE_IDS.length,
+                    currentKeyIndex: currentGoogleKeyIndex,
+                    currentEngineIndex: currentSearchEngineIndex
+                },
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: "Google Search API ne fonctionne pas",
+                testQuery: testQuery,
+                configuration: {
+                    totalApiKeys: GOOGLE_API_KEYS.length,
+                    totalSearchEngines: GOOGLE_SEARCH_ENGINE_IDS.length
+                },
+                suggestions: [
+                    "Vérifiez que vos clés API Google sont valides",
+                    "Vérifiez que vos Search Engine IDs sont corrects",
+                    "Vérifiez que les APIs sont activées dans Google Console",
+                    "Consultez /google-stats pour voir l'usage des clés"
+                ],
+                timestamp: new Date().toISOString()
+            });
+        }
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
 // Route pour forcer une sauvegarde
 app.post('/force-save', async (req, res) => {
     try {
@@ -1277,7 +1808,8 @@ app.post('/force-save', async (req, res) => {
                 images: userLastImage.size,
                 clans: clanCount,
                 users_with_exp: expDataCount,
-                truncated_messages: truncatedMessages.size
+                truncated_messages: truncatedMessages.size,
+                google_key_usage_entries: googleKeyUsage.size
             }
         });
     } catch (error) {
@@ -1306,7 +1838,8 @@ app.post('/reload-data', async (req, res) => {
                 images: userLastImage.size,
                 clans: clanCount,
                 users_with_exp: expDataCount,
-                truncated_messages: truncatedMessages.size
+                truncated_messages: truncatedMessages.size,
+                google_key_usage_entries: googleKeyUsage.size
             }
         });
     } catch (error) {
@@ -1329,8 +1862,10 @@ app.get('/stats', (req, res) => {
         clans_total: clanCount,
         users_with_exp: expDataCount,
         truncated_messages: truncatedMessages.size,
+        google_api_keys: GOOGLE_API_KEYS.length,
+        google_search_engines: GOOGLE_SEARCH_ENGINE_IDS.length,
         commands_available: COMMANDS.size,
-        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
+        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation + Google Search",
         creator: "Durand",
         personality: "Super gentille et amicale, comme une très bonne amie",
         year: 2025,
@@ -1339,7 +1874,7 @@ app.get('/stats', (req, res) => {
             repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
             persistent: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
             auto_save_interval: "5 minutes",
-            data_types: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages"]
+            data_types: ["users", "conversations", "images", "clans", "command_data", "user_exp", "truncated_messages", "google_key_usage"]
         },
         features: [
             "AI Image Generation",
@@ -1351,6 +1886,8 @@ app.get('/stats', (req, res) => {
             "Experience & Levels",
             "Smart Message Truncation",
             "Message Continuation",
+            "Google Search with Key Rotation",
+            "AI Fallback Search",
             "Admin Stats",
             "Help Suggestions",
             "GitHub Persistent Storage"
@@ -1372,6 +1909,7 @@ app.get('/health', (req, res) => {
             vision: Boolean(MISTRAL_API_KEY),
             facebook: Boolean(PAGE_ACCESS_TOKEN),
             github_storage: Boolean(GITHUB_TOKEN && GITHUB_USERNAME),
+            google_search: GOOGLE_API_KEYS.length > 0 && GOOGLE_SEARCH_ENGINE_IDS.length > 0,
             ranking_system: Boolean(rankCommand),
             message_truncation: true
         },
@@ -1382,9 +1920,11 @@ app.get('/health', (req, res) => {
             clans_total: clanCount,
             users_with_exp: expDataCount,
             truncated_messages: truncatedMessages.size,
-            commands_loaded: COMMANDS.size
+            commands_loaded: COMMANDS.size,
+            google_keys: GOOGLE_API_KEYS.length,
+            search_engines: GOOGLE_SEARCH_ENGINE_IDS.length
         },
-        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation",
+        version: "4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation + Google Search",
         creator: "Durand",
         repository: `${GITHUB_USERNAME}/${GITHUB_REPO}`,
         timestamp: new Date().toISOString()
@@ -1399,6 +1939,9 @@ app.get('/health', (req, res) => {
     }
     if (!GITHUB_TOKEN || !GITHUB_USERNAME) {
         issues.push("Configuration GitHub manquante");
+    }
+    if (GOOGLE_API_KEYS.length === 0 || GOOGLE_SEARCH_ENGINE_IDS.length === 0) {
+        issues.push("Configuration Google Search manquante");
     }
     if (COMMANDS.size === 0) {
         issues.push("Aucune commande chargée");
@@ -1508,12 +2051,31 @@ app.post('/clear-truncated', (req, res) => {
     });
 });
 
+// ✅ NOUVELLE ROUTE: Réinitialiser les compteurs Google (admin uniquement)
+app.post('/reset-google-counters', (req, res) => {
+    const clearedCount = googleKeyUsage.size;
+    googleKeyUsage.clear();
+    currentGoogleKeyIndex = 0;
+    currentSearchEngineIndex = 0;
+    
+    // Sauvegarder immédiatement
+    saveDataImmediate();
+    
+    res.json({
+        success: true,
+        message: `${clearedCount} compteurs Google réinitialisés`,
+        newKeyIndex: currentGoogleKeyIndex,
+        newEngineIndex: currentSearchEngineIndex,
+        timestamp: new Date().toISOString()
+    });
+});
+
 // === DÉMARRAGE MODIFIÉ AVEC SYSTÈME D'EXPÉRIENCE ET TRONCATURE ===
 
 const PORT = process.env.PORT || 5000;
 
 async function startBot() {
-    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation");
+    log.info("🚀 Démarrage NakamaBot v4.0 Amicale + Vision + GitHub + Clans + Rank + Truncation + Google Search");
     log.info("💖 Personnalité super gentille et amicale, comme une très bonne amie");
     log.info("👨‍💻 Créée par Durand");
     log.info("📅 Année: 2025");
@@ -1543,6 +2105,12 @@ async function startBot() {
     if (!GITHUB_USERNAME) {
         missingVars.push("GITHUB_USERNAME");
     }
+    if (GOOGLE_API_KEYS.length === 0) {
+        missingVars.push("GOOGLE_API_KEYS");
+    }
+    if (GOOGLE_SEARCH_ENGINE_IDS.length === 0) {
+        missingVars.push("GOOGLE_SEARCH_ENGINE_IDS");
+    }
 
     if (missingVars.length > 0) {
         log.error(`❌ Variables manquantes: ${missingVars.join(', ')}`);
@@ -1560,18 +2128,22 @@ async function startBot() {
     log.info(`🏰 ${clanCount} clans en mémoire`);
     log.info(`⭐ ${expDataCount} utilisateurs avec expérience`);
     log.info(`📝 ${truncatedMessages.size} conversations tronquées en cours`);
+    log.info(`🔑 ${GOOGLE_API_KEYS.length} clés Google API configurées`);
+    log.info(`🔍 ${GOOGLE_SEARCH_ENGINE_IDS.length} moteurs de recherche configurés`);
+    log.info(`📊 ${GOOGLE_API_KEYS.length * GOOGLE_SEARCH_ENGINE_IDS.length} combinaisons possibles`);
     log.info(`🔐 ${ADMIN_IDS.size} administrateurs`);
     log.info(`📂 Repository: ${GITHUB_USERNAME}/${GITHUB_REPO}`);
     log.info(`🌐 Serveur sur le port ${PORT}`);
     
     startAutoSave();
     
-    log.info("🎉 NakamaBot Amicale + Vision + GitHub + Clans + Rank + Truncation prête à aider avec gentillesse !");
+    log.info("🎉 NakamaBot Amicale + Vision + GitHub + Clans + Rank + Truncation + Google Search prête à aider avec gentillesse !");
 
     app.listen(PORT, () => {
         log.info(`🌐 Serveur démarré sur le port ${PORT}`);
         log.info("💾 Sauvegarde automatique GitHub activée");
         log.info("📏 Gestion intelligente des messages longs activée");
+        log.info("🔍 Recherche Google avec rotation de clés activée");
         log.info(`📊 Dashboard: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}`);
     });
 }
@@ -1598,6 +2170,12 @@ async function gracefulShutdown() {
     if (truncatedCount > 0) {
         log.info(`🧹 Nettoyage de ${truncatedCount} conversations tronquées en cours...`);
         truncatedMessages.clear();
+    }
+    
+    // Résumé final des clés Google
+    const googleUsageCount = googleKeyUsage.size;
+    if (googleUsageCount > 0) {
+        log.info(`📊 ${googleUsageCount} entrées d'usage Google sauvegardées`);
     }
     
     log.info("👋 Au revoir ! Données sauvegardées sur GitHub !");
@@ -1640,8 +2218,39 @@ setInterval(() => {
     }
 }, 60 * 60 * 1000); // Vérifier toutes les heures
 
+// ✅ NOUVEAU NETTOYAGE PÉRIODIQUE: Nettoyer les anciens compteurs Google (plus de 7 jours)
+setInterval(() => {
+    const now = Date.now();
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000; // 7 jours en millisecondes
+    const today = new Date().toDateString();
+    let cleanedCount = 0;
+    
+    for (const [keyId, usage] of googleKeyUsage.entries()) {
+        // Extraire la date du keyId (format: keyIndex-engineIndex-date)
+        const datePart = keyId.split('-')[2];
+        if (datePart && datePart !== today) {
+            try {
+                const keyDate = new Date(datePart).getTime();
+                if (now - keyDate > sevenDaysMs) {
+                    googleKeyUsage.delete(keyId);
+                    cleanedCount++;
+                }
+            } catch (error) {
+                // Si on ne peut pas parser la date, supprimer la clé
+                googleKeyUsage.delete(keyId);
+                cleanedCount++;
+            }
+        }
+    }
+    
+    if (cleanedCount > 0) {
+        log.info(`🧹 Nettoyage Google: ${cleanedCount} anciens compteurs de clés supprimés`);
+        saveDataImmediate(); // Sauvegarder le nettoyage
+    }
+}, 24 * 60 * 60 * 1000); // Vérifier tous les jours
+
 // Démarrer le bot
 startBot().catch(error => {
     log.error(`❌ Erreur démarrage: ${error.message}`);
     process.exit(1);
-}); 
+});
