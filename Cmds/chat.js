@@ -42,12 +42,12 @@ const CREATORS_INFO = {
     durand: {
         fullName: "Durand DJOUKAM",
         nationality: "Camerounais 🇨🇲",
-        phone: "+237 651 104 356" // Remplacer par le vrai numéro
+        phone: "+237 651 104 356"
     },
     myronne: {
         fullName: "Myronne POUKEN",
         nationality: "Camerounaise 🇨🇲",
-        phone: "+237 XXX XXX XXX" // Remplacer par le vrai numéro
+        phone: "+237 XXX XXX XXX" // À remplir
     }
 };
 
@@ -810,22 +810,46 @@ Ta réponse basée sur les infos trouvées:`;
 function detectCreatorContactRequest(message) {
     const lower = message.toLowerCase();
     
+    // 🆕 Détection demandes de numéro génériques
+    const isGenericPhoneRequest = 
+        /(?:numéro|telephone|phone|tel|numero|contacter|appeler|joindre)/i.test(message) &&
+        !/(ton|votre|bot|nakamabot)/i.test(message);
+    
     // Recherche noms de famille explicites
     const explicitDurand = /djoukam/i.test(message);
     const explicitMyronne = /pouken/i.test(message);
     
+    // Recherche prénoms
+    const mentionsDurand = /\bdurand\b/i.test(message);
+    const mentionsMyronne = /\bmyronne\b/i.test(message);
+    
     // Recherche demande de contact
     const contactPatterns = [
+        /(?:numéro|téléphone|phone|tel|numero).*(?:durand|myronne|créateur|développeur)/i,
+        /(?:durand|myronne).*(?:numéro|téléphone|phone|tel|numero|contact)/i,
         /contact.*(?:durand|myronne|créateur|développeur)/i,
-        /(?:numéro|téléphone|appeler).*(?:durand|myronne)/i,
-        /(?:durand|myronne).*(?:numéro|téléphone|contact)/i,
-        /comment.*contacter.*(?:durand|myronne)/i
+        /(?:appeler|joindre|parler).*(?:durand|myronne)/i,
+        /(?:comment|où|qui).*(?:contacter|joindre).*(?:durand|myronne)/i,
+        // 🆕 Patterns pour "leurs noms", "le numéro de", etc.
+        /(?:leurs?|son|quel|le|la)\s+(?:nom|numéro|téléphone|contact)/i,
+        /(?:numéro|téléphone)\s+(?:de|du)\s+(?:durand|myronne|créateur)/i
     ];
     
-    const isContactRequest = contactPatterns.some(p => p.test(message));
+    const isContactRequest = contactPatterns.some(p => p.test(message)) || isGenericPhoneRequest;
     
     if (!isContactRequest) {
         return { shouldProvideContact: false };
+    }
+    
+    // 🆕 Si demande générique de numéro/contact sans nom spécifique
+    if (isGenericPhoneRequest && !mentionsDurand && !mentionsMyronne) {
+        return {
+            shouldProvideContact: true,
+            forDurand: true,  // Par défaut proposer les deux
+            forMyronne: true,
+            explicit: false,
+            generic: true  // Flag pour message différent
+        };
     }
     
     // Contact explicite avec nom de famille
@@ -839,11 +863,11 @@ function detectCreatorContactRequest(message) {
     }
     
     // Contact avec prénom seulement (suggestion d'utiliser nom complet)
-    if (/(?:durand|myronne)/i.test(message) && isContactRequest) {
+    if ((mentionsDurand || mentionsMyronne) && isContactRequest) {
         return {
             shouldProvideContact: true,
-            forDurand: /durand/i.test(message),
-            forMyronne: /myronne/i.test(message),
+            forDurand: mentionsDurand,
+            forMyronne: mentionsMyronne,
             explicit: false
         };
     }
@@ -856,29 +880,59 @@ function generateCreatorContactResponse(detection) {
         return null;
     }
     
+    // 🆕 Si demande générique (leurs noms, leurs numéros, etc.)
+    if (detection.generic) {
+        let response = "📞 **Coordonnées des Créateurs NakamaBot**\n\n";
+        
+        response += `👨‍💻 **${CREATORS_INFO.durand.fullName}**\n`;
+        response += `🇨🇲 ${CREATORS_INFO.durand.nationality}\n`;
+        response += `📱 ${CREATORS_INFO.durand.phone}\n\n`;
+        
+        if (CREATORS_INFO.myronne.phone !== "+237 XXX XXX XXX") {
+            response += `👩‍💻 **${CREATORS_INFO.myronne.fullName}**\n`;
+            response += `🇨🇲 ${CREATORS_INFO.myronne.nationality}\n`;
+            response += `📱 ${CREATORS_INFO.myronne.phone}\n\n`;
+        }
+        
+        response += `💡 N'hésite pas à les contacter ! 💕`;
+        
+        return parseMarkdown(response);
+    }
+    
     // Si pas explicite avec nom de famille
     if (!detection.explicit) {
         let response = "📞 **Contact Créateurs**\n\n";
         
         if (detection.forDurand && detection.forMyronne) {
             response += `Tu veux contacter nos créateurs ?\n\n`;
-            response += `Pour obtenir leurs coordonnées, précise leur **nom complet** :\n`;
-            response += `• **Durand DJOUKAM**\n`;
-            response += `• **Myronne POUKEN**\n\n`;
+            response += `🔸 **Durand DJOUKAM** 🇨🇲\n`;
+            response += `   📱 ${CREATORS_INFO.durand.phone}\n\n`;
+            
+            if (CREATORS_INFO.myronne.phone !== "+237 XXX XXX XXX") {
+                response += `🔸 **Myronne POUKEN** 🇨🇲\n`;
+                response += `   📱 ${CREATORS_INFO.myronne.phone}\n\n`;
+            }
+            
         } else if (detection.forDurand) {
-            response += `Tu veux contacter Durand ?\n\n`;
-            response += `Pour obtenir ses coordonnées, utilise son **nom complet** : **Durand DJOUKAM**\n\n`;
+            response += `📱 **Durand DJOUKAM**\n`;
+            response += `🇨🇲 Camerounais\n`;
+            response += `📞 ${CREATORS_INFO.durand.phone}\n\n`;
         } else if (detection.forMyronne) {
-            response += `Tu veux contacter Myronne ?\n\n`;
-            response += `Pour obtenir ses coordonnées, utilise son **nom complet** : **Myronne POUKEN**\n\n`;
+            if (CREATORS_INFO.myronne.phone !== "+237 XXX XXX XXX") {
+                response += `📱 **Myronne POUKEN**\n`;
+                response += `🇨🇲 Camerounaise\n`;
+                response += `📞 ${CREATORS_INFO.myronne.phone}\n\n`;
+            } else {
+                response += `Le numéro de Myronne POUKEN sera bientôt disponible.\n\n`;
+            }
         }
         
-        response += `💡 Exemple : "Je veux contacter Durand DJOUKAM"`;
+        response += `💕 Contacte-les pour toute question !`;
         
         return parseMarkdown(response);
     }
     
-    // Réponse avec coordonnées complètes
+    // Réponse avec coordonnées complètes (nom de famille fourni)
     let response = "📞 **Coordonnées Créateurs NakamaBot**\n\n";
     
     if (detection.forDurand) {
@@ -888,9 +942,15 @@ function generateCreatorContactResponse(detection) {
     }
     
     if (detection.forMyronne) {
-        response += `👩‍💻 **${CREATORS_INFO.myronne.fullName}**\n`;
-        response += `🇨🇲 ${CREATORS_INFO.myronne.nationality}\n`;
-        response += `📱 ${CREATORS_INFO.myronne.phone}\n\n`;
+        if (CREATORS_INFO.myronne.phone !== "+237 XXX XXX XXX") {
+            response += `👩‍💻 **${CREATORS_INFO.myronne.fullName}**\n`;
+            response += `🇨🇲 ${CREATORS_INFO.myronne.nationality}\n`;
+            response += `📱 ${CREATORS_INFO.myronne.phone}\n\n`;
+        } else {
+            response += `👩‍💻 **${CREATORS_INFO.myronne.fullName}**\n`;
+            response += `🇨🇲 ${CREATORS_INFO.myronne.nationality}\n`;
+            response += `📱 Numéro bientôt disponible\n\n`;
+        }
     }
     
     response += `💡 N'hésite pas à les contacter pour toute question ! 💕`;
@@ -959,13 +1019,21 @@ async function handleConversation(senderId, message, ctx) {
         ).join('\n') + '\n';
     }
     
-    // Prompt ultra-compressé
+    // Prompt ultra-compressé mais naturel
     const prompt = `Date: ${dateStr}
-Créateurs: Durand (Camerounais 🇨🇲) & Myronne (Camerounaise 🇨🇲)
+Créateurs: Durand DJOUKAM (🇨🇲, 📱 ${CREATORS_INFO.durand.phone}) & Myronne POUKEN (🇨🇲)
 
 ${history}User: ${message}
 
-Réponds naturellement, court (max 400 chars), 1 emoji max. Si récent/actuel (2024-2026) → dis clairement que tu ne sais pas car tes infos s'arrêtent début 2025.`;
+RÈGLES IMPORTANTES:
+- Réponds naturellement comme un ami
+- Court (max 400 chars), max 2 emojis
+- Si question sur créateurs/contact → donne infos clairement
+- Si événement récent (2024-2026) que tu ne connais pas → dis-le clairement
+- Jamais "je suis une IA" sauf si demandé
+- Friendly et décontracté
+
+Ta réponse naturelle:`;
 
     try {
         // Tentative Gemini
@@ -1116,7 +1184,7 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     
     // 🆕 ENVOYER INDICATEUR DE TRAITEMENT
     if (args.trim().length >= 3 && !ctx.isContinuationRequest?.(args)) {
-        const processingMsg = "🕒...";
+        const processingMsg = "⏳ Réflexion en cours...";
         ctx.addToMemory(String(senderId), 'assistant', processingMsg);
         await ctx.sendMessage(senderId, processingMsg).catch(err => 
             console.warn(`⚠️ Erreur envoi indicateur: ${err.message}`)
