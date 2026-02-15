@@ -363,6 +363,8 @@ function cleanResponse(text) {
         .replace(/🕒\s*\.\.\./g, '')
         .replace(/\.\.\.\s*$/g, '')  // Points de suspension en fin
         .replace(/\s+\.\.\.$/g, '')   // Espaces + points
+        .replace(/\(Source:?\s*\[?\d+\]?\)/gi, '') // Supprimer (Source: [3]) etc.
+        .replace(/\[Source:?\s*\d+\]/gi, '')       // Supprimer [Source: 3]
         .trim();
     
     // Supprimer multiples espaces
@@ -674,16 +676,17 @@ Réponds UNIQUEMENT en JSON:
         const lower = userMessage.toLowerCase();
         
         // Vérifier si c'est une correction/suite de conversation
-        const isFollowUp = /^(non|faux|pas vrai|en fait|plutôt|mais|oui mais|si|correction)/i.test(userMessage.trim());
+        const isFollowUp = /^(non|faux|pas vrai|en fait|plutôt|mais|oui mais|si|correction|et en|mouf)/i.test(userMessage.trim());
         
         if (isFollowUp && conversationContext && conversationContext.length > 0) {
             // Extraire le sujet du contexte précédent
-            const lastUserMsg = conversationContext.filter(m => m.role === 'user').slice(-1)[0];
-            const lastBotMsg = conversationContext.filter(m => m.role === 'assistant').slice(-1)[0];
+            const recentMessages = conversationContext.slice(-3);
+            const lastUserMsg = recentMessages.filter(m => m.role === 'user').slice(-1)[0];
+            const lastBotMsg = recentMessages.filter(m => m.role === 'assistant').slice(-1)[0];
             
             if (lastUserMsg || lastBotMsg) {
                 // Si c'est une correction avec année, chercher le sujet original + nouvelle année
-                const yearMatch = userMessage.match(/\b(202[4-6]|2025|2024)\b/);
+                const yearMatch = userMessage.match(/\b(202[4-6]|2025|2024|2026)\b/);
                 
                 if (yearMatch) {
                     const year = yearMatch[0];
@@ -696,7 +699,7 @@ Réponds UNIQUEMENT en JSON:
                         topic = "champion league";
                     } else if (/coupe.*monde|world cup/i.test(contextText)) {
                         topic = "coupe du monde";
-                    } else if (/championnat|tournoi|compétition/i.test(contextText)) {
+                    } else if (/championnat|tournoi|compétition|finale/i.test(contextText)) {
                         const sportMatch = contextText.match(/(football|basket|tennis|rugby|\w+)/i);
                         topic = sportMatch ? sportMatch[0] : "championnat";
                     }
@@ -706,8 +709,30 @@ Réponds UNIQUEMENT en JSON:
                         return {
                             needsSearch: true,
                             confidence: 0.95,
-                            searchQuery: `${topic} vainqueur ${year}`,
+                            searchQuery: `vainqueur ${topic} ${year}`,
                             reason: 'fallback_contextual_follow_up'
+                        };
+                    }
+                }
+                
+                // Si juste "mouf", "non", etc. sans année mais contexte sportif clair
+                if (/champion.*league|ligue.*champions|coupe|championnat|finale/i.test(contextText)) {
+                    const currentYear = new Date().getFullYear();
+                    let topic = "";
+                    
+                    if (/champion.*league|ligue.*champions/i.test(contextText)) {
+                        topic = "champion league";
+                    } else if (/coupe.*monde/i.test(contextText)) {
+                        topic = "coupe du monde";
+                    }
+                    
+                    if (topic) {
+                        console.log(`🔑 Fallback contextuel année courante: sujet="${topic}"`);
+                        return {
+                            needsSearch: true,
+                            confidence: 0.9,
+                            searchQuery: `vainqueur ${topic} ${currentYear}`,
+                            reason: 'fallback_contextual_current_year'
                         };
                     }
                 }
@@ -1055,13 +1080,18 @@ Créateurs: Durand DJOUKAM (🇨🇲, 📱 ${CREATORS_INFO.durand.phone}) & Myro
 
 ${history}User: ${message}
 
+CONTEXTE IMPORTANT:
+- Si l'utilisateur dit "non", "en 2025", "et lui?", etc. → UTILISE L'HISTORIQUE pour comprendre de quoi il parle
+- Si question sur événement récent (2024-2026) → DIS CLAIREMENT que tu ne sais pas car tes infos s'arrêtent début 2025
+- Si insulte/grossièreté → Reste poli mais ferme : "Restons courtois s'il te plaît 😊"
+
 RÈGLES IMPORTANTES:
 - Réponds naturellement comme un ami
 - Court (max 400 chars), max 2 emojis
 - Si question sur créateurs/contact → donne infos clairement
-- Si événement récent (2024-2026) que tu ne connais pas → dis-le clairement
-- Jamais "je suis une IA" sauf si demandé
+- JAMAIS de "je suis une IA" sauf si demandé
 - Friendly et décontracté
+- Si référence au contexte → analyse l'historique
 
 Ta réponse naturelle:`;
 
