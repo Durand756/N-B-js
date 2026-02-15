@@ -5,7 +5,7 @@
  * 
  * Version: 5.0 - Multi-User Concurrent Edition
  * Créateurs: Durand DJOUKAM & Myronne POUKEN (🇨🇲 Camerounais)
- * 
+ *  
  * OPTIMISATIONS RENDER FREE:
  * ✅ Gestion simultanée de 1000+ utilisateurs
  * ✅ Mémoire limitée < 512MB
