@@ -350,10 +350,34 @@ function toBold(str) {
     return str.split('').map(c => BOLD_MAP[c] || c).join('');
 }
 
+/**
+ * Nettoie la réponse des indicateurs de traitement et formatages indésirables
+ */
+function cleanResponse(text) {
+    if (!text || typeof text !== 'string') return text;
+    
+    // Supprimer tous les indicateurs de traitement
+    let cleaned = text
+        .replace(/⏳\s*Réflexion en cours\.\.\./gi, '')
+        .replace(/🕒\s*\.\.\./g, '')
+        .replace(/\.\.\.\s*$/g, '')  // Points de suspension en fin
+        .replace(/\s+\.\.\.$/g, '')   // Espaces + points
+        .trim();
+    
+    // Supprimer multiples espaces
+    cleaned = cleaned.replace(/\s{2,}/g, ' ');
+    
+    // Supprimer multiples retours à la ligne
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+    
+    return cleaned;
+}
+
 function parseMarkdown(text) {
     if (!text || typeof text !== 'string') return text;
     
-    let parsed = text;
+    // Nettoyer d'abord
+    let parsed = cleanResponse(text);
     
     // Titres
     parsed = parsed.replace(/^###\s+(.+)$/gm, (_, t) => `🔹 ${toBold(t.trim())}`);
@@ -364,7 +388,8 @@ function parseMarkdown(text) {
     // Listes
     parsed = parsed.replace(/^[\s]*[-*]\s+(.+)$/gm, (_, c) => `• ${c.trim()}`);
     
-    return parsed;
+    // Nettoyer une dernière fois
+    return cleanResponse(parsed);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -408,9 +433,9 @@ async function callGemini(prompt) {
         async () => {
             const key = getNextGeminiKey();
             const genAI = new GoogleGenerativeAI(key);
-            // gemini-1.5-flash fonctionne sur v1beta (testé et stable)
+            // Utiliser gemini-3-flash-preview (modèle le plus récent selon la doc)
             const model = genAI.getGenerativeModel({ 
-                model: "gemini-1.5-flash",
+                model: "gemini-3-flash-preview",
                 generationConfig: {
                     temperature: 0.7,
                     maxOutputTokens: 500
@@ -1046,6 +1071,9 @@ Ta réponse naturelle:`;
         if (response) {
             // Nettoyer préfixes
             let clean = response.replace(/^(NakamaBot|Bot)\s*:\s*/i, '').trim();
+            
+            // Nettoyer indicateurs et formater
+            clean = cleanResponse(clean);
             const styled = parseMarkdown(clean);
             
             // Tronquer si nécessaire
@@ -1077,7 +1105,9 @@ Ta réponse naturelle:`;
             const mistralResponse = await callMistral(messages, 300);
             
             if (mistralResponse) {
-                const styled = parseMarkdown(mistralResponse);
+                // Nettoyer et formater
+                const clean = cleanResponse(mistralResponse);
+                const styled = parseMarkdown(clean);
                 
                 if (styled.length > 2000) {
                     const truncated = styled.substring(0, 1950) + "\n\n...";
@@ -1186,10 +1216,10 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     // Marquer actif
     markRequestActive(senderId);
     
-    // 🆕 ENVOYER INDICATEUR DE TRAITEMENT
+    // 🆕 ENVOYER INDICATEUR DE TRAITEMENT (sans l'ajouter à la mémoire permanente)
     if (args.trim().length >= 3 && !ctx.isContinuationRequest?.(args)) {
         const processingMsg = "⏳ Réflexion en cours...";
-        ctx.addToMemory(String(senderId), 'assistant', processingMsg);
+        // NE PAS ajouter à la mémoire permanente
         await ctx.sendMessage(senderId, processingMsg).catch(err => 
             console.warn(`⚠️ Erreur envoi indicateur: ${err.message}`)
         );
@@ -1292,6 +1322,7 @@ startAutoCleanup();
 
 module.exports.parseMarkdown = parseMarkdown;
 module.exports.toBold = toBold;
+module.exports.cleanResponse = cleanResponse;
 module.exports.callGemini = callGemini;
 module.exports.callMistral = callMistral;
 module.exports.detectCreatorContactRequest = detectCreatorContactRequest;
