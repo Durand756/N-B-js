@@ -42,7 +42,7 @@ const CREATORS_INFO = {
     durand: {
         fullName: "Durand DJOUKAM",
         nationality: "Camerounais 🇨🇲",
-        phone: "+237 XXX XXX XXX" // Remplacer par le vrai numéro
+        phone: "+237 651 104 356" // Remplacer par le vrai numéro
     },
     myronne: {
         fullName: "Myronne POUKEN",
@@ -408,9 +408,9 @@ async function callGemini(prompt) {
         async () => {
             const key = getNextGeminiKey();
             const genAI = new GoogleGenerativeAI(key);
-            // Utiliser gemini-1.5-flash-latest qui fonctionne avec v1beta
+            // Utiliser gemini-pro qui est stable
             const model = genAI.getGenerativeModel({ 
-                model: "gemini-1.5-flash-latest"
+                model: "gemini-pro"
             });
             
             // Timeout strict
@@ -561,31 +561,37 @@ async function searchDuckDuckGo(query, maxResults = 5) {
 /**
  * Détection IA intelligente des requêtes nécessitant une recherche web
  */
-async function needsWebSearch(userMessage) {
+async function needsWebSearch(userMessage, conversationContext = []) {
     try {
-        const detectionPrompt = `Analyse cette question et décide si elle nécessite une RECHERCHE WEB récente.
+        // Analyser le contexte pour mieux comprendre les questions de suivi
+        let contextInfo = "";
+        if (conversationContext && conversationContext.length > 0) {
+            const recentMessages = conversationContext.slice(-3).map(m => 
+                `${m.role === 'user' ? 'User' : 'Bot'}: ${m.content.substring(0, 100)}`
+            ).join('\n');
+            
+            contextInfo = `\n\nCONTEXTE CONVERSATION RÉCENTE:\n${recentMessages}\n`;
+        }
+        
+        const detectionPrompt = `Analyse cette question ET son contexte pour décider si elle nécessite une RECHERCHE WEB récente.
+${contextInfo}
+QUESTION ACTUELLE: "${userMessage}"
 
-Question: "${userMessage}"
+RÈGLES:
+- Si la question fait référence au contexte (ex: "non en 2025" après avoir parlé de Champion League) → chercher Champion League 2025
+- Si "qui a gagné X" + année récente (2024-2026) → RECHERCHE
+- Si correction d'info précédente (ex: "non", "faux", "pas vrai") → RECHERCHE pour vérifier
+- Sports, actualités, compétitions récentes → RECHERCHE
+- Question générale ou définition → PAS DE RECHERCHE
 
-NÉCESSITE une recherche si :
-- Événements/résultats récents (2024-2026)
-- "qui a gagné", "vainqueur", "champion", "dernier", "dernière"
-- Sports, actualités, élections, compétitions
-- Prix, stats, données actuelles
-- "récent", "actuel", "maintenant", "aujourd'hui"
-
-NE NÉCESSITE PAS si :
-- Conversation générale
-- Concepts/définitions de base
-- Questions sur le bot
-- Histoires anciennes (avant 2023)
+Si la question corrige une info ou ajoute une année, UTILISE LE CONTEXTE pour comprendre de quoi on parle vraiment.
 
 Réponds UNIQUEMENT en JSON:
 {
   "needsSearch": true/false,
   "confidence": 0.0-1.0,
-  "searchQuery": "requête optimisée pour recherche",
-  "reason": "explication brève"
+  "searchQuery": "requête optimisée EN TENANT COMPTE DU CONTEXTE",
+  "reason": "explication"
 }`;
 
         let response = null;
@@ -601,7 +607,7 @@ Réponds UNIQUEMENT en JSON:
                 const messages = [
                     {
                         role: "system",
-                        content: "Tu es un système de détection. Réponds UNIQUEMENT en JSON."
+                        content: "Tu es un système de détection intelligent. Analyse le contexte conversationnel. Réponds UNIQUEMENT en JSON."
                     },
                     {
                         role: "user",
@@ -609,7 +615,7 @@ Réponds UNIQUEMENT en JSON:
                     }
                 ];
                 
-                response = await callMistral(messages, 200);
+                response = await callMistral(messages, 250);
             } catch (mistralError) {
                 console.warn(`⚠️ Mistral échec aussi: ${mistralError.message}`);
             }
@@ -623,6 +629,7 @@ Réponds UNIQUEMENT en JSON:
                 
                 console.log(`🤖 Décision recherche: ${decision.needsSearch ? 'OUI' : 'NON'} (${decision.confidence})`);
                 console.log(`📝 Raison: ${decision.reason}`);
+                console.log(`🔍 Query: ${decision.searchQuery}`);
                 
                 return decision;
             }
@@ -633,10 +640,51 @@ Réponds UNIQUEMENT en JSON:
     } catch (error) {
         console.warn(`⚠️ Erreur détection recherche: ${error.message}`);
         
-        // Fallback simple par mots-clés (très fiable)
+        // Fallback intelligent par analyse du contexte
         const lower = userMessage.toLowerCase();
         
-        // Patterns très spécifiques pour événements récents
+        // Vérifier si c'est une correction/suite de conversation
+        const isFollowUp = /^(non|faux|pas vrai|en fait|plutôt|mais|oui mais|si|correction)/i.test(userMessage.trim());
+        
+        if (isFollowUp && conversationContext && conversationContext.length > 0) {
+            // Extraire le sujet du contexte précédent
+            const lastUserMsg = conversationContext.filter(m => m.role === 'user').slice(-1)[0];
+            const lastBotMsg = conversationContext.filter(m => m.role === 'assistant').slice(-1)[0];
+            
+            if (lastUserMsg || lastBotMsg) {
+                // Si c'est une correction avec année, chercher le sujet original + nouvelle année
+                const yearMatch = userMessage.match(/\b(202[4-6]|2025|2024)\b/);
+                
+                if (yearMatch) {
+                    const year = yearMatch[0];
+                    
+                    // Extraire sujet principal du contexte
+                    let topic = "";
+                    const contextText = (lastUserMsg?.content || "") + " " + (lastBotMsg?.content || "");
+                    
+                    if (/champion.*league|ligue.*champions|cl\b/i.test(contextText)) {
+                        topic = "champion league";
+                    } else if (/coupe.*monde|world cup/i.test(contextText)) {
+                        topic = "coupe du monde";
+                    } else if (/championnat|tournoi|compétition/i.test(contextText)) {
+                        const sportMatch = contextText.match(/(football|basket|tennis|rugby|\w+)/i);
+                        topic = sportMatch ? sportMatch[0] : "championnat";
+                    }
+                    
+                    if (topic) {
+                        console.log(`🔑 Fallback contextuel: sujet="${topic}", année=${year}`);
+                        return {
+                            needsSearch: true,
+                            confidence: 0.95,
+                            searchQuery: `${topic} vainqueur ${year}`,
+                            reason: 'fallback_contextual_follow_up'
+                        };
+                    }
+                }
+            }
+        }
+        
+        // Patterns standards
         const definiteSearchPatterns = [
             /\b(qui a (gagné|gagne|remporté|remporte))\b.*\b(dernier|dernière|récent|actuel|202[4-6])\b/,
             /\b(dernier|dernière)\b.*\b(vainqueur|champion|gagnant|finale)\b/,
@@ -871,7 +919,7 @@ async function handleConversation(senderId, message, ctx) {
     
     // 🆕 DÉTECTION RECHERCHE WEB NÉCESSAIRE
     let searchResults = null;
-    const searchDecision = await needsWebSearch(message);
+    const searchDecision = await needsWebSearch(message, context);
     
     if (searchDecision.needsSearch && searchDecision.confidence >= 0.7) {
         console.log(`🔍 Recherche requise: "${searchDecision.searchQuery}"`);
@@ -1065,6 +1113,15 @@ module.exports = async function cmdChat(senderId, args, ctx) {
     
     // Marquer actif
     markRequestActive(senderId);
+    
+    // 🆕 ENVOYER INDICATEUR DE TRAITEMENT
+    if (args.trim().length >= 3 && !ctx.isContinuationRequest?.(args)) {
+        const processingMsg = "🕒...";
+        ctx.addToMemory(String(senderId), 'assistant', processingMsg);
+        await ctx.sendMessage(senderId, processingMsg).catch(err => 
+            console.warn(`⚠️ Erreur envoi indicateur: ${err.message}`)
+        );
+    }
     
     try {
         // Détection contact créateurs
