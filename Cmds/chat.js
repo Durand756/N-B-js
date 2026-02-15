@@ -680,6 +680,12 @@ module.exports = async function cmdChat(senderId, args, ctx) {
                 const searchResults = await performIntelligentSearch(searchDecision.searchQuery, ctx);
                 
                 if (searchResults && searchResults.length > 0) {
+                    // 🔧 DEBUG: Afficher les résultats trouvés
+                    log.info(`📊 ${searchResults.length} résultats trouvés pour analyse`);
+                    searchResults.forEach((r, i) => {
+                        log.debug(`[${i+1}] ${r.title} - ${(r.snippet || r.description || '').substring(0, 80)}...`);
+                    });
+                    
                     const naturalResponse = await generateNaturalResponseWithContext(args, searchResults, conversationContext, ctx);
                     
                     if (naturalResponse) {
@@ -847,26 +853,29 @@ async function duckDuckGoSearch(query, maxResults = 5) {
             const $ = cheerio.load(response.data);
             const results = [];
             
-            $('.result').each((i, element) => {
+            // 🔧 FIX: Utiliser les bons sélecteurs pour DuckDuckGo HTML
+            $('.result__body').each((i, element) => {
                 if (i >= maxResults) return false;
                 
                 const $result = $(element);
-                const title = $result.find('.result__title').text().trim();
+                const title = $result.find('.result__a').text().trim();
                 const snippet = $result.find('.result__snippet').text().trim();
-                const link = $result.find('.result__url').attr('href');
+                const url = $result.find('.result__a').attr('href');
                 
                 if (title && snippet) {
                     results.push({
                         title: title,
                         snippet: snippet,
-                        link: link || '',
+                        description: snippet, // Alias pour compatibilité
+                        link: url || '',
                         source: 'duckduckgo'
                     });
+                    console.log(`📄 DDG ${i+1}: ${title.substring(0, 60)}... - ${snippet.substring(0, 100)}...`);
                 }
             });
             
-            console.log(`✅ DuckDuckGo: ${results.length} résultats`);
-            return results;
+            console.log(`✅ DuckDuckGo: ${results.length} résultats trouvés`);
+            return results.length > 0 ? results : null;
         }
         
         return null;
@@ -1045,9 +1054,14 @@ async function generateNaturalResponseWithContext(originalQuery, searchResults, 
     });
     
     try {
+        // 🔧 FIX: Formater les résultats avec titre ET description
         const resultsText = searchResults.map((result, index) => 
-            `${result.title}: ${result.description}`
-        ).join('\n');
+            `[${index + 1}] ${result.title}\n${result.snippet || result.description}`
+        ).join('\n\n');
+        
+        // 🔧 DEBUG: Afficher les résultats reçus
+        console.log(`📊 ${searchResults.length} résultats formatés pour l'IA`);
+        console.log(`📝 Extrait: ${resultsText.substring(0, 200)}...`);
         
         let conversationHistory = "";
         if (conversationContext && conversationContext.length > 0) {
