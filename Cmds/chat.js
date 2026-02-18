@@ -604,6 +604,7 @@ async function needsWebSearch(userMessage, conversationContext = []) {
             contextInfo = `\n\nCONTEXTE CONVERSATION RÉCENTE:\n${recentMsgs}\n`;
         }
         
+        const currentYear = new Date().getFullYear(); // 2025 ou 2026
         const detectionPrompt = `Analyse cette question ET son contexte pour décider si elle nécessite une RECHERCHE WEB récente.
 ${contextInfo}
 QUESTION ACTUELLE: "${userMessage}"
@@ -615,13 +616,15 @@ RÈGLES:
 - Sports, actualités, compétitions récentes → RECHERCHE
 - Question générale ou définition → PAS DE RECHERCHE
 
+IMPORTANT: Si la recherche est nécessaire, la requête doit OBLIGATOIREMENT inclure l'année ${currentYear} ou 2025 pour avoir des résultats récents.
+
 Si la question corrige une info ou ajoute une année, UTILISE LE CONTEXTE pour comprendre de quoi on parle vraiment.
 
 Réponds UNIQUEMENT en JSON:
 {
   "needsSearch": true/false,
   "confidence": 0.0-1.0,
-  "searchQuery": "requête optimisée EN TENANT COMPTE DU CONTEXTE",
+  "searchQuery": "requête optimisée AVEC ANNÉE ${currentYear} ou 2025 EN TENANT COMPTE DU CONTEXTE",
   "reason": "explication"
 }`;
 
@@ -657,6 +660,16 @@ Réponds UNIQUEMENT en JSON:
             const jsonMatch = response.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const decision = JSON.parse(jsonMatch[0]);
+                
+                // Forcer l'année récente dans la searchQuery si absent
+                if (decision.needsSearch && decision.searchQuery) {
+                    const hasYear = /\b(2024|2025|2026)\b/.test(decision.searchQuery);
+                    if (!hasYear) {
+                        const yr = new Date().getFullYear();
+                        decision.searchQuery = `${decision.searchQuery} ${yr}`;
+                        console.log(`📅 Année forcée dans query: "${decision.searchQuery}"`);
+                    }
+                }
                 
                 console.log(`🤖 Décision recherche: ${decision.needsSearch ? 'OUI' : 'NON'} (${decision.confidence})`);
                 console.log(`📝 Raison: ${decision.reason}`);
@@ -739,7 +752,8 @@ Réponds UNIQUEMENT en JSON:
             }
         }
         
-        // Patterns standards
+        // Patterns standards avec années 2025-2026 forcées
+        const currentYr = new Date().getFullYear();
         const definiteSearchPatterns = [
             /\b(qui a (gagné|gagne|remporté|remporte))\b.*\b(dernier|dernière|récent|actuel|202[4-6])\b/,
             /\b(dernier|dernière)\b.*\b(vainqueur|champion|gagnant|finale)\b/,
@@ -749,12 +763,18 @@ Réponds UNIQUEMENT en JSON:
         
         const needsSearch = definiteSearchPatterns.some(pattern => pattern.test(lower));
         
+        // Forcer l'année dans la query si pas déjà présente
+        let searchQuery = userMessage;
+        if (needsSearch && !/\b(2024|2025|2026)\b/.test(searchQuery)) {
+            searchQuery = `${searchQuery} ${currentYr}`;
+        }
+        
         console.log(`🔑 Fallback keywords: ${needsSearch ? 'RECHERCHE' : 'NORMAL'}`);
         
         return {
             needsSearch,
             confidence: needsSearch ? 0.9 : 0.3,
-            searchQuery: userMessage,
+            searchQuery,
             reason: 'fallback_keywords_advanced'
         };
     }
@@ -782,14 +802,15 @@ async function generateResponseWithSearch(userMessage, searchResults, context) {
             ).join('\n') + '\n';
         }
         
+        const currentYear = new Date().getFullYear();
         const prompt = `${history}Question: "${userMessage}"
 
-INFORMATIONS TROUVÉES SUR LE WEB (2026):
+INFORMATIONS TROUVÉES SUR LE WEB (${currentYear}) :
 ${resultsText}
 
 RÈGLES CRITIQUES:
 - Utilise UNIQUEMENT les infos ci-dessus
-- Ces infos sont PLUS RÉCENTES que tes connaissances
+- Ces infos sont PLUS RÉCENTES que tes connaissances (elles datent de ${currentYear})
 - Si contradictions → UTILISE LES INFOS WEB
 - N'invente RIEN
 - Réponds court (max 400 chars)
@@ -1112,8 +1133,15 @@ async function handleConversation(senderId, message, ctx) {
     const searchDecision = await needsWebSearch(message, context);
     
     if (searchDecision.needsSearch && searchDecision.confidence >= 0.7) {
-        console.log(`🔍 Recherche requise: "${searchDecision.searchQuery}"`);
-        searchResults = await searchDuckDuckGo(searchDecision.searchQuery, 5);
+        // Forcer l'année dans la query si absente
+        let finalQuery = searchDecision.searchQuery;
+        if (!/\b(2024|2025|2026)\b/.test(finalQuery)) {
+            const yr = new Date().getFullYear();
+            finalQuery = `${finalQuery} ${yr}`;
+            console.log(`📅 Année forcée dans query finale: "${finalQuery}"`);
+        }
+        console.log(`🔍 Recherche requise: "${finalQuery}"`);
+        searchResults = await searchDuckDuckGo(finalQuery, 5);
         
         if (searchResults && searchResults.length > 0) {
             console.log(`✅ ${searchResults.length} résultats trouvés, génération réponse...`);
